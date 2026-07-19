@@ -2,6 +2,9 @@ import Page from '@/components/Page';
 import NewTransaction from '@/components/NewTransaction';
 import { db } from '@/lib/db';
 
+export const dynamic = 'force-dynamic';
+export const revalidate = 0;
+
 export default async function NewTransactionPage() {
   const [people, currencies, types] = await Promise.all([
     db.person.findMany({

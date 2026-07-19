@@ -2,6 +2,9 @@ import Page from '@/components/Page';
 import { db } from '@/lib/db';
 import { notFound } from 'next/navigation';
 
+export const dynamic = 'force-dynamic';
+export const revalidate = 0;
+
 const categoryLabels: Record<string, string> = {
   VIP: 'عميل مميز',
   REGULAR: 'عميل عادي',

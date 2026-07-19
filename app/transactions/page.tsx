@@ -2,6 +2,9 @@ import Page from '@/components/Page';
 import TransactionsClient from '@/components/TransactionsClient';
 import { db } from '@/lib/db';
 
+export const dynamic = 'force-dynamic';
+export const revalidate = 0;
+
 export default async function TransactionsPage() {
   const transactions = await db.financialTransaction.findMany({
     where: { deletedAt: null },

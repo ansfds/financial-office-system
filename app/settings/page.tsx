@@ -1,6 +1,9 @@
 import Page from '@/components/Page';
 import { db } from '@/lib/db';
 
+export const dynamic = 'force-dynamic';
+export const revalidate = 0;
+
 export default async function SettingsPage() {
   const [currencies, transactionTypes] = await Promise.all([
     db.currency.findMany({ orderBy: { code: 'asc' } }),
