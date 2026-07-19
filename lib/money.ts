@@ -1,0 +1,2 @@
+import {Prisma} from '@prisma/client'; export const D=(v:any)=>new Prisma.Decimal(v||0);
+export function statusOf(agreed:Prisma.Decimal,received:Prisma.Decimal,paid:Prisma.Decimal,rec:Prisma.Decimal,pay:Prisma.Decimal,due?:Date|null){if(rec.gt(0))return due&&due<new Date()?'OVERDUE':'RECEIVABLE';if(pay.gt(0))return due&&due<new Date()?'OVERDUE':'PAYABLE';if(received.gt(0)||paid.gt(0))return received.add(paid).gte(agreed)?'COMPLETED':'PARTIAL';return 'IN_PROGRESS'}

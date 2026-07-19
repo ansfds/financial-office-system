@@ -1,0 +1,124 @@
+import Page from '@/components/Page';
+import { db } from '@/lib/db';
+import { notFound } from 'next/navigation';
+
+const categoryLabels: Record<string, string> = {
+  VIP: 'عميل مميز',
+  REGULAR: 'عميل عادي',
+};
+
+export default async function PersonPage({ params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params;
+  const person = await db.person.findUnique({
+    where: { id },
+    include: {
+      transactions: {
+        where: { deletedAt: null },
+        include: { currency: true, type: true },
+        orderBy: { transactionAt: 'desc' },
+      },
+      cardBatches: {
+        include: { cards: { orderBy: { sequence: 'asc' } }, currency: true },
+        orderBy: { receivedAt: 'desc' },
+      },
+      sheinSales: {
+        orderBy: { updatedAt: 'desc' },
+      },
+    },
+  });
+
+  if (!person) notFound();
+
+  return (
+    <Page title={`${person.customerNo ? `${person.customerNo} - ` : ''}${person.fullName}`}>
+      <div className="grid gap-4 md:grid-cols-4">
+        <Info title="رقم العميل" value={person.customerNo || '—'} />
+        <Info title="التصنيف" value={categoryLabels[person.category] || person.category} />
+        <Info title="الهاتف" value={person.phone || '—'} />
+        <Info title="العنوان" value={person.address || '—'} />
+      </div>
+
+      <div className="card mt-6 p-5">
+        <h2 className="mb-4 font-black">المعاملات</h2>
+        <div className="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>الرقم</th>
+                <th>النوع</th>
+                <th>المتفق عليه</th>
+                <th>المستلم</th>
+                <th>المدفوع</th>
+                <th>المتبقي</th>
+                <th>الحالة</th>
+              </tr>
+            </thead>
+            <tbody>
+              {person.transactions.map((transaction) => {
+                const remaining = transaction.agreedAmount
+                  .sub(transaction.receivedAmount)
+                  .sub(transaction.paidAmount);
+                return (
+                  <tr key={transaction.id}>
+                    <td>{transaction.number}</td>
+                    <td>{transaction.type?.name || transaction.customType || '—'}</td>
+                    <td>
+                      {transaction.agreedAmount.toString()} {transaction.currency.symbol}
+                    </td>
+                    <td>{transaction.receivedAmount.toString()}</td>
+                    <td>{transaction.paidAmount.toString()}</td>
+                    <td>{remaining.gt(0) ? remaining.toString() : '0'}</td>
+                    <td>{remaining.lte(0) ? 'مكتمل' : transaction.status}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div className="mt-6 grid gap-4 lg:grid-cols-2">
+        <div className="card p-5">
+          <h2 className="mb-4 font-black">البطاقات المستلمة</h2>
+          <div className="space-y-3">
+            {person.cardBatches.map((batch) => (
+              <div key={batch.id} className="rounded-lg border border-slate-200 p-3 dark:border-slate-800">
+                <div className="font-bold">
+                  {batch.cardCount} بطاقات - {new Date(batch.receivedAt).toLocaleDateString('ar')}
+                </div>
+                <div className="mt-2 text-sm text-slate-500">
+                  المتفق عليه لكل بطاقة: {batch.agreedAmountPerCard.toString()} {batch.currency?.symbol || ''}
+                </div>
+              </div>
+            ))}
+            {!person.cardBatches.length ? <div className="text-sm text-slate-500">لا توجد بطاقات مستلمة.</div> : null}
+          </div>
+        </div>
+
+        <div className="card p-5">
+          <h2 className="mb-4 font-black">كروت شي إن المباعة</h2>
+          <div className="space-y-3">
+            {person.sheinSales.map((card) => (
+              <div key={card.id} className="rounded-lg border border-slate-200 p-3 dark:border-slate-800">
+                <div className="font-bold">{card.code}</div>
+                <div className="mt-2 text-sm text-slate-500">
+                  فئة {card.denomination.toString()} - {card.status}
+                </div>
+              </div>
+            ))}
+            {!person.sheinSales.length ? <div className="text-sm text-slate-500">لا توجد كروت شي إن مرتبطة.</div> : null}
+          </div>
+        </div>
+      </div>
+    </Page>
+  );
+}
+
+function Info({ title, value }: { title: string; value: string }) {
+  return (
+    <div className="card p-5">
+      <div className="text-sm text-slate-500">{title}</div>
+      <div className="mt-2 font-black">{value}</div>
+    </div>
+  );
+}

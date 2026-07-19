@@ -1,0 +1,1 @@
+import {NextResponse} from 'next/server'; export const ok=(data:any,status=200)=>NextResponse.json(data,{status}); export const fail=(message:string,status=400)=>NextResponse.json({error:message},{status}); export function apiError(e:any){if(e?.message==='UNAUTHORIZED')return fail('غير مصرح بالدخول',401);console.error(e);return fail('حدث خطأ غير متوقع',500)}

@@ -1,0 +1,2 @@
+import {db} from '@/lib/db';import {requireSession} from '@/lib/auth';import {ok,apiError} from '@/lib/http';
+export async function GET(){try{await requireSession();const [currencies,types,office]=await Promise.all([db.currency.findMany({where:{isActive:true},orderBy:{code:'asc'}}),db.transactionType.findMany({where:{isActive:true},orderBy:{name:'asc'}}),db.systemSetting.findUnique({where:{key:'office'}})]);return ok({currencies,types,office:office?.value||{}})}catch(e){return apiError(e)}}

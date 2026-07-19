@@ -1,0 +1,94 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+}
+
+.dark {
+  color-scheme: dark;
+}
+
+* {
+  letter-spacing: 0;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  @apply bg-slate-50 text-slate-900 antialiased transition-colors duration-300 dark:bg-slate-950 dark:text-slate-100;
+  direction: rtl;
+}
+
+.theme-bright body {
+  @apply bg-amber-50 text-slate-950;
+}
+
+input,
+select,
+textarea {
+  @apply w-full rounded-lg border border-slate-200 bg-white px-3 py-2.5 outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 disabled:cursor-not-allowed disabled:bg-slate-100 dark:border-slate-700 dark:bg-slate-900 dark:focus:ring-indigo-950;
+}
+
+input[type='checkbox'] {
+  @apply w-auto rounded border-slate-300 p-0 text-indigo-600;
+}
+
+button,
+a {
+  @apply transition;
+}
+
+.card {
+  @apply rounded-lg border border-slate-200 bg-white shadow-card transition duration-200 dark:border-slate-800 dark:bg-slate-900;
+}
+
+.theme-bright .card {
+  @apply border-amber-200 bg-white shadow-amber-900/10;
+}
+
+.table-wrap {
+  @apply overflow-x-auto rounded-lg border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900;
+}
+
+table {
+  @apply w-full min-w-[760px] text-sm;
+}
+
+th {
+  @apply bg-slate-100 px-4 py-3 text-right font-bold text-slate-700 dark:bg-slate-800 dark:text-slate-200;
+}
+
+td {
+  @apply border-t border-slate-100 px-4 py-3 align-middle dark:border-slate-800;
+}
+
+tbody tr {
+  @apply transition hover:bg-slate-50 dark:hover:bg-slate-800/60;
+}
+
+.theme-bright th {
+  @apply bg-amber-100 text-amber-950;
+}
+
+.theme-bright tbody tr:hover {
+  @apply bg-amber-50;
+}
+
+.page-enter {
+  animation: page-enter 220ms ease-out both;
+}
+
+@keyframes page-enter {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}

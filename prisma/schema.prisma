@@ -1,0 +1,394 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum TransactionStatus {
+  COMPLETED
+  RECEIVABLE
+  PAYABLE
+  PARTIAL
+  IN_PROGRESS
+  OVERDUE
+  CANCELLED
+}
+
+enum MovementType {
+  CASH_IN
+  CASH_OUT
+  RECEIVABLE
+  PAYABLE
+  SETTLE_RECEIVABLE
+  SETTLE_PAYABLE
+  NO_CASH_EFFECT
+  REVERSAL
+  CANCELLATION
+}
+
+enum CashDirection {
+  IN
+  OUT
+  NONE
+}
+
+enum EntityStatus {
+  ACTIVE
+  ARCHIVED
+}
+
+enum CustomerCategory {
+  VIP
+  REGULAR
+}
+
+enum SheinCardStatus {
+  AVAILABLE
+  SOLD
+  RESERVED
+  INVALID
+  CANCELLED
+}
+
+enum SheinCardLogType {
+  PURCHASE
+  SALE
+  RESERVE
+  RELEASE
+  CANCEL
+  UPDATE
+}
+
+enum ReceivedCardStatus {
+  RECEIVED
+  IN_SETTLEMENT
+  SETTLED
+  PARTIAL
+  COMPLETED
+  CANCELLED
+}
+
+model SystemSetting {
+  id        String   @id @default(cuid())
+  key       String   @unique
+  value     Json
+  updatedAt DateTime @updatedAt
+}
+
+model Person {
+  id           String                 @id @default(cuid())
+  customerNo   String?
+  fullName     String
+  phone        String?
+  address      String?
+  externalId   String?
+  notes        String?
+  category     CustomerCategory       @default(REGULAR)
+  status       EntityStatus           @default(ACTIVE)
+  createdAt    DateTime               @default(now())
+  updatedAt    DateTime               @updatedAt
+  deletedAt    DateTime?
+  transactions FinancialTransaction[]
+  sheinSales   SheinCard[]            @relation("SheinCardBuyer")
+  cardBatches  ReceivedCardBatch[]
+  cashboxMovements CashboxMovement[]   @relation("CashboxMovementPerson")
+
+  @@index([fullName])
+  @@index([phone])
+  @@index([customerNo])
+  @@index([category])
+}
+
+model Currency {
+  id               String                 @id @default(cuid())
+  code             String                 @unique
+  name             String
+  symbol           String
+  decimals         Int                    @default(2)
+  isActive         Boolean                @default(true)
+  isDefault        Boolean                @default(false)
+  createdAt        DateTime               @default(now())
+  transactions     FinancialTransaction[]
+  movements        TransactionMovement[]
+  cashboxMovements CashboxMovement[]
+  receivedBatches  ReceivedCardBatch[]
+  receivedCardSettlements ReceivedCustomerCard[] @relation("ReceivedCardSettlementCurrency")
+  sheinCardSales   SheinCard[]            @relation("SheinCardSaleCurrency")
+  conversionSources CurrencyConversion[]   @relation("CurrencyConversionSource")
+  conversionTargets CurrencyConversion[]   @relation("CurrencyConversionTarget")
+}
+
+model TransactionType {
+  id           String                 @id @default(cuid())
+  name         String                 @unique
+  isActive     Boolean                @default(true)
+  createdAt    DateTime               @default(now())
+  transactions FinancialTransaction[]
+}
+
+model FinancialTransaction {
+  id                   String                @id @default(cuid())
+  number               String                @unique
+  personId             String?
+  typeId               String?
+  customType           String?
+  description          String?
+  currencyId           String
+  agreedAmount         Decimal               @db.Decimal(20, 6)
+  receivedAmount       Decimal               @default(0) @db.Decimal(20, 6)
+  paidAmount           Decimal               @default(0) @db.Decimal(20, 6)
+  receivableAmount     Decimal               @default(0) @db.Decimal(20, 6)
+  payableAmount        Decimal               @default(0) @db.Decimal(20, 6)
+  exchangeRate         Decimal?              @db.Decimal(20, 8)
+  transactionAt        DateTime              @default(now())
+  dueAt                DateTime?
+  txId                 String?
+  cardNumber           String?
+  bankName             String?
+  verificationReceived Boolean               @default(false)
+  secureInternalNote   String?
+  notes                String?
+  status               TransactionStatus     @default(IN_PROGRESS)
+  statusOverride       Boolean               @default(false)
+  createdBy            String                @default("system")
+  createdAt            DateTime              @default(now())
+  updatedAt            DateTime              @updatedAt
+  deletedAt            DateTime?
+  person               Person?               @relation(fields: [personId], references: [id])
+  type                 TransactionType?      @relation(fields: [typeId], references: [id])
+  currency             Currency              @relation(fields: [currencyId], references: [id])
+  movements            TransactionMovement[]
+  cashboxMovements     CashboxMovement[]
+  attachments          Attachment[]
+
+  @@index([transactionAt])
+  @@index([status])
+  @@index([txId])
+  @@index([cardNumber])
+  @@index([bankName])
+}
+
+model TransactionMovement {
+  id                 String               @id @default(cuid())
+  transactionId      String
+  type               MovementType
+  direction          CashDirection
+  amount             Decimal              @db.Decimal(20, 6)
+  currencyId         String
+  occurredAt         DateTime             @default(now())
+  notes              String?
+  createdBy          String               @default("system")
+  balanceBefore      Decimal              @db.Decimal(20, 6)
+  balanceAfter       Decimal              @db.Decimal(20, 6)
+  reversedMovementId String?
+  createdAt          DateTime             @default(now())
+  deletedAt          DateTime?
+  transaction        FinancialTransaction @relation(fields: [transactionId], references: [id])
+  currency           Currency             @relation(fields: [currencyId], references: [id])
+  attachments        Attachment[]
+
+  @@index([occurredAt])
+}
+
+model CashboxMovement {
+  id            String                @id @default(cuid())
+  currencyId    String
+  transactionId String?
+  personId      String?
+  direction     CashDirection
+  amount        Decimal               @db.Decimal(20, 6)
+  reason        String
+  sourceType    String?
+  sourceId      String?
+  note          String?
+  occurredAt    DateTime              @default(now())
+  balanceBefore Decimal               @db.Decimal(20, 6)
+  balanceAfter  Decimal               @db.Decimal(20, 6)
+  createdBy     String                @default("system")
+  reversedMovementId String?
+  createdAt     DateTime              @default(now())
+  currency      Currency              @relation(fields: [currencyId], references: [id])
+  transaction   FinancialTransaction? @relation(fields: [transactionId], references: [id])
+  person        Person?               @relation("CashboxMovementPerson", fields: [personId], references: [id])
+
+  @@index([occurredAt])
+  @@index([personId])
+  @@index([sourceType, sourceId])
+}
+
+model Attachment {
+  id            String                @id @default(cuid())
+  transactionId String?
+  movementId    String?
+  originalName  String
+  storageKey    String
+  mimeType      String
+  size          Int
+  createdAt     DateTime              @default(now())
+  transaction   FinancialTransaction? @relation(fields: [transactionId], references: [id])
+  movement      TransactionMovement?  @relation(fields: [movementId], references: [id])
+}
+
+model LoginSession {
+  id             String    @id
+  createdAt      DateTime  @default(now())
+  lastActivityAt DateTime  @default(now())
+  expiresAt      DateTime
+  ip             String?
+  userAgent      String?
+  revokedAt      DateTime?
+}
+
+model LoginAttempt {
+  id          String   @id @default(cuid())
+  ip          String?
+  userAgent   String?
+  success     Boolean
+  attemptedAt DateTime @default(now())
+
+  @@index([ip, attemptedAt])
+}
+
+model AuditLog {
+  id          String   @id @default(cuid())
+  action      String
+  entityType  String?
+  entityId    String?
+  oldValue    Json?
+  newValue    Json?
+  description String?
+  ip          String?
+  userAgent   String?
+  sessionId   String?
+  createdAt   DateTime @default(now())
+
+  @@index([createdAt])
+}
+
+model DeletedItem {
+  id         String    @id @default(cuid())
+  entityType String
+  entityId   String
+  snapshot   Json
+  deletedAt  DateTime  @default(now())
+  restoredAt DateTime?
+}
+
+model BackupRecord {
+  id        String   @id @default(cuid())
+  type      String
+  filename  String
+  status    String
+  createdAt DateTime @default(now())
+}
+
+model SheinCard {
+  id                String          @id @default(cuid())
+  code              String          @unique
+  cardCodeEncrypted String?
+  pinEncrypted      String?
+  denomination      Decimal         @db.Decimal(20, 6)
+  status            SheinCardStatus @default(AVAILABLE)
+  purchasePrice     Decimal?        @db.Decimal(20, 6)
+  salePrice         Decimal?        @db.Decimal(20, 6)
+  saleCurrencyId    String?
+  saleCashboxMovementId String?
+  saleCurrency      Currency?       @relation("SheinCardSaleCurrency", fields: [saleCurrencyId], references: [id])
+  supplier          String?
+  buyerPersonId     String?
+  buyer             Person?         @relation("SheinCardBuyer", fields: [buyerPersonId], references: [id])
+  notes             String?
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+  soldAt            DateTime?
+  logs              SheinCardLog[]
+
+  @@index([denomination])
+  @@index([status])
+  @@index([buyerPersonId])
+  @@index([saleCurrencyId])
+}
+
+model SheinCardLog {
+  id        String           @id @default(cuid())
+  cardId    String
+  type      SheinCardLogType
+  amount    Decimal?         @db.Decimal(20, 6)
+  note      String?
+  createdBy String           @default("system")
+  createdAt DateTime         @default(now())
+  card      SheinCard        @relation(fields: [cardId], references: [id])
+
+  @@index([cardId])
+  @@index([createdAt])
+}
+
+model ReceivedCardBatch {
+  id                  String                 @id @default(cuid())
+  personId            String
+  currencyId          String?
+  receivedAt          DateTime               @default(now())
+  cardCount           Int
+  agreedAmountPerCard Decimal                @db.Decimal(20, 6)
+  notes               String?
+  createdAt           DateTime               @default(now())
+  updatedAt           DateTime               @updatedAt
+  person              Person                 @relation(fields: [personId], references: [id])
+  currency            Currency?              @relation(fields: [currencyId], references: [id])
+  cards               ReceivedCustomerCard[]
+
+  @@index([personId])
+  @@index([receivedAt])
+}
+
+model ReceivedCustomerCard {
+  id                   String             @id @default(cuid())
+  batchId              String
+  sequence             Int
+  bankName             String?
+  cardLast4            String?
+  valueUsd             Decimal            @default(0) @db.Decimal(20, 6)
+  agreedAmount         Decimal            @db.Decimal(20, 6)
+  settlementCurrencyId String?
+  settlementAmount     Decimal?           @db.Decimal(20, 6)
+  receivedAmount       Decimal            @default(0) @db.Decimal(20, 6)
+  status               ReceivedCardStatus @default(RECEIVED)
+  verificationReceived Boolean            @default(false)
+  receivedCashboxMovementId String?
+  settlementCashboxMovementId String?
+  secureInternalNote   String?
+  notes                String?
+  createdAt            DateTime           @default(now())
+  updatedAt            DateTime           @updatedAt
+  batch                ReceivedCardBatch  @relation(fields: [batchId], references: [id])
+  settlementCurrency   Currency?          @relation("ReceivedCardSettlementCurrency", fields: [settlementCurrencyId], references: [id])
+
+  @@unique([batchId, sequence])
+  @@index([status])
+  @@index([cardLast4])
+  @@index([settlementCurrencyId])
+}
+
+model CurrencyConversion {
+  id             String   @id @default(cuid())
+  fromCurrencyId String
+  toCurrencyId   String
+  fromAmount     Decimal  @db.Decimal(20, 6)
+  toAmount       Decimal  @db.Decimal(20, 6)
+  exchangeRate   Decimal  @db.Decimal(20, 8)
+  operatorName   String
+  notes          String?
+  occurredAt     DateTime @default(now())
+  fromMovementId String?
+  toMovementId   String?
+  createdAt      DateTime @default(now())
+  fromCurrency   Currency @relation("CurrencyConversionSource", fields: [fromCurrencyId], references: [id])
+  toCurrency     Currency @relation("CurrencyConversionTarget", fields: [toCurrencyId], references: [id])
+
+  @@index([occurredAt])
+  @@index([fromCurrencyId])
+  @@index([toCurrencyId])
+}
