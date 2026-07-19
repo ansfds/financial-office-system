@@ -39,6 +39,8 @@ export default async function PersonPage({ params }: { params: Promise<{ id: str
         <Info title="التصنيف" value={categoryLabels[person.category] || person.category} />
         <Info title="الهاتف" value={person.phone || '—'} />
         <Info title="العنوان" value={person.address || '—'} />
+        <Info title="معلومات إضافية" value={person.externalId || '—'} />
+        <Info title="ملاحظات" value={person.notes || '—'} />
       </div>
 
       <div className="card mt-6 p-5">
@@ -87,7 +89,7 @@ export default async function PersonPage({ params }: { params: Promise<{ id: str
             {person.cardBatches.map((batch) => (
               <div key={batch.id} className="rounded-lg border border-slate-200 p-3 dark:border-slate-800">
                 <div className="font-bold">
-                  {batch.cardCount} بطاقات - {new Date(batch.receivedAt).toLocaleDateString('ar')}
+                  {batch.cardCount} بطاقات - {new Date(batch.receivedAt).toLocaleDateString('en-GB')}
                 </div>
                 <div className="mt-2 text-sm text-slate-500">
                   المتفق عليه لكل بطاقة: {batch.agreedAmountPerCard.toString()} {batch.currency?.symbol || ''}

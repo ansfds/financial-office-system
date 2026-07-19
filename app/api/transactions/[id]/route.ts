@@ -9,6 +9,7 @@ const updateTransactionSchema = z.object({
   receivedAmount: z.coerce.number().min(0).optional(),
   paidAmount: z.coerce.number().min(0).optional(),
   bankName: z.string().trim().optional().nullable(),
+  executionType: z.string().trim().optional().nullable(),
   verificationReceived: z.coerce.boolean().optional(),
   secureInternalNote: z.string().trim().optional().nullable(),
   notes: z.string().trim().optional().nullable(),
@@ -94,6 +95,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
           receivedAmount,
           paidAmount,
           bankName: payload.bankName === undefined ? oldValue.bankName : payload.bankName,
+          executionType: payload.executionType === undefined ? oldValue.executionType : payload.executionType,
           verificationReceived:
             payload.verificationReceived === undefined
               ? oldValue.verificationReceived

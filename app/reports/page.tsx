@@ -1,4 +1,5 @@
 import Page from '@/components/Page';
+import SheinSalesReportClient from '@/components/SheinSalesReportClient';
 import { db } from '@/lib/db';
 
 export const dynamic = 'force-dynamic';
@@ -40,6 +41,7 @@ export default async function ReportsPage() {
     latestBalances,
     customerSummary,
     sheinSummary,
+    sheinSales,
     receivedCardSummary,
     todayMovements,
   ] = await Promise.all([
@@ -69,6 +71,15 @@ export default async function ReportsPage() {
     db.sheinCard.groupBy({
       by: ['denomination', 'status'],
       _count: true,
+    }),
+    db.sheinCardSale.findMany({
+      include: {
+        currency: true,
+        person: true,
+        items: { include: { card: true } },
+      },
+      orderBy: { occurredAt: 'desc' },
+      take: 1000,
     }),
     db.receivedCustomerCard.groupBy({
       by: ['status'],
@@ -120,7 +131,7 @@ export default async function ReportsPage() {
     <Page title="التقارير">
       <div className="grid gap-5">
         <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-          <SummaryCard title="الكروت المباعة" value={sheinSold} />
+          <SheinSalesReportClient soldCount={sheinSold} sales={JSON.parse(JSON.stringify(sheinSales))} />
           <SummaryCard title="الكروت المتوفرة" value={sheinAvailable} />
           <SummaryCard title="البطاقات المستلمة" value={receivedCards} />
           <SummaryCard title="البطاقات التي تمت تصفيتها" value={settledCards} />

@@ -41,10 +41,7 @@ export default function CashboxClient() {
     notes: '',
   });
 
-  const conversionCurrencies = useMemo(
-    () => currencies.filter((currency) => ['USD', 'LYD'].includes(currency.code)),
-    [currencies],
-  );
+  const conversionCurrencies = useMemo(() => currencies, [currencies]);
 
   const exchangeRate = useMemo(() => {
     const from = numberValue(conversionForm.fromAmount);
@@ -81,9 +78,7 @@ export default function CashboxClient() {
     const defaultCurrencyId = settingsData.currencies?.[0]?.id || '';
     const usd = settingsData.currencies?.find((currency: any) => currency.code === 'USD');
     const lyd = settingsData.currencies?.find((currency: any) => currency.code === 'LYD');
-    const loadedConversionCurrencies = settingsData.currencies?.filter((currency: any) =>
-      ['USD', 'LYD'].includes(currency.code),
-    ) || [];
+    const loadedConversionCurrencies = settingsData.currencies || [];
 
     setManualForm((value) => ({ ...value, currencyId: value.currencyId || defaultCurrencyId }));
     setConversionForm((value) => ({
@@ -121,7 +116,7 @@ export default function CashboxClient() {
 
   async function convertCurrency(event: React.FormEvent) {
     event.preventDefault();
-    if (!window.confirm('تأكيد تحويل العملة وتحديث رصيد الدولار والدينار؟')) return;
+    if (!window.confirm('تأكيد تحويل العملة وتحديث أرصدة الصندوق؟')) return;
 
     const response = await fetch('/api/cashbox/conversions', {
       method: 'POST',
@@ -315,7 +310,7 @@ export default function CashboxClient() {
                 onClick={() => setOpenDay(openDay === date ? '' : date)}
                 className="flex w-full items-center justify-between gap-3 bg-slate-50 px-4 py-3 text-right font-black dark:bg-slate-950"
               >
-                <span>معاملات يوم {new Date(date).toLocaleDateString('ar')}</span>
+                <span>معاملات يوم {new Date(date).toLocaleDateString('en-GB')}</span>
                 <span className="inline-flex items-center gap-2 text-sm text-slate-500">
                   {items.length} حركة
                   <ChevronDown size={18} />
@@ -352,7 +347,7 @@ export default function CashboxClient() {
                           <td>{movement.reason}</td>
                           <td>{movement.person?.fullName || movement.transaction?.person?.fullName || '—'}</td>
                           <td>{movement.createdBy || 'system'}</td>
-                          <td>{new Date(movement.occurredAt).toLocaleString('ar')}</td>
+                          <td>{new Date(movement.occurredAt).toLocaleString('en-GB')}</td>
                           <td>{movement.note || '—'}</td>
                         </tr>
                       ))}

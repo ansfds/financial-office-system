@@ -1,4 +1,5 @@
 import Page from '@/components/Page';
+import DangerSettings from '@/components/DangerSettings';
 import { db } from '@/lib/db';
 
 export const dynamic = 'force-dynamic';
@@ -40,6 +41,10 @@ export default async function SettingsPage() {
             غيّر رمز الدخول من متغير البيئة SYSTEM_ACCESS_CODE في الاستضافة ثم أعد النشر. لا يتم حفظ CVV داخل قاعدة
             البيانات، وتستخدم المنظومة فقط خيار استلام بيانات التحقق أو ملاحظات داخلية آمنة.
           </p>
+        </div>
+
+        <div className="lg:col-span-2">
+          <DangerSettings />
         </div>
       </div>
     </Page>

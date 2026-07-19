@@ -40,6 +40,8 @@ export async function GET(request: Request) {
               { fullName: { contains: q, mode: 'insensitive' } },
               { phone: { contains: q } },
               { customerNo: { contains: q, mode: 'insensitive' } },
+              { externalId: { contains: q, mode: 'insensitive' } },
+              { notes: { contains: q, mode: 'insensitive' } },
             ]
           : undefined,
       },

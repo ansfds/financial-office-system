@@ -45,7 +45,6 @@ export async function POST(request: Request) {
       const currencies = await tx.currency.findMany({
         where: {
           id: { in: [input.fromCurrencyId, input.toCurrencyId] },
-          code: { in: ['USD', 'LYD'] },
           isActive: true,
         },
       });
@@ -115,7 +114,7 @@ export async function POST(request: Request) {
     return ok(conversion, 201);
   } catch (error) {
     if ((error as Error).message === 'INVALID_CONVERSION_CURRENCIES') {
-      return fail('تحويل العملة متاح بين الدولار والدينار فقط');
+      return fail('اختر عملتين نشطتين للتحويل');
     }
     return apiError(error);
   }

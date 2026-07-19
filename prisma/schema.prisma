@@ -71,6 +71,14 @@ enum ReceivedCardStatus {
   CANCELLED
 }
 
+enum SheinPaymentMethod {
+  LYD_CASH
+  USD_CASH
+  LYD_TRANSFER
+  USD_TRANSFER
+  CARD
+}
+
 model SystemSetting {
   id        String   @id @default(cuid())
   key       String   @unique
@@ -93,6 +101,7 @@ model Person {
   deletedAt    DateTime?
   transactions FinancialTransaction[]
   sheinSales   SheinCard[]            @relation("SheinCardBuyer")
+  sheinCardSales SheinCardSale[]
   cardBatches  ReceivedCardBatch[]
   cashboxMovements CashboxMovement[]   @relation("CashboxMovementPerson")
 
@@ -117,6 +126,7 @@ model Currency {
   receivedBatches  ReceivedCardBatch[]
   receivedCardSettlements ReceivedCustomerCard[] @relation("ReceivedCardSettlementCurrency")
   sheinCardSales   SheinCard[]            @relation("SheinCardSaleCurrency")
+  sheinSalesReports SheinCardSale[]
   conversionSources CurrencyConversion[]   @relation("CurrencyConversionSource")
   conversionTargets CurrencyConversion[]   @relation("CurrencyConversionTarget")
 }
@@ -136,6 +146,7 @@ model FinancialTransaction {
   typeId               String?
   customType           String?
   description          String?
+  executionType        String?
   currencyId           String
   agreedAmount         Decimal               @db.Decimal(20, 6)
   receivedAmount       Decimal               @default(0) @db.Decimal(20, 6)
@@ -148,6 +159,7 @@ model FinancialTransaction {
   txId                 String?
   cardNumber           String?
   bankName             String?
+  sheinPaymentMethod   SheinPaymentMethod?
   verificationReceived Boolean               @default(false)
   secureInternalNote   String?
   notes                String?
@@ -163,6 +175,7 @@ model FinancialTransaction {
   movements            TransactionMovement[]
   cashboxMovements     CashboxMovement[]
   attachments          Attachment[]
+  sheinCardSale        SheinCardSale?
 
   @@index([transactionAt])
   @@index([status])
@@ -296,6 +309,7 @@ model SheinCard {
   salePrice         Decimal?        @db.Decimal(20, 6)
   saleCurrencyId    String?
   saleCashboxMovementId String?
+  salePaymentMethod SheinPaymentMethod?
   saleCurrency      Currency?       @relation("SheinCardSaleCurrency", fields: [saleCurrencyId], references: [id])
   supplier          String?
   buyerPersonId     String?
@@ -305,11 +319,49 @@ model SheinCard {
   updatedAt         DateTime        @updatedAt
   soldAt            DateTime?
   logs              SheinCardLog[]
+  saleItems         SheinCardSaleItem[]
 
   @@index([denomination])
   @@index([status])
   @@index([buyerPersonId])
   @@index([saleCurrencyId])
+}
+
+model SheinCardSale {
+  id             String             @id @default(cuid())
+  transactionId  String?            @unique
+  personId       String?
+  currencyId     String
+  paymentMethod  SheinPaymentMethod
+  denomination   Decimal            @db.Decimal(20, 6)
+  cardCount      Int
+  pricePerCard   Decimal            @db.Decimal(20, 6)
+  totalAmount    Decimal            @db.Decimal(20, 6)
+  occurredAt     DateTime           @default(now())
+  notes          String?
+  createdAt      DateTime           @default(now())
+  updatedAt      DateTime           @updatedAt
+  transaction    FinancialTransaction? @relation(fields: [transactionId], references: [id])
+  person         Person?            @relation(fields: [personId], references: [id])
+  currency       Currency           @relation(fields: [currencyId], references: [id])
+  items          SheinCardSaleItem[]
+
+  @@index([occurredAt])
+  @@index([paymentMethod])
+  @@index([denomination])
+  @@index([personId])
+  @@index([currencyId])
+}
+
+model SheinCardSaleItem {
+  id        String        @id @default(cuid())
+  saleId    String
+  cardId    String       @unique
+  createdAt DateTime     @default(now())
+  sale      SheinCardSale @relation(fields: [saleId], references: [id])
+  card      SheinCard     @relation(fields: [cardId], references: [id])
+
+  @@index([saleId])
 }
 
 model SheinCardLog {

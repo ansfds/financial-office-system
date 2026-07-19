@@ -4,7 +4,7 @@ import { Fragment, useEffect, useMemo, useState } from 'react';
 import { ChevronDown, Eye, EyeOff, Loader2, Mail, MessageCircle, Plus, Save, X } from 'lucide-react';
 import { toast } from 'sonner';
 
-const fixedDenominations = ['100', '300', '500', '1000'];
+const fixedDenominations = ['100', '300', '500', '800', '1000'];
 const companyWhatsAppPhone = '218935085091';
 
 const statusLabels: Record<string, string> = {
@@ -511,9 +511,9 @@ export default function SheinCardsClient({
                         ))}
                       </select>
                     </td>
-                    <td className="text-xs text-slate-500">{new Date(card.createdAt).toLocaleString('ar')}</td>
+                    <td className="text-xs text-slate-500">{new Date(card.createdAt).toLocaleString('en-GB')}</td>
                     <td className="text-xs text-slate-500">
-                      {card.soldAt ? new Date(card.soldAt).toLocaleString('ar') : '—'}
+                      {card.soldAt ? new Date(card.soldAt).toLocaleString('en-GB') : '—'}
                     </td>
                     <td>
                       <div className="flex flex-wrap gap-2">
@@ -552,7 +552,7 @@ export default function SheinCardsClient({
                                 <span>{log.amount ? Number(log.amount).toLocaleString('en-US') : '—'}</span>
                                 <span className="text-slate-600 dark:text-slate-300">{log.note || '—'}</span>
                                 <span className="text-xs text-slate-500">
-                                  {new Date(log.createdAt).toLocaleString('ar')}
+                                  {new Date(log.createdAt).toLocaleString('en-GB')}
                                 </span>
                               </div>
                             ))
