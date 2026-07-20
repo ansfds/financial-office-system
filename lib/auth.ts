@@ -6,20 +6,33 @@ export const COOKIE = 'fos_session';
 
 const ACTIVITY_TOUCH_INTERVAL_MS = 60_000;
 
-const sign = (id: string) =>
-  createHmac('sha256', process.env.SESSION_SECRET || '').update(id).digest('hex');
+function sessionSecret() {
+  return process.env.SESSION_SECRET || '';
+}
 
-export const pack = (id: string) => `${id}.${sign(id)}`;
+const sign = (payload: string) =>
+  createHmac('sha256', sessionSecret()).update(payload).digest('hex');
+
+export const pack = (id: string, expiresAt: Date) => {
+  const expires = expiresAt.getTime();
+  const payload = `${id}.${expires}`;
+  return `${payload}.${sign(payload)}`;
+};
 
 export function unpack(value?: string) {
   if (!value) return null;
 
-  const separator = value.lastIndexOf('.');
-  if (separator < 1) return null;
+  const parts = value.split('.');
+  if (parts.length !== 3) return null;
 
-  const id = value.slice(0, separator);
-  const signature = value.slice(separator + 1);
-  const expected = sign(id);
+  const [id, expires, signature] = parts;
+  if (!id || !expires || !signature) return null;
+
+  const expiresAt = Number(expires);
+  if (!Number.isFinite(expiresAt) || expiresAt < Date.now()) return null;
+
+  const payload = `${id}.${expires}`;
+  const expected = sign(payload);
 
   try {
     return timingSafeEqual(Buffer.from(signature), Buffer.from(expected)) ? id : null;
@@ -29,6 +42,7 @@ export function unpack(value?: string) {
 }
 
 const sessionMinutes = () => Number(process.env.SESSION_DURATION_MINUTES || 60);
+const inactivityMinutes = () => Number(process.env.INACTIVITY_LOCK_MINUTES || 15);
 
 export async function clientMeta() {
   const requestHeaders = await headers();
@@ -59,7 +73,7 @@ export async function createSession() {
     },
   });
 
-  (await cookies()).set(COOKIE, pack(id), {
+  (await cookies()).set(COOKIE, pack(id, expiresAt), {
     httpOnly: true,
     secure: process.env.NODE_ENV === 'production',
     sameSite: 'lax',
@@ -76,6 +90,14 @@ export async function getSession() {
 
   const session = await db.loginSession.findUnique({ where: { id } });
   if (!session || session.revokedAt || session.expiresAt < new Date()) return null;
+
+  if (Date.now() - session.lastActivityAt.getTime() > inactivityMinutes() * 60_000) {
+    await db.loginSession.update({
+      where: { id },
+      data: { revokedAt: new Date() },
+    });
+    return null;
+  }
 
   if (Date.now() - session.lastActivityAt.getTime() > ACTIVITY_TOUCH_INTERVAL_MS) {
     await db.loginSession.update({
