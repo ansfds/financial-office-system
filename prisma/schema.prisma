@@ -319,7 +319,7 @@ model SheinCard {
   updatedAt         DateTime        @updatedAt
   soldAt            DateTime?
   logs              SheinCardLog[]
-  saleItems         SheinCardSaleItem[]
+  saleItems         SheinCardSaleItem?
 
   @@index([denomination])
   @@index([status])
