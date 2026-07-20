@@ -7,3 +7,5 @@ coverage
 uploads
 tsconfig.tsbuildinfo
 backups
+
+.vercel
