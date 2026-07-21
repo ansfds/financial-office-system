@@ -147,6 +147,8 @@ model FinancialTransaction {
   customType           String?
   description          String?
   executionType        String?
+  operationKind        String?
+  operationDetails     Json?
   currencyId           String
   agreedAmount         Decimal               @db.Decimal(20, 6)
   receivedAmount       Decimal               @default(0) @db.Decimal(20, 6)
@@ -179,6 +181,7 @@ model FinancialTransaction {
 
   @@index([transactionAt])
   @@index([status])
+  @@index([operationKind])
   @@index([txId])
   @@index([cardNumber])
   @@index([bankName])

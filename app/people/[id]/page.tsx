@@ -10,6 +10,47 @@ const categoryLabels: Record<string, string> = {
   REGULAR: 'عميل عادي',
 };
 
+const operationLabels: Record<string, string> = {
+  MANUAL: 'نوع يدوي',
+  USDT: 'USDT',
+  CARD_OPERATION: 'عمليات بطاقة',
+  CASHBOX_MOVEMENT: 'حركة صندوق',
+  CURRENCY_CONVERSION: 'صرف / تحويل عملة',
+  MONEY_TRANSFER: 'حوالة مالية',
+  SHEIN_CARD_SALE: 'كروت شي إن',
+  EXPENSE: 'مصروف / دفع فاتورة',
+};
+
+function numberValue(value: any) {
+  const parsed = Number(value || 0);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function transactionDetails(transaction: any) {
+  const details = transaction.operationDetails || {};
+  const symbol = transaction.currency?.symbol || '';
+
+  if (transaction.operationKind === 'CARD_OPERATION') {
+    return `${numberValue(details.cardCount).toLocaleString('en-US')} بطاقات × ${numberValue(details.cardValue).toLocaleString(
+      'en-US',
+    )} ${symbol} = ${numberValue(details.cardTotal).toLocaleString('en-US')} ${symbol}`;
+  }
+
+  if (transaction.operationKind === 'USDT') {
+    return `${numberValue(details.usdtAmount).toLocaleString('en-US')} USDT عبر ${details.network || '—'}`;
+  }
+
+  if (transaction.operationKind === 'MONEY_TRANSFER') {
+    return `${details.receiverName || '—'} / ${details.destination || '—'}`;
+  }
+
+  if (transaction.operationKind === 'EXPENSE') {
+    return `${details.payee || '—'} - ${details.expenseType || '—'}`;
+  }
+
+  return transaction.executionType || transaction.description || '—';
+}
+
 export default async function PersonPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const person = await db.person.findUnique({
@@ -51,6 +92,8 @@ export default async function PersonPage({ params }: { params: Promise<{ id: str
               <tr>
                 <th>الرقم</th>
                 <th>النوع</th>
+                <th>نوع التنفيذ</th>
+                <th>التفاصيل</th>
                 <th>المتفق عليه</th>
                 <th>المستلم</th>
                 <th>المدفوع</th>
@@ -66,7 +109,9 @@ export default async function PersonPage({ params }: { params: Promise<{ id: str
                 return (
                   <tr key={transaction.id}>
                     <td>{transaction.number}</td>
-                    <td>{transaction.type?.name || transaction.customType || '—'}</td>
+                    <td>{operationLabels[transaction.operationKind || ''] || transaction.type?.name || transaction.customType || '—'}</td>
+                    <td>{transaction.executionType || '—'}</td>
+                    <td>{transactionDetails(transaction)}</td>
                     <td>
                       {transaction.agreedAmount.toString()} {transaction.currency.symbol}
                     </td>
@@ -93,6 +138,9 @@ export default async function PersonPage({ params }: { params: Promise<{ id: str
                 </div>
                 <div className="mt-2 text-sm text-slate-500">
                   المتفق عليه لكل بطاقة: {batch.agreedAmountPerCard.toString()} {batch.currency?.symbol || ''}
+                </div>
+                <div className="mt-1 text-sm text-slate-500">
+                  الإجمالي: {batch.agreedAmountPerCard.mul(batch.cardCount).toString()} {batch.currency?.symbol || ''}
                 </div>
               </div>
             ))}

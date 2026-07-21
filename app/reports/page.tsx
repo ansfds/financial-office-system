@@ -27,8 +27,50 @@ const receivedStatusLabels: Record<string, string> = {
   CANCELLED: 'ملغاة',
 };
 
+const operationLabels: Record<string, string> = {
+  MANUAL: 'نوع يدوي',
+  USDT: 'USDT',
+  CARD_OPERATION: 'عمليات بطاقة',
+  CASHBOX_MOVEMENT: 'حركة صندوق',
+  CURRENCY_CONVERSION: 'صرف / تحويل عملة',
+  MONEY_TRANSFER: 'حوالة مالية',
+  SHEIN_CARD_SALE: 'كروت شي إن',
+  EXPENSE: 'مصروف / دفع فاتورة',
+};
+
 function amount(value: any) {
   return Number(value || 0);
+}
+
+function operationDetails(transaction: any) {
+  const details = transaction.operationDetails || {};
+  const symbol = transaction.currency?.symbol || '';
+
+  if (transaction.operationKind === 'CARD_OPERATION') {
+    return `${amount(details.cardCount).toLocaleString('en-US')} بطاقات × ${amount(details.cardValue).toLocaleString(
+      'en-US',
+    )} ${symbol} = ${amount(details.cardTotal).toLocaleString('en-US')} ${symbol}`;
+  }
+
+  if (transaction.operationKind === 'USDT') {
+    return `${amount(details.usdtAmount).toLocaleString('en-US')} USDT عبر ${details.network || '—'}`;
+  }
+
+  if (transaction.operationKind === 'SHEIN_CARD_SALE') {
+    return `${amount(details.cardCount).toLocaleString('en-US')} كروت - إجمالي ${amount(details.totalAmount).toLocaleString(
+      'en-US',
+    )} ${symbol}`;
+  }
+
+  if (transaction.operationKind === 'MONEY_TRANSFER') {
+    return `${details.receiverName || '—'} / ${details.destination || '—'}`;
+  }
+
+  if (transaction.operationKind === 'EXPENSE') {
+    return `${details.payee || '—'} - ${details.expenseType || '—'}`;
+  }
+
+  return transaction.executionType || transaction.description || '—';
 }
 
 export default async function ReportsPage() {
@@ -44,6 +86,7 @@ export default async function ReportsPage() {
     sheinSales,
     receivedCardSummary,
     todayMovements,
+    recentOperations,
   ] = await Promise.all([
     db.financialTransaction.groupBy({
       by: ['currencyId', 'status'],
@@ -89,6 +132,12 @@ export default async function ReportsPage() {
       where: { occurredAt: { gte: today } },
       include: { currency: true },
       orderBy: { occurredAt: 'desc' },
+    }),
+    db.financialTransaction.findMany({
+      where: { deletedAt: null },
+      include: { person: true, currency: true, type: true },
+      orderBy: { transactionAt: 'desc' },
+      take: 100,
     }),
   ]);
 
@@ -203,6 +252,38 @@ export default async function ReportsPage() {
                     <td>{item._sum.paidAmount?.toString()}</td>
                     <td>{item._sum.receivableAmount?.toString()}</td>
                     <td>{item._sum.payableAmount?.toString()}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section className="card p-5">
+          <h2 className="mb-4 font-black">آخر العمليات</h2>
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>التاريخ</th>
+                  <th>النوع</th>
+                  <th>نوع التنفيذ</th>
+                  <th>التفاصيل</th>
+                  <th>الزبون</th>
+                  <th>المبلغ</th>
+                </tr>
+              </thead>
+              <tbody>
+                {recentOperations.map((transaction) => (
+                  <tr key={transaction.id}>
+                    <td>{new Date(transaction.transactionAt).toLocaleString('en-GB')}</td>
+                    <td>{operationLabels[transaction.operationKind || ''] || transaction.type?.name || transaction.customType || '—'}</td>
+                    <td>{transaction.executionType || '—'}</td>
+                    <td>{operationDetails(transaction)}</td>
+                    <td>{transaction.person?.fullName || '—'}</td>
+                    <td>
+                      {amount(transaction.agreedAmount).toLocaleString('en-US')} {transaction.currency.symbol}
+                    </td>
                   </tr>
                 ))}
               </tbody>

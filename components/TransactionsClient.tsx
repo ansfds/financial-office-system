@@ -14,6 +14,31 @@ const statusLabels: Record<string, string> = {
   CANCELLED: 'ملغاة',
 };
 
+const operationLabels: Record<string, string> = {
+  MANUAL: 'نوع يدوي',
+  USDT: 'USDT',
+  CARD_OPERATION: 'عمليات بطاقة',
+  CASHBOX_MOVEMENT: 'حركة صندوق',
+  CURRENCY_CONVERSION: 'صرف / تحويل عملة',
+  MONEY_TRANSFER: 'حوالة مالية',
+  SHEIN_CARD_SALE: 'كروت شي إن',
+  EXPENSE: 'مصروف / دفع فاتورة',
+};
+
+const simplePaymentLabels: Record<string, string> = {
+  CASH: 'كاش',
+  TRANSFER: 'حوالة',
+  CARD: 'بطاقة مصرفية',
+};
+
+const detailedPaymentLabels: Record<string, string> = {
+  LYD_CASH: 'كاش دينار',
+  USD_CASH: 'كاش دولار',
+  LYD_TRANSFER: 'حوالة دينار',
+  USD_TRANSFER: 'حوالة دولار',
+  CARD: 'بطاقة مصرفية',
+};
+
 function decimal(value: any) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : 0;
@@ -28,6 +53,55 @@ function remaining(transaction: any) {
 
 function executionLabel(transaction: any) {
   return transaction.executionType || transaction.description || transaction.type?.name || transaction.customType || '—';
+}
+
+function amountText(value: any, symbol?: string) {
+  return `${decimal(value).toLocaleString('en-US')} ${symbol || ''}`.trim();
+}
+
+function detailsLabel(transaction: any) {
+  const details = transaction.operationDetails || {};
+  const symbol = transaction.currency?.symbol || '';
+
+  if (transaction.operationKind === 'CARD_OPERATION') {
+    return `${Number(details.cardCount || 0).toLocaleString('en-US')} بطاقات × ${amountText(details.cardValue, symbol)} = ${amountText(
+      details.cardTotal,
+      symbol,
+    )}`;
+  }
+
+  if (transaction.operationKind === 'USDT') {
+    return `${amountText(details.usdtAmount, 'USDT')} عبر ${details.network || '—'} - ${simplePaymentLabels[details.paymentMethod] || '—'}`;
+  }
+
+  if (transaction.operationKind === 'SHEIN_CARD_SALE') {
+    return `${Number(details.cardCount || 0).toLocaleString('en-US')} كروت × ${amountText(details.pricePerCard, symbol)} = ${amountText(
+      details.totalAmount,
+      symbol,
+    )}`;
+  }
+
+  if (transaction.operationKind === 'MONEY_TRANSFER') {
+    return `${details.destination || '—'} / ${details.receiverName || '—'} - ${simplePaymentLabels[details.paymentMethod] || '—'}`;
+  }
+
+  if (transaction.operationKind === 'CURRENCY_CONVERSION') {
+    return `${amountText(details.fromAmount)} إلى ${amountText(details.toAmount)} - سعر ${details.exchangeRate || '—'}`;
+  }
+
+  if (transaction.operationKind === 'EXPENSE') {
+    return `${details.payee || '—'} - ${details.expenseType || '—'} - ${simplePaymentLabels[details.paymentMethod] || '—'}`;
+  }
+
+  if (transaction.operationKind === 'CASHBOX_MOVEMENT') {
+    return `${details.reason || '—'} - ${simplePaymentLabels[details.movementMethod] || '—'}`;
+  }
+
+  if (transaction.operationKind === 'MANUAL') {
+    return details.cashDirection ? `اتجاه العملية: ${details.cashDirection}` : '—';
+  }
+
+  return transaction.sheinPaymentMethod ? detailedPaymentLabels[transaction.sheinPaymentMethod] || transaction.sheinPaymentMethod : '—';
 }
 
 function shortNote(text?: string | null) {
@@ -97,6 +171,7 @@ export default function TransactionsClient({ initialTransactions }: { initialTra
             <tr>
               <th>الزبون</th>
               <th>النوع</th>
+              <th>التفاصيل</th>
               <th>نوع التنفيذ</th>
               <th>المستلم</th>
               <th>المدفوع</th>
@@ -119,7 +194,8 @@ export default function TransactionsClient({ initialTransactions }: { initialTra
                     '—'
                   )}
                 </td>
-                <td>{transaction.type?.name || transaction.customType || '—'}</td>
+                <td>{operationLabels[transaction.operationKind] || transaction.type?.name || transaction.customType || '—'}</td>
+                <td className="min-w-64 text-sm text-slate-600 dark:text-slate-300">{detailsLabel(transaction)}</td>
                 <td className="min-w-72 text-sm font-bold text-slate-700 dark:text-slate-200">
                   {executionLabel(transaction)}
                 </td>
