@@ -4,6 +4,7 @@ import { db } from '@/lib/db';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
+export const fetchCache = 'force-no-store';
 
 const categoryLabels: Record<string, string> = {
   VIP: 'عميل مميز',
@@ -73,9 +74,26 @@ function operationDetails(transaction: any) {
   return transaction.executionType || transaction.description || '—';
 }
 
-export default async function ReportsPage() {
+function dateInput(value: Date) {
+  return value.toISOString().slice(0, 10);
+}
+
+function endOfDay(value: Date) {
+  const date = new Date(value);
+  date.setHours(23, 59, 59, 999);
+  return date;
+}
+
+export default async function ReportsPage({ searchParams }: { searchParams: Promise<{ from?: string; to?: string }> }) {
+  const params = await searchParams;
   const today = new Date();
   today.setHours(0, 0, 0, 0);
+  const fromDate = params.from ? new Date(`${params.from}T00:00:00`) : today;
+  const toDate = params.to ? endOfDay(new Date(`${params.to}T00:00:00`)) : endOfDay(today);
+  const transactionWhere = {
+    deletedAt: null,
+    transactionAt: { gte: fromDate, lte: toDate },
+  };
 
   const [
     transactionSummary,
@@ -90,7 +108,7 @@ export default async function ReportsPage() {
   ] = await Promise.all([
     db.financialTransaction.groupBy({
       by: ['currencyId', 'status'],
-      where: { deletedAt: null },
+      where: transactionWhere,
       _sum: {
         agreedAmount: true,
         receivedAmount: true,
@@ -116,28 +134,41 @@ export default async function ReportsPage() {
       _count: true,
     }),
     db.sheinCardSale.findMany({
+      where: { occurredAt: { gte: fromDate, lte: toDate } },
       include: {
         currency: true,
         person: true,
         items: { include: { card: true } },
       },
       orderBy: { occurredAt: 'desc' },
-      take: 1000,
+      take: 200,
     }),
     db.receivedCustomerCard.groupBy({
       by: ['status'],
       _count: true,
     }),
     db.cashboxMovement.findMany({
-      where: { occurredAt: { gte: today } },
+      where: { occurredAt: { gte: fromDate, lte: toDate } },
       include: { currency: true },
       orderBy: { occurredAt: 'desc' },
     }),
     db.financialTransaction.findMany({
-      where: { deletedAt: null },
-      include: { person: true, currency: true, type: true },
+      where: transactionWhere,
+      select: {
+        id: true,
+        transactionAt: true,
+        operationKind: true,
+        operationDetails: true,
+        customType: true,
+        executionType: true,
+        description: true,
+        agreedAmount: true,
+        person: { select: { fullName: true } },
+        currency: { select: { symbol: true } },
+        type: { select: { name: true } },
+      },
       orderBy: { transactionAt: 'desc' },
-      take: 100,
+      take: 50,
     }),
   ]);
 
@@ -179,6 +210,20 @@ export default async function ReportsPage() {
   return (
     <Page title="التقارير">
       <div className="grid gap-5">
+        <form className="card grid gap-3 p-4 md:grid-cols-[1fr_1fr_auto]">
+          <div>
+            <label className="mb-2 block text-sm font-bold text-slate-700 dark:text-slate-200">من تاريخ</label>
+            <input name="from" type="date" defaultValue={dateInput(fromDate)} />
+          </div>
+          <div>
+            <label className="mb-2 block text-sm font-bold text-slate-700 dark:text-slate-200">إلى تاريخ</label>
+            <input name="to" type="date" defaultValue={dateInput(toDate)} />
+          </div>
+          <button className="self-end rounded-lg bg-indigo-600 px-5 py-3 font-bold text-white hover:bg-indigo-500">
+            عرض التقرير
+          </button>
+        </form>
+
         <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
           <SheinSalesReportClient soldCount={sheinSold} sales={JSON.parse(JSON.stringify(sheinSales))} />
           <SummaryCard title="الكروت المتوفرة" value={sheinAvailable} />
@@ -187,7 +232,7 @@ export default async function ReportsPage() {
         </section>
 
         <section className="card p-5">
-          <h2 className="mb-4 font-black">ملخص اليوم</h2>
+          <h2 className="mb-4 font-black">ملخص الفترة</h2>
           <div className="table-wrap">
             <table>
               <thead>

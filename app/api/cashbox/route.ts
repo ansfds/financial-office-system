@@ -2,6 +2,7 @@ import { db } from '@/lib/db';
 import { requireSession, audit } from '@/lib/auth';
 import { ok, apiError, fail } from '@/lib/http';
 import { createCashboxMovement } from '@/lib/cashbox';
+import { revalidateFinancePaths } from '@/lib/revalidate';
 import { z } from 'zod';
 
 const manualMovementSchema = z.object({
@@ -61,6 +62,7 @@ export async function POST(request: Request) {
       newValue: movement as any,
       description: input.reason,
     });
+    revalidateFinancePaths();
 
     return ok(movement, 201);
   } catch (error) {

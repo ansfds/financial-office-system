@@ -33,6 +33,16 @@ async function validSessionCookie(value: string | undefined) {
   return signature === expected;
 }
 
+function clearSessionCookie(response: NextResponse) {
+  response.cookies.set('fos_session', '', {
+    expires: new Date(0),
+    httpOnly: true,
+    sameSite: 'lax',
+    path: '/',
+  });
+  return response;
+}
+
 export async function middleware(request: NextRequest) {
   const pathname = request.nextUrl.pathname;
 
@@ -45,17 +55,28 @@ export async function middleware(request: NextRequest) {
     return NextResponse.next();
   }
 
-  const authenticated = await validSessionCookie(request.cookies.get('fos_session')?.value);
+  const cookieValue = request.cookies.get('fos_session')?.value;
+  const authenticated = await validSessionCookie(cookieValue);
 
   if (pathname === '/login') {
-    return authenticated ? NextResponse.redirect(new URL('/dashboard', request.url)) : NextResponse.next();
+    if (!cookieValue || authenticated) return NextResponse.next();
+    return clearSessionCookie(NextResponse.next());
   }
 
   if (!authenticated) {
     if (pathname.startsWith('/api/')) {
-      return NextResponse.json({ error: 'غير مصرح' }, { status: 401 });
+      const response = NextResponse.json(
+        { error: 'انتهت الجلسة أو غير مصرح بالدخول. سجل الدخول من جديد.' },
+        {
+          status: 401,
+          headers: {
+            'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0',
+          },
+        },
+      );
+      return clearSessionCookie(response);
     }
-    return NextResponse.redirect(new URL('/login', request.url));
+    return clearSessionCookie(NextResponse.redirect(new URL('/login', request.url)));
   }
 
   return NextResponse.next();

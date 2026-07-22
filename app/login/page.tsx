@@ -1,6 +1,6 @@
 'use client';
 
-import { FormEvent, useState } from 'react';
+import { FormEvent, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Eye, EyeOff, Loader2, ShieldCheck } from 'lucide-react';
 
@@ -11,7 +11,31 @@ export default function Login() {
   const [code, setCode] = useState('');
   const [showCode, setShowCode] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [checkingSession, setCheckingSession] = useState(true);
   const [error, setError] = useState('');
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function checkSession() {
+      try {
+        const response = await fetch('/api/auth/session', { cache: 'no-store' });
+        if (!cancelled && response.ok) {
+          router.replace('/dashboard');
+          router.refresh();
+          return;
+        }
+      } finally {
+        if (!cancelled) setCheckingSession(false);
+      }
+    }
+
+    checkSession();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [router]);
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -86,7 +110,7 @@ export default function Login() {
                 <p className="text-sm font-bold text-indigo-700">تسجيل الدخول</p>
                 <h2 className="mt-2 text-2xl font-black tracking-normal text-slate-950">أدخل رمز الدخول</h2>
                 <p className="mt-2 text-sm leading-6 text-slate-500">
-                  استخدم الرمز المخصص للنظام للانتقال إلى لوحة التحكم.
+                  {checkingSession ? 'يتم التحقق من الجلسة الحالية...' : 'استخدم الرمز المخصص للنظام للانتقال إلى لوحة التحكم.'}
                 </p>
               </div>
 

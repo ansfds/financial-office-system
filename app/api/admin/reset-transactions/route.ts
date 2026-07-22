@@ -1,10 +1,12 @@
 import { audit, requireSession, safeCodeMatch } from '@/lib/auth';
 import { db } from '@/lib/db';
 import { apiError, fail, ok } from '@/lib/http';
+import { revalidateFinancePaths } from '@/lib/revalidate';
 import { z } from 'zod';
 
 const resetSchema = z.object({
   accessCode: z.string().min(1),
+  backupConfirmed: z.literal(true),
   includeSheinCards: z.coerce.boolean().default(false),
   includeReceivedCards: z.coerce.boolean().default(false),
 });
@@ -14,7 +16,7 @@ export async function POST(request: Request) {
     await requireSession();
 
     const parsed = resetSchema.safeParse(await request.json());
-    if (!parsed.success) return fail('أدخل رمز الدخول وخيارات التصفير بشكل صحيح');
+    if (!parsed.success) return fail('أدخل رمز الدخول وأكد أخذ نسخة احتياطية قبل التصفير');
 
     const input = parsed.data;
     if (!safeCodeMatch(input.accessCode)) return fail('رمز الدخول غير صحيح', 403);
@@ -88,6 +90,7 @@ export async function POST(request: Request) {
       newValue: result as any,
       description: 'حذف جميع المعاملات القديمة بنظام الأرشفة',
     });
+    revalidateFinancePaths();
 
     return ok(result);
   } catch (error) {

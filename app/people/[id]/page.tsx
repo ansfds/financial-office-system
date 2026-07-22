@@ -4,6 +4,7 @@ import { notFound } from 'next/navigation';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
+export const fetchCache = 'force-no-store';
 
 const categoryLabels: Record<string, string> = {
   VIP: 'عميل مميز',

@@ -41,8 +41,9 @@ export default function Shell({ children }: { children: React.ReactNode }) {
   const [open, setOpen] = useState(false);
 
   async function logout() {
-    await fetch('/api/auth/logout', { method: 'POST' });
+    await fetch('/api/auth/logout', { method: 'POST', cache: 'no-store' }).catch(() => null);
     router.replace('/login');
+    router.refresh();
   }
 
   return (

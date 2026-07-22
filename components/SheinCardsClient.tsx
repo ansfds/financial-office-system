@@ -1,6 +1,7 @@
 'use client';
 
 import { Fragment, useEffect, useMemo, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { ChevronDown, Eye, EyeOff, Loader2, Mail, MessageCircle, Plus, Save, X } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -72,6 +73,7 @@ export default function SheinCardsClient({
   currencies: any[];
   initialCards: any[];
 }) {
+  const router = useRouter();
   const defaultSaleCurrencyId = currencies.find((currency) => currency.code === 'USD')?.id || currencies[0]?.id || '';
   const [cards, setCards] = useState<any[]>(initialCards);
   const [activeDenomination, setActiveDenomination] = useState<string>('all');
@@ -92,7 +94,7 @@ export default function SheinCardsClient({
   const [form, setForm] = useState<SheinForm>(() => blankForm(defaultSaleCurrencyId));
 
   async function load() {
-    const response = await fetch('/api/inventory/shein-cards');
+    const response = await fetch('/api/inventory/shein-cards', { cache: 'no-store' });
     const data = await response.json();
     if (!response.ok) return toast.error(data.error || 'تعذر تحميل كروت شي إن');
     setCards(data);
@@ -161,6 +163,7 @@ export default function SheinCardsClient({
     setForm(blankForm(defaultSaleCurrencyId));
     setCards((items) => [data, ...items.filter((item) => item.id !== data.id)]);
     setActiveDenomination(String(Number(data.denomination)));
+    router.refresh();
   }
 
   function updateLocal(id: string, patch: any) {
@@ -210,12 +213,13 @@ export default function SheinCardsClient({
     updateLocal(card.id, data);
     setSaleConfirmCard(null);
     toast.success('تم حفظ الكرت');
+    router.refresh();
   }
 
   async function fetchSecret(card: any) {
     if (secretsById[card.id]) return secretsById[card.id];
 
-    const response = await fetch(`/api/inventory/shein-cards/${card.id}`);
+    const response = await fetch(`/api/inventory/shein-cards/${card.id}`, { cache: 'no-store' });
     const data = await response.json();
     if (!response.ok) {
       throw new Error(data.error || 'تعذر إظهار بيانات الكرت');

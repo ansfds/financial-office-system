@@ -3,6 +3,7 @@ import { db } from '@/lib/db';
 import { audit, requireSession } from '@/lib/auth';
 import { apiError, fail, ok } from '@/lib/http';
 import { D, statusOf } from '@/lib/money';
+import { revalidateFinancePaths } from '@/lib/revalidate';
 import { z } from 'zod';
 
 const updateTransactionSchema = z.object({
@@ -127,6 +128,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
       newValue: result.updated as any,
       description: 'تعديل دفعة معاملة',
     });
+    revalidateFinancePaths(result.updated.personId ? [`/people/${result.updated.personId}`] : []);
 
     return ok(result.updated);
   } catch (error) {

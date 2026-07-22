@@ -10,6 +10,7 @@
     "db:push": "prisma db push",
     "db:migrate": "prisma migrate dev",
     "db:seed": "tsx prisma/seed.ts",
+    "backup": "tsx scripts/backup-system-data.ts",
     "db:backfill:customers": "node tools/backfill-customer-numbers.cjs",
     "typecheck": "tsc --noEmit",
     "test": "vitest run"

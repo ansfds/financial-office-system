@@ -4,6 +4,7 @@ import { db } from '@/lib/db';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
+export const fetchCache = 'force-no-store';
 
 export default async function SheinCardsPage() {
   const [people, currencies, cards] = await Promise.all([
@@ -36,6 +37,7 @@ export default async function SheinCardsPage() {
         logs: { orderBy: { createdAt: 'desc' } },
       },
       orderBy: { createdAt: 'desc' },
+      take: 300,
     }),
   ]);
 

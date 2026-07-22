@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { Edit3, Info, Save, Search, UserPlus, X } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -44,6 +45,7 @@ function formatDate(value: string) {
 }
 
 export default function PeopleClient({ initialPeople }: { initialPeople: any[] }) {
+  const router = useRouter();
   const [items, setItems] = useState<any[]>(initialPeople);
   const [q, setQ] = useState('');
   const [loading, setLoading] = useState(false);
@@ -54,7 +56,7 @@ export default function PeopleClient({ initialPeople }: { initialPeople: any[] }
 
   async function load(search = q) {
     setLoading(true);
-    const response = await fetch(`/api/people?q=${encodeURIComponent(search)}`);
+    const response = await fetch(`/api/people?q=${encodeURIComponent(search)}`, { cache: 'no-store' });
     const data = await response.json();
     setLoading(false);
     if (!response.ok) return toast.error(data.error || 'تعذر تحميل الزبائن');
@@ -79,6 +81,7 @@ export default function PeopleClient({ initialPeople }: { initialPeople: any[] }
     toast.success('تمت إضافة الزبون');
     setForm(blankForm);
     load('');
+    router.refresh();
   }
 
   function openEdit(person: any) {
@@ -118,6 +121,7 @@ export default function PeopleClient({ initialPeople }: { initialPeople: any[] }
     setEditingPerson(null);
     setEditForm(blankForm);
     toast.success('تم تعديل بيانات الزبون');
+    router.refresh();
   }
 
   return (

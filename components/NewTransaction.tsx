@@ -488,6 +488,7 @@ export default function NewTransaction({
     setCustomerForm(initialCustomerForm);
     setCustomerModalOpen(false);
     toast.success('تمت إضافة الزبون واختياره');
+    router.refresh();
   }
 
   async function add(event: FormEvent) {
@@ -693,6 +694,7 @@ export default function NewTransaction({
     if (!response.ok) return toast.error(result.error || 'تعذر حفظ المعاملة');
 
     toast.success('تم إنشاء المعاملة');
+    router.refresh();
     router.push('/transactions');
   }
 

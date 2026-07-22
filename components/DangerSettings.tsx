@@ -1,14 +1,17 @@
 'use client';
 
 import { useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { AlertTriangle, Loader2, Trash2, X } from 'lucide-react';
 import { toast } from 'sonner';
 
 export default function DangerSettings() {
+  const router = useRouter();
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [form, setForm] = useState({
     accessCode: '',
+    backupConfirmed: false,
     includeSheinCards: false,
     includeReceivedCards: false,
   });
@@ -31,7 +34,8 @@ export default function DangerSettings() {
 
     toast.success(`تمت أرشفة ${result.archivedTransactions.toLocaleString('en-US')} معاملة`);
     setOpen(false);
-    setForm({ accessCode: '', includeSheinCards: false, includeReceivedCards: false });
+    setForm({ accessCode: '', backupConfirmed: false, includeSheinCards: false, includeReceivedCards: false });
+    router.refresh();
   }
 
   return (
@@ -89,6 +93,15 @@ export default function DangerSettings() {
                 onChange={(event) => setForm({ ...form, accessCode: event.target.value })}
                 placeholder="SYSTEM_ACCESS_CODE"
               />
+
+              <label className="flex items-center gap-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm font-bold text-amber-800 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-200">
+                <input
+                  type="checkbox"
+                  checked={form.backupConfirmed}
+                  onChange={(event) => setForm({ ...form, backupConfirmed: event.target.checked })}
+                />
+                أؤكد أنني أخذت نسخة احتياطية قبل تنفيذ الأرشفة
+              </label>
 
               <label className="flex items-center gap-3 rounded-lg border border-slate-200 bg-white p-3 text-sm font-bold dark:border-slate-800 dark:bg-slate-900">
                 <input

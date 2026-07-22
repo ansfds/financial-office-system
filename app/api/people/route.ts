@@ -1,6 +1,7 @@
 import { db } from '@/lib/db';
 import { audit, requireSession } from '@/lib/auth';
 import { apiError, fail, ok } from '@/lib/http';
+import { revalidateFinancePaths } from '@/lib/revalidate';
 import { Prisma } from '@prisma/client';
 import { z } from 'zod';
 
@@ -30,6 +31,8 @@ export async function GET(request: Request) {
     await requireSession();
 
     const q = new URL(request.url).searchParams.get('q')?.trim() || '';
+    const page = Math.max(Number(new URL(request.url).searchParams.get('page') || 1), 1);
+    const pageSize = Math.min(Math.max(Number(new URL(request.url).searchParams.get('pageSize') || 100), 20), 200);
 
     const people = await db.person.findMany({
       where: {
@@ -45,7 +48,20 @@ export async function GET(request: Request) {
             ]
           : undefined,
       },
+      select: {
+        id: true,
+        customerNo: true,
+        fullName: true,
+        phone: true,
+        address: true,
+        externalId: true,
+        notes: true,
+        category: true,
+        createdAt: true,
+      },
       orderBy: { createdAt: 'desc' },
+      skip: (page - 1) * pageSize,
+      take: pageSize,
     });
 
     return ok(people);
@@ -72,6 +88,7 @@ export async function POST(request: Request) {
       newValue: person as any,
       description: 'إضافة زبون',
     });
+    revalidateFinancePaths(['/people']);
 
     return ok(person, 201);
   } catch (error) {

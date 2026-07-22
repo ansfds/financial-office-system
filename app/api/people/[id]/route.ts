@@ -1,6 +1,7 @@
 import { db } from '@/lib/db';
 import { audit, requireSession } from '@/lib/auth';
 import { apiError, fail, ok } from '@/lib/http';
+import { revalidateFinancePaths } from '@/lib/revalidate';
 import { z } from 'zod';
 
 const updatePersonSchema = z.object({
@@ -59,6 +60,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
       newValue: person as any,
       description: 'تعديل بيانات زبون',
     });
+    revalidateFinancePaths([`/people/${id}`]);
 
     return ok(person);
   } catch (error) {
@@ -86,6 +88,7 @@ export async function DELETE(_: Request, { params }: { params: Promise<{ id: str
       oldValue: oldValue as any,
       description: 'أرشفة زبون',
     });
+    revalidateFinancePaths(['/people', `/people/${id}`]);
 
     return ok({ success: true });
   } catch (error) {

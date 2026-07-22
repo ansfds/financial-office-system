@@ -44,6 +44,14 @@ export function unpack(value?: string) {
 const sessionMinutes = () => Number(process.env.SESSION_DURATION_MINUTES || 60);
 const inactivityMinutes = () => Number(process.env.INACTIVITY_LOCK_MINUTES || 15);
 
+async function clearSessionCookie() {
+  try {
+    (await cookies()).delete(COOKIE);
+  } catch {
+    // Cookie mutation is unavailable in some server-rendering contexts; route handlers still clear it.
+  }
+}
+
 export async function clientMeta() {
   const requestHeaders = await headers();
   return {
@@ -86,16 +94,23 @@ export async function createSession() {
 
 export async function getSession() {
   const id = unpack((await cookies()).get(COOKIE)?.value);
-  if (!id) return null;
+  if (!id) {
+    await clearSessionCookie();
+    return null;
+  }
 
   const session = await db.loginSession.findUnique({ where: { id } });
-  if (!session || session.revokedAt || session.expiresAt < new Date()) return null;
+  if (!session || session.revokedAt || session.expiresAt < new Date()) {
+    await clearSessionCookie();
+    return null;
+  }
 
   if (Date.now() - session.lastActivityAt.getTime() > inactivityMinutes() * 60_000) {
     await db.loginSession.update({
       where: { id },
       data: { revokedAt: new Date() },
     });
+    await clearSessionCookie();
     return null;
   }
 

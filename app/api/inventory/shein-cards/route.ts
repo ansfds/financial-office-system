@@ -3,6 +3,7 @@ import { audit, requireSession } from '@/lib/auth';
 import { apiError, fail, ok } from '@/lib/http';
 import { D } from '@/lib/money';
 import { encryptField } from '@/lib/secure-fields';
+import { revalidateFinancePaths } from '@/lib/revalidate';
 import { Prisma } from '@prisma/client';
 import { z } from 'zod';
 
@@ -60,6 +61,7 @@ export async function GET() {
     const cards = await db.sheinCard.findMany({
       select: publicSheinCardSelect,
       orderBy: { createdAt: 'desc' },
+      take: 300,
     });
 
     return ok(cards);
@@ -114,6 +116,7 @@ export async function POST(request: Request) {
       newValue: created as any,
       description: 'إضافة كرت شي إن للمخزن',
     });
+    revalidateFinancePaths();
 
     return ok(created, 201);
   } catch (error) {

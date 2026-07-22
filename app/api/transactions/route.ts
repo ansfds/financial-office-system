@@ -3,6 +3,7 @@ import { audit, requireSession } from '@/lib/auth';
 import { apiError, fail, ok } from '@/lib/http';
 import { D, statusOf } from '@/lib/money';
 import { createCashboxMovement } from '@/lib/cashbox';
+import { revalidateFinancePaths } from '@/lib/revalidate';
 import { z } from 'zod';
 
 const TRANSACTION_KIND = {
@@ -220,32 +221,63 @@ export async function GET(request: Request) {
     const url = new URL(request.url);
     const q = url.searchParams.get('q')?.trim() || '';
     const status = url.searchParams.get('status') || undefined;
+    const page = Math.max(Number(url.searchParams.get('page') || 1), 1);
+    const pageSize = Math.min(Math.max(Number(url.searchParams.get('pageSize') || 50), 10), 100);
+    const where = {
+      deletedAt: null,
+      status: status as any,
+      OR: q
+        ? [
+            { number: { contains: q, mode: 'insensitive' as const } },
+            { description: { contains: q, mode: 'insensitive' as const } },
+            { executionType: { contains: q, mode: 'insensitive' as const } },
+            { customType: { contains: q, mode: 'insensitive' as const } },
+            { notes: { contains: q, mode: 'insensitive' as const } },
+            { txId: { contains: q, mode: 'insensitive' as const } },
+            { cardNumber: { contains: q, mode: 'insensitive' as const } },
+            { bankName: { contains: q, mode: 'insensitive' as const } },
+            { person: { fullName: { contains: q, mode: 'insensitive' as const } } },
+            { person: { customerNo: { contains: q, mode: 'insensitive' as const } } },
+          ]
+        : undefined,
+    };
 
-    const transactions = await db.financialTransaction.findMany({
-      where: {
-        deletedAt: null,
-        status: status as any,
-        OR: q
-          ? [
-              { number: { contains: q, mode: 'insensitive' } },
-              { description: { contains: q, mode: 'insensitive' } },
-              { executionType: { contains: q, mode: 'insensitive' } },
-              { customType: { contains: q, mode: 'insensitive' } },
-              { notes: { contains: q, mode: 'insensitive' } },
-              { txId: { contains: q, mode: 'insensitive' } },
-              { cardNumber: { contains: q, mode: 'insensitive' } },
-              { bankName: { contains: q, mode: 'insensitive' } },
-              { person: { fullName: { contains: q, mode: 'insensitive' } } },
-              { person: { customerNo: { contains: q, mode: 'insensitive' } } },
-            ]
-          : undefined,
-      },
-      include: transactionInclude,
-      orderBy: { transactionAt: 'desc' },
-      take: 300,
+    const [transactions, total] = await Promise.all([
+      db.financialTransaction.findMany({
+        where,
+        select: {
+          id: true,
+          number: true,
+          personId: true,
+          typeId: true,
+          customType: true,
+          description: true,
+          executionType: true,
+          operationKind: true,
+          operationDetails: true,
+          agreedAmount: true,
+          receivedAmount: true,
+          paidAmount: true,
+          notes: true,
+          status: true,
+          sheinPaymentMethod: true,
+          person: { select: { id: true, fullName: true, customerNo: true } },
+          currency: { select: { id: true, code: true, name: true, symbol: true } },
+          type: { select: { id: true, name: true } },
+        },
+        orderBy: { transactionAt: 'desc' },
+        skip: (page - 1) * pageSize,
+        take: pageSize,
+      }),
+      db.financialTransaction.count({ where }),
+    ]);
+
+    return ok({
+      items: transactions,
+      total,
+      page,
+      pageSize,
     });
-
-    return ok(transactions);
   } catch (error) {
     return apiError(error);
   }
@@ -1064,6 +1096,7 @@ export async function POST(request: Request) {
       newValue: { number, ...data },
       description: 'إضافة معاملة',
     });
+    revalidateFinancePaths(data.personId ? [`/people/${data.personId}`] : []);
 
     return ok(transaction, 201);
   } catch (error) {

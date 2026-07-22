@@ -4,6 +4,7 @@ import { createCashboxMovement } from '@/lib/cashbox';
 import { apiError, fail, ok } from '@/lib/http';
 import { D } from '@/lib/money';
 import { decryptField } from '@/lib/secure-fields';
+import { revalidateFinancePaths } from '@/lib/revalidate';
 import { z } from 'zod';
 
 const updateSheinCardSchema = z.object({
@@ -180,6 +181,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
       newValue: updated as any,
       description: 'تعديل كرت شي إن',
     });
+    revalidateFinancePaths(updated.buyerPersonId ? [`/people/${updated.buyerPersonId}`] : []);
 
     return ok(updated);
   } catch (error) {

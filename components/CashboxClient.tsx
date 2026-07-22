@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { ArrowLeftRight, ChevronDown, Loader2, Plus, Repeat2 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -19,6 +20,7 @@ function dayKey(value: string) {
 }
 
 export default function CashboxClient() {
+  const router = useRouter();
   const [movements, setMovements] = useState<any[]>([]);
   const [currencies, setCurrencies] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
@@ -62,8 +64,8 @@ export default function CashboxClient() {
     setLoading(true);
     const query = filterId ? `?currencyId=${encodeURIComponent(filterId)}` : '';
     const [cashboxResponse, settingsResponse] = await Promise.all([
-      fetch(`/api/cashbox${query}`),
-      fetch('/api/settings'),
+      fetch(`/api/cashbox${query}`, { cache: 'no-store' }),
+      fetch('/api/settings', { cache: 'no-store' }),
     ]);
     const cashboxData = await cashboxResponse.json();
     const settingsData = await settingsResponse.json();
@@ -111,6 +113,7 @@ export default function CashboxClient() {
 
     toast.success('تم تسجيل حركة الصندوق');
     setManualForm((value) => ({ ...value, amount: '', reason: '', note: '' }));
+    router.refresh();
     load();
   }
 
@@ -128,6 +131,7 @@ export default function CashboxClient() {
 
     toast.success('تم تنفيذ تحويل العملة وتحديث الصندوق');
     setConversionForm((value) => ({ ...value, fromAmount: '', toAmount: '', notes: '' }));
+    router.refresh();
     load();
   }
 

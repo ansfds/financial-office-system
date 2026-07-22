@@ -109,6 +109,8 @@ model Person {
   @@index([phone])
   @@index([customerNo])
   @@index([category])
+  @@index([createdAt])
+  @@index([status, deletedAt])
 }
 
 model Currency {
@@ -129,6 +131,9 @@ model Currency {
   sheinSalesReports SheinCardSale[]
   conversionSources CurrencyConversion[]   @relation("CurrencyConversionSource")
   conversionTargets CurrencyConversion[]   @relation("CurrencyConversionTarget")
+
+  @@index([createdAt])
+  @@index([isActive])
 }
 
 model TransactionType {
@@ -137,6 +142,8 @@ model TransactionType {
   isActive     Boolean                @default(true)
   createdAt    DateTime               @default(now())
   transactions FinancialTransaction[]
+
+  @@index([createdAt])
 }
 
 model FinancialTransaction {
@@ -180,7 +187,11 @@ model FinancialTransaction {
   sheinCardSale        SheinCardSale?
 
   @@index([transactionAt])
+  @@index([createdAt])
   @@index([status])
+  @@index([personId])
+  @@index([typeId])
+  @@index([currencyId])
   @@index([operationKind])
   @@index([txId])
   @@index([cardNumber])
@@ -207,6 +218,10 @@ model TransactionMovement {
   attachments        Attachment[]
 
   @@index([occurredAt])
+  @@index([createdAt])
+  @@index([transactionId])
+  @@index([currencyId])
+  @@index([type])
 }
 
 model CashboxMovement {
@@ -231,6 +246,9 @@ model CashboxMovement {
   person        Person?               @relation("CashboxMovementPerson", fields: [personId], references: [id])
 
   @@index([occurredAt])
+  @@index([createdAt])
+  @@index([currencyId])
+  @@index([transactionId])
   @@index([personId])
   @@index([sourceType, sourceId])
 }
@@ -326,6 +344,7 @@ model SheinCard {
 
   @@index([denomination])
   @@index([status])
+  @@index([createdAt])
   @@index([buyerPersonId])
   @@index([saleCurrencyId])
 }
@@ -350,6 +369,7 @@ model SheinCardSale {
   items          SheinCardSaleItem[]
 
   @@index([occurredAt])
+  @@index([createdAt])
   @@index([paymentMethod])
   @@index([denomination])
   @@index([personId])
@@ -397,6 +417,7 @@ model ReceivedCardBatch {
 
   @@index([personId])
   @@index([receivedAt])
+  @@index([createdAt])
 }
 
 model ReceivedCustomerCard {
@@ -424,6 +445,8 @@ model ReceivedCustomerCard {
   @@unique([batchId, sequence])
   @@index([status])
   @@index([cardLast4])
+  @@index([createdAt])
+  @@index([batchId])
   @@index([settlementCurrencyId])
 }
 
@@ -444,6 +467,7 @@ model CurrencyConversion {
   toCurrency     Currency @relation("CurrencyConversionTarget", fields: [toCurrencyId], references: [id])
 
   @@index([occurredAt])
+  @@index([createdAt])
   @@index([fromCurrencyId])
   @@index([toCurrencyId])
 }

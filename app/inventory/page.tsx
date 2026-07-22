@@ -4,6 +4,7 @@ import { CreditCard, ShoppingBag } from 'lucide-react';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
+export const fetchCache = 'force-no-store';
 
 const sheinImage =
   'https://images.unsplash.com/photo-1607083206968-13611e3d76db?auto=format&fit=crop&w=1200&q=80';

@@ -6,6 +6,18 @@ import { redirect } from 'next/navigation';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
+export const fetchCache = 'force-no-store';
+
+const operationLabels: Record<string, string> = {
+  MANUAL: 'نوع يدوي',
+  USDT: 'USDT',
+  CARD_OPERATION: 'عمليات بطاقة',
+  CASHBOX_MOVEMENT: 'حركة صندوق',
+  CURRENCY_CONVERSION: 'صرف / تحويل عملة',
+  MONEY_TRANSFER: 'حوالة مالية',
+  SHEIN_CARD_SALE: 'كروت شي إن',
+  EXPENSE: 'مصروف / دفع فاتورة',
+};
 
 export default async function Dashboard() {
   if (!(await getSession())) redirect('/login');
@@ -24,7 +36,19 @@ export default async function Dashboard() {
       db.receivedCustomerCard.count({ where: { status: { not: 'CANCELLED' } } }),
       db.financialTransaction.findMany({
         where: { deletedAt: null },
-        include: { person: true, currency: true, type: true },
+        select: {
+          id: true,
+          number: true,
+          operationKind: true,
+          customType: true,
+          agreedAmount: true,
+          receivedAmount: true,
+          paidAmount: true,
+          status: true,
+          person: { select: { fullName: true, customerNo: true } },
+          currency: { select: { symbol: true } },
+          type: { select: { name: true } },
+        },
         orderBy: { transactionAt: 'desc' },
         take: 8,
       }),
@@ -82,7 +106,7 @@ export default async function Dashboard() {
                         '—'
                       )}
                     </td>
-                    <td>{transaction.type?.name || transaction.customType || '—'}</td>
+                    <td>{operationLabels[transaction.operationKind || ''] || transaction.type?.name || transaction.customType || '—'}</td>
                     <td>
                       {transaction.agreedAmount.toString()} {transaction.currency.symbol}
                     </td>

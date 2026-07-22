@@ -1,1 +1,13 @@
-import {getSession} from '@/lib/auth';import {ok,fail} from '@/lib/http';export async function GET(){return await getSession()?ok({authenticated:true}):fail('غير مصرح',401)}
+import { getSession } from '@/lib/auth';
+import { fail, ok } from '@/lib/http';
+
+export async function GET() {
+  const session = await getSession();
+  if (!session) return fail('انتهت الجلسة. سجل الدخول من جديد.', 401);
+
+  return ok({
+    authenticated: true,
+    expiresAt: session.expiresAt,
+    lastActivityAt: session.lastActivityAt,
+  });
+}

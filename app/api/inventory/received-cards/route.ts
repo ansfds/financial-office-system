@@ -3,6 +3,7 @@ import { audit, requireSession } from '@/lib/auth';
 import { createCashboxMovement } from '@/lib/cashbox';
 import { apiError, fail, ok } from '@/lib/http';
 import { D } from '@/lib/money';
+import { revalidateFinancePaths } from '@/lib/revalidate';
 import { z } from 'zod';
 
 const cardInputSchema = z.object({
@@ -145,6 +146,7 @@ export async function POST(request: Request) {
       newValue: batch as any,
       description: 'إضافة دفعة بطاقات مستلمة',
     });
+    revalidateFinancePaths([`/people/${batch.personId}`]);
 
     return ok(batch, 201);
   } catch (error) {

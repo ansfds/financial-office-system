@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { Save, Search, X } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -109,25 +110,61 @@ function shortNote(text?: string | null) {
   return text.length > 42 ? `${text.slice(0, 42)}...` : text;
 }
 
-export default function TransactionsClient({ initialTransactions }: { initialTransactions: any[] }) {
+export default function TransactionsClient({
+  initialTransactions,
+  initialPage,
+  initialTotal,
+  pageSize,
+  initialQuery = '',
+}: {
+  initialTransactions: any[];
+  initialPage: number;
+  initialTotal: number;
+  pageSize: number;
+  initialQuery?: string;
+}) {
+  const router = useRouter();
   const [transactions, setTransactions] = useState(initialTransactions);
-  const [q, setQ] = useState('');
+  const [q, setQ] = useState(initialQuery);
+  const [page, setPage] = useState(initialPage);
+  const [total, setTotal] = useState(initialTotal);
+  const [loading, setLoading] = useState(false);
   const [savingId, setSavingId] = useState('');
   const [noteModal, setNoteModal] = useState<{ open: boolean; text: string }>({ open: false, text: '' });
 
   useEffect(() => {
     setTransactions(initialTransactions);
-  }, [initialTransactions]);
+    setPage(initialPage);
+    setTotal(initialTotal);
+    setQ(initialQuery);
+  }, [initialPage, initialQuery, initialTotal, initialTransactions]);
 
   function updateLocal(id: string, patch: any) {
     setTransactions((items) => items.map((item) => (item.id === id ? { ...item, ...patch } : item)));
   }
 
-  async function search() {
-    const response = await fetch(`/api/transactions?q=${encodeURIComponent(q)}`);
+  async function load(nextPage = page, search = q) {
+    setLoading(true);
+    const response = await fetch(
+      `/api/transactions?q=${encodeURIComponent(search)}&page=${nextPage}&pageSize=${pageSize}`,
+      { cache: 'no-store' },
+    );
     const data = await response.json();
+    setLoading(false);
     if (!response.ok) return toast.error(data.error || 'تعذر البحث');
-    setTransactions(data);
+    const items = Array.isArray(data) ? data : data.items || [];
+    setTransactions(items);
+    setTotal(Array.isArray(data) ? items.length : data.total || 0);
+    setPage(Array.isArray(data) ? 1 : data.page || nextPage);
+    const url = new URL(window.location.href);
+    if (search) url.searchParams.set('q', search);
+    else url.searchParams.delete('q');
+    url.searchParams.set('page', String(nextPage));
+    window.history.replaceState(null, '', url.toString());
+  }
+
+  async function search() {
+    await load(1, q);
   }
 
   async function save(transaction: any) {
@@ -149,6 +186,7 @@ export default function TransactionsClient({ initialTransactions }: { initialTra
 
     updateLocal(transaction.id, data);
     toast.success('تم تعديل الدفعة');
+    router.refresh();
   }
 
   return (
@@ -161,7 +199,7 @@ export default function TransactionsClient({ initialTransactions }: { initialTra
           className="flex items-center justify-center gap-2 rounded-lg bg-slate-900 px-5 py-2.5 font-bold text-white dark:bg-slate-100 dark:text-slate-950"
         >
           <Search size={18} />
-          بحث
+          {loading ? 'جار...' : 'بحث'}
         </button>
       </div>
 
@@ -249,8 +287,40 @@ export default function TransactionsClient({ initialTransactions }: { initialTra
                 </td>
               </tr>
             ))}
+            {!transactions.length ? (
+              <tr>
+                <td colSpan={10} className="text-center text-slate-500">
+                  {loading ? 'جار تحميل المعاملات...' : 'لا توجد معاملات'}
+                </td>
+              </tr>
+            ) : null}
           </tbody>
         </table>
+      </div>
+
+      <div className="card flex flex-col gap-3 p-4 text-sm sm:flex-row sm:items-center sm:justify-between">
+        <div className="font-bold text-slate-600 dark:text-slate-300">
+          الصفحة {page.toLocaleString('en-US')} من {Math.max(Math.ceil(total / pageSize), 1).toLocaleString('en-US')} - إجمالي{' '}
+          {total.toLocaleString('en-US')}
+        </div>
+        <div className="flex gap-2">
+          <button
+            type="button"
+            onClick={() => load(Math.max(page - 1, 1))}
+            disabled={page <= 1 || loading}
+            className="rounded-lg border border-slate-200 px-4 py-2 font-bold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
+          >
+            السابق
+          </button>
+          <button
+            type="button"
+            onClick={() => load(page + 1)}
+            disabled={page * pageSize >= total || loading}
+            className="rounded-lg border border-slate-200 px-4 py-2 font-bold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
+          >
+            التالي
+          </button>
+        </div>
       </div>
 
       {noteModal.open ? (

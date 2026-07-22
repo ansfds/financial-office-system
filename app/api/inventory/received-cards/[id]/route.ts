@@ -3,6 +3,7 @@ import { audit, requireSession } from '@/lib/auth';
 import { balanceWarning, createCashboxMovement } from '@/lib/cashbox';
 import { apiError, fail, ok } from '@/lib/http';
 import { D } from '@/lib/money';
+import { revalidateFinancePaths } from '@/lib/revalidate';
 import { z } from 'zod';
 
 const updateReceivedCardSchema = z.object({
@@ -194,6 +195,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
       newValue: updated as any,
       description: 'تعديل بطاقة مستلمة',
     });
+    revalidateFinancePaths(updated.batch?.personId ? [`/people/${updated.batch.personId}`] : []);
 
     return ok({ ...updated, cashboxWarning: negativeBalanceWarning ? 'الرصيد أصبح بالسالب بعد هذه العملية' : null });
   } catch (error) {
