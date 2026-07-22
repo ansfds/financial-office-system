@@ -1,6 +1,7 @@
 import Page from '@/components/Page';
 import SheinSalesReportClient from '@/components/SheinSalesReportClient';
 import { db } from '@/lib/db';
+import type { ReactNode } from 'react';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -20,13 +21,15 @@ const sheinStatusLabels: Record<string, string> = {
 };
 
 const receivedStatusLabels: Record<string, string> = {
-  RECEIVED: 'مستلمة',
+  RECEIVED: 'غير مصفاة',
   IN_SETTLEMENT: 'قيد التصفية',
-  SETTLED: 'تمت التصفية',
-  PARTIAL: 'جزئية',
-  COMPLETED: 'مكتملة',
+  SETTLED: 'مصفاة بالكامل',
+  PARTIAL: 'مصفاة جزئيا',
+  COMPLETED: 'مصفاة بالكامل',
   CANCELLED: 'ملغاة',
 };
+
+const receivedSettlementStatuses = new Set(['PARTIAL', 'SETTLED', 'COMPLETED']);
 
 const operationLabels: Record<string, string> = {
   MANUAL: 'نوع يدوي',
@@ -41,6 +44,15 @@ const operationLabels: Record<string, string> = {
 
 function amount(value: any) {
   return Number(value || 0);
+}
+
+function formatMoney(value: number, symbol = '') {
+  return `${value.toLocaleString('en-US')} ${symbol}`.trim();
+}
+
+function moneyBucketsLabel(buckets: Map<string, { amount: number; symbol: string }>) {
+  const items = Array.from(buckets.values()).filter((item) => item.amount > 0);
+  return items.length ? items.map((item) => formatMoney(item.amount, item.symbol)).join('، ') : '0';
 }
 
 function operationDetails(transaction: any) {
@@ -102,7 +114,7 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
     customerSummary,
     sheinSummary,
     sheinSales,
-    receivedCardSummary,
+    receivedCardRows,
     todayMovements,
     recentOperations,
   ] = await Promise.all([
@@ -143,9 +155,17 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
       orderBy: { occurredAt: 'desc' },
       take: 200,
     }),
-    db.receivedCustomerCard.groupBy({
-      by: ['status'],
-      _count: true,
+    db.receivedCustomerCard.findMany({
+      where: { status: { not: 'CANCELLED' } },
+      select: {
+        status: true,
+        valueUsd: true,
+        agreedAmount: true,
+        receivedAmount: true,
+        settlementAmount: true,
+        settlementCashboxMovementId: true,
+        settlementCurrency: { select: { code: true, symbol: true } },
+      },
     }),
     db.cashboxMovement.findMany({
       where: { occurredAt: { gte: fromDate, lte: toDate } },
@@ -200,12 +220,39 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
   const sheinAvailable = sheinSummary
     .filter((item) => item.status === 'AVAILABLE')
     .reduce((sum, item) => sum + item._count, 0);
-  const receivedCards = receivedCardSummary
-    .filter((item) => item.status !== 'CANCELLED')
-    .reduce((sum, item) => sum + item._count, 0);
-  const settledCards = receivedCardSummary
-    .filter((item) => ['SETTLED', 'COMPLETED'].includes(item.status))
-    .reduce((sum, item) => sum + item._count, 0);
+  const receivedCardStats = receivedCardRows.reduce(
+    (stats, card) => {
+      const baseAmount = amount(card.valueUsd) > 0 ? amount(card.valueUsd) : amount(card.agreedAmount);
+      stats.totalValue += baseAmount;
+      stats.totalRemaining += Math.max(baseAmount - amount(card.receivedAmount), 0);
+
+      if (receivedSettlementStatuses.has(card.status) && card.settlementCashboxMovementId) {
+        const key = card.settlementCurrency?.code || 'UNKNOWN';
+        const current = stats.settledByCurrency.get(key) || {
+          amount: 0,
+          symbol: card.settlementCurrency?.symbol || key,
+        };
+        current.amount += amount(card.settlementAmount);
+        stats.settledByCurrency.set(key, current);
+      }
+
+      if (card.status === 'PARTIAL') stats.partial += 1;
+      else if (['SETTLED', 'COMPLETED'].includes(card.status)) stats.full += 1;
+      else stats.unsettled += 1;
+
+      stats.byStatus.set(card.status, (stats.byStatus.get(card.status) || 0) + 1);
+      return stats;
+    },
+    {
+      totalValue: 0,
+      totalRemaining: 0,
+      settledByCurrency: new Map<string, { amount: number; symbol: string }>(),
+      unsettled: 0,
+      partial: 0,
+      full: 0,
+      byStatus: new Map<string, number>(),
+    },
+  );
 
   return (
     <Page title="التقارير">
@@ -227,8 +274,15 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
         <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
           <SheinSalesReportClient soldCount={sheinSold} sales={JSON.parse(JSON.stringify(sheinSales))} />
           <SummaryCard title="الكروت المتوفرة" value={sheinAvailable} />
-          <SummaryCard title="البطاقات المستلمة" value={receivedCards} />
-          <SummaryCard title="البطاقات التي تمت تصفيتها" value={settledCards} />
+          <SummaryCard title="قيمة البطاقات المستلمة" value={formatMoney(receivedCardStats.totalValue, '$')} />
+          <SummaryCard title="المبالغ المصفاة فعليا" value={moneyBucketsLabel(receivedCardStats.settledByCurrency)} />
+          <SummaryCard title="المتبقي داخل البطاقات" value={formatMoney(receivedCardStats.totalRemaining, '$')} />
+        </section>
+
+        <section className="grid gap-4 sm:grid-cols-3">
+          <SummaryCard title="بطاقات غير مصفاة" value={receivedCardStats.unsettled} />
+          <SummaryCard title="بطاقات مصفاة جزئيا" value={receivedCardStats.partial} />
+          <SummaryCard title="بطاقات مصفاة بالكامل" value={receivedCardStats.full} />
         </section>
 
         <section className="card p-5">
@@ -361,12 +415,13 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
 
           <div className="card p-5">
             <h2 className="mb-4 font-black">البطاقات المستلمة</h2>
-            {receivedCardSummary.map((item) => (
-              <div key={item.status} className="flex justify-between border-b border-slate-100 py-2 dark:border-slate-800">
-                <span>{receivedStatusLabels[item.status] || item.status}</span>
-                <b>{item._count}</b>
+            {Array.from(receivedCardStats.byStatus.entries()).map(([status, count]) => (
+              <div key={status} className="flex justify-between border-b border-slate-100 py-2 dark:border-slate-800">
+                <span>{receivedStatusLabels[status] || status}</span>
+                <b>{count}</b>
               </div>
             ))}
+            {!receivedCardStats.byStatus.size ? <div className="text-sm text-slate-500">لا توجد بطاقات مستلمة</div> : null}
           </div>
         </section>
       </div>
@@ -374,11 +429,11 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
   );
 }
 
-function SummaryCard({ title, value }: { title: string; value: number }) {
+function SummaryCard({ title, value }: { title: string; value: ReactNode }) {
   return (
     <div className="card p-5">
       <div className="text-sm text-slate-500">{title}</div>
-      <div className="mt-2 text-2xl font-black">{value.toLocaleString('en-US')}</div>
+      <div className="mt-2 text-2xl font-black">{typeof value === 'number' ? value.toLocaleString('en-US') : value}</div>
     </div>
   );
 }

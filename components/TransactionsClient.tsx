@@ -46,6 +46,13 @@ function decimal(value: any) {
 }
 
 function remaining(transaction: any) {
+  if (
+    transaction.operationKind === 'CARD_OPERATION' &&
+    transaction.operationDetails?.action === 'RECEIVE_CARD'
+  ) {
+    return 0;
+  }
+
   return Math.max(
     decimal(transaction.agreedAmount) - decimal(transaction.receivedAmount) - decimal(transaction.paidAmount),
     0,
@@ -233,7 +240,20 @@ export default function TransactionsClient({
                   )}
                 </td>
                 <td>{operationLabels[transaction.operationKind] || transaction.type?.name || transaction.customType || '—'}</td>
-                <td className="min-w-64 text-sm text-slate-600 dark:text-slate-300">{detailsLabel(transaction)}</td>
+                <td className="min-w-64 text-sm text-slate-600 dark:text-slate-300">
+                  <div>{detailsLabel(transaction)}</div>
+                  {transaction.operationKind === 'CARD_OPERATION' &&
+                  transaction.operationDetails?.action === 'RECEIVE_CARD' &&
+                  transaction.operationDetails?.receivedCardBatchId ? (
+                    <button
+                      type="button"
+                      onClick={() => router.push(`/inventory/received-cards?batchId=${transaction.operationDetails.receivedCardBatchId}`)}
+                      className="mt-2 rounded-md bg-indigo-50 px-2 py-1 text-xs font-bold text-indigo-700 hover:bg-indigo-100 dark:bg-indigo-950 dark:text-indigo-200"
+                    >
+                      عرض البطاقات
+                    </button>
+                  ) : null}
+                </td>
                 <td className="min-w-72 text-sm font-bold text-slate-700 dark:text-slate-200">
                   {executionLabel(transaction)}
                 </td>

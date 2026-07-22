@@ -453,6 +453,7 @@ export async function POST(request: Request) {
         const cardCount = data.cardOperation.cardCount;
         const cardTotal = cardValue.mul(cardCount);
         const paymentAmount = D(data.cardOperation.paymentAmount || cardTotal);
+        const initialCardStatus = data.cardOperation.action === 'RECEIVE_CARD' ? 'RECEIVED' : data.cardOperation.cardStatus;
         const paymentLabel = paymentMethodLabels[data.cardOperation.paymentMethod];
         const actionLabel =
           data.cardOperation.action === 'RECEIVE_CARD'
@@ -470,9 +471,7 @@ export async function POST(request: Request) {
         const receivedAmount =
           data.cardOperation.action === 'WITHDRAW_FROM_CARD'
             ? paymentAmount
-            : data.cardOperation.action === 'RECEIVE_CARD'
-              ? cardTotal
-              : D(0);
+            : D(0);
         const paidAmount = data.cardOperation.action === 'PAY_CARD_VALUE' ? paymentAmount : D(0);
         let details = {
           action: data.cardOperation.action,
@@ -483,7 +482,8 @@ export async function POST(request: Request) {
           currencyCode: currency.code,
           paymentAmount: paymentAmount.toString(),
           paymentMethod: data.cardOperation.paymentMethod,
-          cardStatus: data.cardOperation.cardStatus,
+          cardStatus: initialCardStatus,
+          cashEffect: data.cardOperation.action === 'RECEIVE_CARD' ? 'NONE_ON_RECEIPT' : 'IMMEDIATE',
           receivedCardBatchId: null as string | null,
         };
 
@@ -525,39 +525,20 @@ export async function POST(request: Request) {
           details = { ...details, receivedCardBatchId: batch.id };
 
           for (let index = 1; index <= cardCount; index += 1) {
-            const card = await tx.receivedCustomerCard.create({
+            await tx.receivedCustomerCard.create({
               data: {
                 batchId: batch.id,
                 sequence: index,
                 valueUsd: currency.code === 'USD' ? cardValue : D(0),
                 agreedAmount: cardValue,
-                settlementAmount: cardValue,
+                settlementAmount: null,
                 settlementCurrencyId: currency.id,
+                settlementPaymentMethod: null,
                 receivedAmount: D(0),
-                status: data.cardOperation.cardStatus,
+                status: initialCardStatus,
                 notes: data.notes,
               },
             });
-
-            if (data.cardOperation.cardStatus !== 'CANCELLED') {
-              const movement = await createCashboxMovement(tx, {
-                currencyId: currency.id,
-                transactionId: created.id,
-                personId: data.personId,
-                direction: 'IN',
-                amount: cardValue,
-                reason: `${executionType} #${index}`,
-                sourceType: 'ReceivedCustomerCard',
-                sourceId: card.id,
-                note: data.notes || null,
-                occurredAt: date,
-              });
-
-              await tx.receivedCustomerCard.update({
-                where: { id: card.id },
-                data: { receivedCashboxMovementId: movement.id },
-              });
-            }
           }
 
           await tx.financialTransaction.update({
@@ -1096,6 +1077,21 @@ export async function POST(request: Request) {
       newValue: { number, ...data },
       description: 'إضافة معاملة',
     });
+
+    const transactionDetails = transaction.operationDetails as any;
+    if (
+      operationKind === OPERATION_KIND.CARD_OPERATION &&
+      data.cardOperation?.action === 'RECEIVE_CARD' &&
+      transactionDetails?.receivedCardBatchId
+    ) {
+      await audit('RECEIVED_CARD_BATCH_CREATE', {
+        entityType: 'ReceivedCardBatch',
+        entityId: transactionDetails.receivedCardBatchId,
+        newValue: transactionDetails,
+        description: 'استلام دفعة بطاقات من إضافة معاملة بدون أثر على الصندوق',
+      });
+    }
+
     revalidateFinancePaths(data.personId ? [`/people/${data.personId}`] : []);
 
     return ok(transaction, 201);

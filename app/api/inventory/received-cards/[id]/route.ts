@@ -6,6 +6,23 @@ import { D } from '@/lib/money';
 import { revalidateFinancePaths } from '@/lib/revalidate';
 import { z } from 'zod';
 
+const settlementMethods = ['USD_CASH', 'USD_TRANSFER', 'LYD_CASH', 'LYD_TRANSFER'] as const;
+const settlementStatuses = new Set(['PARTIAL', 'SETTLED', 'COMPLETED']);
+
+const methodLabels: Record<(typeof settlementMethods)[number], string> = {
+  USD_CASH: 'دولار كاش',
+  USD_TRANSFER: 'دولار حوالة',
+  LYD_CASH: 'دينار كاش',
+  LYD_TRANSFER: 'دينار حوالة',
+};
+
+const methodCurrencyCode: Record<(typeof settlementMethods)[number], 'USD' | 'LYD'> = {
+  USD_CASH: 'USD',
+  USD_TRANSFER: 'USD',
+  LYD_CASH: 'LYD',
+  LYD_TRANSFER: 'LYD',
+};
+
 const updateReceivedCardSchema = z.object({
   bankName: z.string().trim().optional().nullable(),
   cardLast4: z
@@ -15,15 +32,21 @@ const updateReceivedCardSchema = z.object({
     .optional()
     .nullable(),
   valueUsd: z.coerce.number().min(0).optional(),
-  settlementAmount: z.coerce.number().positive().optional(),
-  settlementCurrencyId: z.string().optional().nullable(),
   agreedAmount: z.coerce.number().positive().optional(),
+  settlementAmount: z.coerce.number().min(0).optional().nullable(),
+  settlementCurrencyId: z.string().optional().nullable(),
+  settlementPaymentMethod: z.enum(settlementMethods).optional().nullable(),
   receivedAmount: z.coerce.number().min(0).optional(),
   verificationReceived: z.coerce.boolean().optional(),
   secureInternalNote: z.string().trim().optional().nullable(),
   notes: z.string().trim().optional().nullable(),
   status: z.enum(['RECEIVED', 'IN_SETTLEMENT', 'SETTLED', 'PARTIAL', 'COMPLETED', 'CANCELLED']).optional(),
 });
+
+function cardBaseAmount(valueUsd: any, agreedAmount: any) {
+  const value = D(valueUsd || 0);
+  return value.gt(0) ? value : D(agreedAmount || 0);
+}
 
 export async function PATCH(request: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
@@ -36,6 +59,8 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
     const input = parsed.data;
     let negativeBalanceWarning = false;
     let oldSnapshot: any = null;
+    let settlementMovementCreated = false;
+    let receiptMovementReversed = false;
 
     const updated = await db.$transaction(async (tx) => {
       const oldValue = await tx.receivedCustomerCard.findUnique({
@@ -45,52 +70,70 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
       if (!oldValue) throw new Error('CARD_NOT_FOUND');
       oldSnapshot = oldValue;
 
-      const usd = await tx.currency.findUnique({ where: { code: 'USD' } });
-      if (!usd) throw new Error('USD_CURRENCY_REQUIRED');
-
       const valueUsd = input.valueUsd === undefined ? oldValue.valueUsd : D(input.valueUsd);
-      const settlementAmount = input.settlementAmount === undefined
-        ? oldValue.settlementAmount || oldValue.agreedAmount
-        : D(input.settlementAmount);
-      const agreedAmount = input.agreedAmount === undefined ? settlementAmount : D(input.agreedAmount);
-      const settlementCurrencyId =
-        input.settlementCurrencyId === undefined ? oldValue.settlementCurrencyId : input.settlementCurrencyId || null;
+      const agreedAmount = input.agreedAmount === undefined ? oldValue.agreedAmount : D(input.agreedAmount);
+      const receivedAmount = input.receivedAmount === undefined ? oldValue.receivedAmount : D(input.receivedAmount);
       const status = input.status || oldValue.status;
-      const receivedAmount =
-        input.receivedAmount === undefined ? oldValue.receivedAmount : D(input.receivedAmount);
+      const shouldSettle = settlementStatuses.has(status);
+      const note = input.notes === undefined ? oldValue.notes : input.notes;
+      const personId = oldValue.batch.personId;
+      const personName = oldValue.batch.person?.fullName || '';
 
-      if (settlementCurrencyId) {
+      let settlementAmount =
+        input.settlementAmount === undefined
+          ? oldValue.settlementAmount
+          : input.settlementAmount === null
+            ? null
+            : D(input.settlementAmount);
+      let settlementCurrencyId =
+        input.settlementCurrencyId === undefined ? oldValue.settlementCurrencyId : input.settlementCurrencyId || null;
+      let settlementPaymentMethod =
+        input.settlementPaymentMethod === undefined
+          ? oldValue.settlementPaymentMethod
+          : input.settlementPaymentMethod || null;
+
+      if (settlementPaymentMethod && !settlementMethods.includes(settlementPaymentMethod as any)) {
+        throw new Error('INVALID_SETTLEMENT_METHOD');
+      }
+
+      if (settlementPaymentMethod) {
+        const settlementCurrency = await tx.currency.findFirst({
+          where: { code: methodCurrencyCode[settlementPaymentMethod as (typeof settlementMethods)[number]], isActive: true },
+        });
+        if (!settlementCurrency) throw new Error('INVALID_SETTLEMENT_CURRENCY');
+        settlementCurrencyId = settlementCurrency.id;
+      } else if (settlementCurrencyId) {
         const settlementCurrency = await tx.currency.findFirst({
           where: { id: settlementCurrencyId, code: { in: ['USD', 'LYD'] }, isActive: true },
         });
         if (!settlementCurrency) throw new Error('INVALID_SETTLEMENT_CURRENCY');
+        settlementPaymentMethod = settlementCurrency.code === 'USD' ? 'USD_CASH' : 'LYD_CASH';
       }
 
-      if (status === 'SETTLED' && (!settlementCurrencyId || !settlementAmount || D(settlementAmount).lte(0))) {
-        throw new Error('SETTLEMENT_REQUIRES_AMOUNT_AND_CURRENCY');
+      const baseAmount = cardBaseAmount(valueUsd, agreedAmount);
+      if (receivedAmount.gt(baseAmount)) throw new Error('WITHDRAWN_EXCEEDS_CARD_VALUE');
+
+      if (shouldSettle && (!settlementAmount || D(settlementAmount).lte(0) || !settlementCurrencyId || !settlementPaymentMethod)) {
+        throw new Error('SETTLEMENT_REQUIRES_AMOUNT_METHOD_AND_CURRENCY');
       }
 
       let receivedCashboxMovementId = oldValue.receivedCashboxMovementId;
       let settlementCashboxMovementId = oldValue.settlementCashboxMovementId;
-      const personId = oldValue.batch.personId;
-      const personName = oldValue.batch.person?.fullName || '';
-      const note = input.notes === undefined ? oldValue.notes : input.notes;
 
-      const receivedValueChanged =
-        oldValue.status !== 'CANCELLED' &&
-        status !== 'CANCELLED' &&
-        (!oldValue.receivedCashboxMovementId || !D(oldValue.valueUsd || 0).equals(valueUsd));
+      if (oldValue.receivedCashboxMovementId) {
+        const oldReceiptMovement = await tx.cashboxMovement.findUnique({
+          where: { id: oldValue.receivedCashboxMovementId },
+        });
+        const receiptCurrencyId =
+          oldReceiptMovement?.currencyId || settlementCurrencyId || oldValue.batch.currencyId || oldValue.settlementCurrencyId;
+        if (!receiptCurrencyId) throw new Error('OLD_RECEIPT_CURRENCY_NOT_FOUND');
 
-      if (
-        oldValue.receivedCashboxMovementId &&
-        oldValue.valueUsd.gt(0) &&
-        (status === 'CANCELLED' || receivedValueChanged)
-      ) {
         const movement = await createCashboxMovement(tx, {
-          currencyId: usd.id,
+          currencyId: receiptCurrencyId,
+          transactionId: oldReceiptMovement?.transactionId || null,
           direction: 'OUT',
-          amount: oldValue.valueUsd,
-          reason: `عكس استلام بطاقة ${personName} #${oldValue.sequence}`.trim(),
+          amount: oldReceiptMovement?.amount || oldValue.valueUsd,
+          reason: `عكس أثر استلام بطاقة سابق ${personName} #${oldValue.sequence}`.trim(),
           personId,
           sourceType: 'ReceivedCustomerCard',
           sourceId: id,
@@ -99,39 +142,26 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
         });
         negativeBalanceWarning ||= balanceWarning(movement.balanceAfter);
         receivedCashboxMovementId = null;
+        receiptMovementReversed = true;
       }
 
-      if (status !== 'CANCELLED' && valueUsd.gt(0) && receivedValueChanged) {
-        const movement = await createCashboxMovement(tx, {
-          currencyId: usd.id,
-          direction: 'IN',
-          amount: valueUsd,
-          reason: `استلام بطاقة ${personName} #${oldValue.sequence}`.trim(),
-          personId,
-          sourceType: 'ReceivedCustomerCard',
-          sourceId: id,
-          note,
-        });
-        receivedCashboxMovementId = movement.id;
-      }
-
-      const settlementChanged =
-        status === 'SETTLED' &&
-        (oldValue.status !== 'SETTLED' ||
+      const oldSettlementAmount = oldValue.settlementAmount ? D(oldValue.settlementAmount) : D(0);
+      const newSettlementAmount = settlementAmount ? D(settlementAmount) : D(0);
+      const hasOldSettlementMovement = Boolean(
+        oldValue.settlementCashboxMovementId && oldValue.settlementCurrencyId && oldValue.settlementAmount,
+      );
+      const settlementCashChanged =
+        shouldSettle &&
+        (!hasOldSettlementMovement ||
           oldValue.settlementCurrencyId !== settlementCurrencyId ||
-          !D(oldValue.settlementAmount || 0).equals(D(settlementAmount || 0)));
+          oldValue.settlementPaymentMethod !== settlementPaymentMethod ||
+          !oldSettlementAmount.equals(newSettlementAmount));
 
-      if (
-        oldValue.status === 'SETTLED' &&
-        oldValue.settlementCashboxMovementId &&
-        oldValue.settlementAmount &&
-        oldValue.settlementCurrencyId &&
-        (status !== 'SETTLED' || settlementChanged)
-      ) {
+      if (hasOldSettlementMovement && (!shouldSettle || settlementCashChanged)) {
         const movement = await createCashboxMovement(tx, {
-          currencyId: oldValue.settlementCurrencyId,
+          currencyId: oldValue.settlementCurrencyId as string,
           direction: 'IN',
-          amount: oldValue.settlementAmount,
+          amount: oldValue.settlementAmount as any,
           reason: `عكس تصفية بطاقة ${personName} #${oldValue.sequence}`.trim(),
           personId,
           sourceType: 'ReceivedCustomerCard',
@@ -143,12 +173,12 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
         settlementCashboxMovementId = null;
       }
 
-      if (status === 'SETTLED' && settlementChanged && settlementCurrencyId && settlementAmount) {
+      if (shouldSettle && settlementCashChanged && settlementCurrencyId && settlementAmount && settlementPaymentMethod) {
         const movement = await createCashboxMovement(tx, {
           currencyId: settlementCurrencyId,
           direction: 'OUT',
           amount: settlementAmount,
-          reason: `تصفية بطاقة ${personName} #${oldValue.sequence}`.trim(),
+          reason: `تصفية بطاقة ${personName} #${oldValue.sequence} (${methodLabels[settlementPaymentMethod as (typeof settlementMethods)[number]]})`.trim(),
           personId,
           sourceType: 'ReceivedCustomerCard',
           sourceId: id,
@@ -156,6 +186,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
         });
         negativeBalanceWarning ||= balanceWarning(movement.balanceAfter);
         settlementCashboxMovementId = movement.id;
+        settlementMovementCreated = true;
       }
 
       return tx.receivedCustomerCard.update({
@@ -167,18 +198,15 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
           agreedAmount,
           settlementAmount,
           settlementCurrencyId,
+          settlementPaymentMethod: settlementPaymentMethod as any,
           receivedAmount,
           status: status as any,
           receivedCashboxMovementId,
           settlementCashboxMovementId,
           verificationReceived:
-            input.verificationReceived === undefined
-              ? oldValue.verificationReceived
-              : input.verificationReceived,
+            input.verificationReceived === undefined ? oldValue.verificationReceived : input.verificationReceived,
           secureInternalNote:
-            input.secureInternalNote === undefined
-              ? oldValue.secureInternalNote
-              : input.secureInternalNote,
+            input.secureInternalNote === undefined ? oldValue.secureInternalNote : input.secureInternalNote,
           notes: input.notes === undefined ? oldValue.notes : input.notes,
         },
         include: {
@@ -195,17 +223,49 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
       newValue: updated as any,
       description: 'تعديل بطاقة مستلمة',
     });
+
+    if (settlementMovementCreated) {
+      await audit('RECEIVED_CARD_SETTLEMENT', {
+        entityType: 'ReceivedCustomerCard',
+        entityId: id,
+        oldValue: oldSnapshot as any,
+        newValue: updated as any,
+        description: 'تصفية بطاقة مستلمة وتسجيل حركة صندوق',
+      });
+    }
+
+    if (receiptMovementReversed) {
+      await audit('RECEIVED_CARD_RECEIPT_CASHBOX_REVERSAL', {
+        entityType: 'ReceivedCustomerCard',
+        entityId: id,
+        oldValue: oldSnapshot as any,
+        newValue: updated as any,
+        description: 'عكس أثر صندوق قديم لاستلام بطاقة',
+      });
+    }
+
     revalidateFinancePaths(updated.batch?.personId ? [`/people/${updated.batch.personId}`] : []);
 
-    return ok({ ...updated, cashboxWarning: negativeBalanceWarning ? 'الرصيد أصبح بالسالب بعد هذه العملية' : null });
+    return ok({
+      ...updated,
+      cashboxWarning: negativeBalanceWarning ? 'الرصيد أصبح بالسالب بعد هذه العملية' : null,
+    });
   } catch (error) {
     if ((error as Error).message === 'CARD_NOT_FOUND') return fail('البطاقة غير موجودة', 404);
-    if ((error as Error).message === 'USD_CURRENCY_REQUIRED') return fail('عملة الدولار غير مضافة في الإعدادات');
     if ((error as Error).message === 'INVALID_SETTLEMENT_CURRENCY') {
       return fail('عملة التصفية يجب أن تكون دينار أو دولار');
     }
-    if ((error as Error).message === 'SETTLEMENT_REQUIRES_AMOUNT_AND_CURRENCY') {
-      return fail('تصفية البطاقة تتطلب مبلغ التصفية وعملة التصفية');
+    if ((error as Error).message === 'INVALID_SETTLEMENT_METHOD') {
+      return fail('طريقة الدفع يجب أن تكون دولار كاش أو دولار حوالة أو دينار كاش أو دينار حوالة');
+    }
+    if ((error as Error).message === 'SETTLEMENT_REQUIRES_AMOUNT_METHOD_AND_CURRENCY') {
+      return fail('تصفية البطاقة تتطلب مبلغ التصفية وطريقة الدفع');
+    }
+    if ((error as Error).message === 'WITHDRAWN_EXCEEDS_CARD_VALUE') {
+      return fail('المبلغ المسحوب لا يمكن أن يكون أكبر من قيمة البطاقة');
+    }
+    if ((error as Error).message === 'OLD_RECEIPT_CURRENCY_NOT_FOUND') {
+      return fail('تعذر عكس حركة الاستلام القديمة لأن عملتها غير معروفة');
     }
     return apiError(error);
   }

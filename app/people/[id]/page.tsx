@@ -104,9 +104,12 @@ export default async function PersonPage({ params }: { params: Promise<{ id: str
             </thead>
             <tbody>
               {person.transactions.map((transaction) => {
-                const remaining = transaction.agreedAmount
-                  .sub(transaction.receivedAmount)
-                  .sub(transaction.paidAmount);
+                const isReceivedCardRegistration =
+                  transaction.operationKind === 'CARD_OPERATION' &&
+                  (transaction.operationDetails as any)?.action === 'RECEIVE_CARD';
+                const remaining = isReceivedCardRegistration
+                  ? transaction.agreedAmount.mul(0)
+                  : transaction.agreedAmount.sub(transaction.receivedAmount).sub(transaction.paidAmount);
                 return (
                   <tr key={transaction.id}>
                     <td>{transaction.number}</td>

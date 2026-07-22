@@ -559,7 +559,7 @@ export default function NewTransaction({
           cardCount: Number(cardForm.cardCount),
           cardValue: money(cardForm.cardValue),
           currencyId: cardForm.currencyId,
-          paymentAmount: money(cardForm.paymentAmount || cardTotal),
+          paymentAmount: cardForm.action === 'RECEIVE_CARD' ? 0 : money(cardForm.paymentAmount || cardTotal),
           paymentMethod: cardForm.paymentMethod,
           cardStatus: cardForm.cardStatus,
         },
@@ -861,28 +861,32 @@ export default function NewTransaction({
               {renderCurrencyOptions()}
             </select>
           </Field>
-          <Field label="المبلغ المدفوع أو المسحوب">
-            <input
-              type="number"
-              min="0"
-              step="0.000001"
-              value={cardForm.paymentAmount}
-              onChange={(event) => setNumeric(event.target.value, (value) => setCardForm({ ...cardForm, paymentAmount: value }))}
-              placeholder={formatNumber(cardTotal)}
-            />
-          </Field>
-          <Field label="طريقة الدفع أو الاستلام">
-            <select
-              value={cardForm.paymentMethod}
-              onChange={(event) => setCardForm({ ...cardForm, paymentMethod: event.target.value as DetailedPaymentMethod })}
-            >
-              {Object.entries(detailedPaymentLabels).map(([value, label]) => (
-                <option key={value} value={value}>
-                  {label}
-                </option>
-              ))}
-            </select>
-          </Field>
+          {cardForm.action !== 'RECEIVE_CARD' ? (
+            <>
+              <Field label="المبلغ المدفوع أو المسحوب">
+                <input
+                  type="number"
+                  min="0"
+                  step="0.000001"
+                  value={cardForm.paymentAmount}
+                  onChange={(event) => setNumeric(event.target.value, (value) => setCardForm({ ...cardForm, paymentAmount: value }))}
+                  placeholder={formatNumber(cardTotal)}
+                />
+              </Field>
+              <Field label="طريقة الدفع أو الاستلام">
+                <select
+                  value={cardForm.paymentMethod}
+                  onChange={(event) => setCardForm({ ...cardForm, paymentMethod: event.target.value as DetailedPaymentMethod })}
+                >
+                  {Object.entries(detailedPaymentLabels).map(([value, label]) => (
+                    <option key={value} value={value}>
+                      {label}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+            </>
+          ) : null}
           <Field label="حالة البطاقة">
             <select
               value={cardForm.cardStatus}

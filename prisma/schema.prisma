@@ -430,6 +430,7 @@ model ReceivedCustomerCard {
   agreedAmount         Decimal            @db.Decimal(20, 6)
   settlementCurrencyId String?
   settlementAmount     Decimal?           @db.Decimal(20, 6)
+  settlementPaymentMethod SheinPaymentMethod?
   receivedAmount       Decimal            @default(0) @db.Decimal(20, 6)
   status               ReceivedCardStatus @default(RECEIVED)
   verificationReceived Boolean            @default(false)
@@ -448,6 +449,7 @@ model ReceivedCustomerCard {
   @@index([createdAt])
   @@index([batchId])
   @@index([settlementCurrencyId])
+  @@index([settlementPaymentMethod])
 }
 
 model CurrencyConversion {
