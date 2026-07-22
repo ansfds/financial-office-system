@@ -38,6 +38,18 @@ function transactionDetails(transaction: any) {
   }
 
   if (transaction.operationKind === 'USDT') {
+    if (details.totalUsd !== undefined) {
+      const paymentLabel = details.paymentCurrencyCode === 'LYD' ? 'دينار' : 'دولار';
+      const paymentTotal =
+        details.paymentCurrencyCode === 'LYD'
+          ? `${numberValue(details.totalLyd || details.paymentTotal).toLocaleString('en-US')} ${symbol}`
+          : `${numberValue(details.totalUsd).toLocaleString('en-US')} $`;
+
+      return `${numberValue(details.usdtAmount).toLocaleString('en-US')} USDT عبر ${
+        details.network || '—'
+      } - عمولة ${details.commissionPercent ?? 0}% - الدفع ${paymentLabel}: ${paymentTotal}`;
+    }
+
     return `${numberValue(details.usdtAmount).toLocaleString('en-US')} USDT عبر ${details.network || '—'}`;
   }
 

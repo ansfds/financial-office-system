@@ -79,6 +79,18 @@ function detailsLabel(transaction: any) {
   }
 
   if (transaction.operationKind === 'USDT') {
+    if (details.totalUsd !== undefined) {
+      const paymentLabel = details.paymentCurrencyCode === 'LYD' ? 'دينار' : 'دولار';
+      const paymentTotal =
+        details.paymentCurrencyCode === 'LYD'
+          ? amountText(details.totalLyd || details.paymentTotal, symbol)
+          : amountText(details.totalUsd, '$');
+
+      return `${amountText(details.usdtAmount, 'USDT')} عبر ${details.network || '—'} - عمولة ${
+        details.commissionPercent ?? 0
+      }% - الإجمالي ${amountText(details.totalUsd, '$')} - الدفع ${paymentLabel}: ${paymentTotal}`;
+    }
+
     return `${amountText(details.usdtAmount, 'USDT')} عبر ${details.network || '—'} - ${simplePaymentLabels[details.paymentMethod] || '—'}`;
   }
 

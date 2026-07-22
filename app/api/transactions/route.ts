@@ -56,6 +56,19 @@ const operationKindSchema = z.enum([
   OPERATION_KIND.EXPENSE,
 ]);
 
+const requiredPositiveNumber = z.preprocess(
+  (value) => (value === '' ? undefined : value),
+  z.coerce.number().positive(),
+);
+const requiredNonNegativeNumber = z.preprocess(
+  (value) => (value === '' ? undefined : value),
+  z.coerce.number().min(0),
+);
+const optionalPositiveNumber = z.preprocess(
+  (value) => (value === '' || value === null ? undefined : value),
+  z.coerce.number().positive().optional(),
+);
+
 const transactionSchema = z.object({
   operationKind: operationKindSchema.optional(),
   transactionKind: z
@@ -91,11 +104,20 @@ const transactionSchema = z.object({
     .object({
       action: z.enum(['BUY', 'SELL']),
       network: z.string().trim().min(1),
-      usdtAmount: z.coerce.number().positive(),
-      price: z.coerce.number().positive(),
-      counterCurrencyId: z.string().min(1),
-      paymentMethod: z.enum(['CASH', 'TRANSFER', 'CARD']),
+      usdtAmount: requiredPositiveNumber,
+      commissionPercent: requiredNonNegativeNumber,
+      paymentCurrencyCode: z.enum(['USD', 'LYD']),
+      exchangeRate: optionalPositiveNumber,
       txId: z.string().trim().optional(),
+    })
+    .superRefine((value, ctx) => {
+      if (value.paymentCurrencyCode === 'LYD' && !value.exchangeRate) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'سعر الصرف مطلوب عند الدفع بالدينار',
+          path: ['exchangeRate'],
+        });
+      }
     })
     .optional(),
   cardOperation: z
@@ -358,21 +380,31 @@ export async function POST(request: Request) {
         if (!data.personId) throw new Error('USDT_REQUIRES_PERSON');
         if (!data.usdt) throw new Error('MISSING_USDT_DATA');
 
-        const [usdtCurrency, counterCurrency] = await Promise.all([
+        const [usdtCurrency, paymentCurrency] = await Promise.all([
           activeCurrencyByCode(tx, 'USDT', 'USDT_CURRENCY_NOT_FOUND'),
-          activeCurrency(tx, data.usdt.counterCurrencyId, 'INVALID_USDT_COUNTER_CURRENCY'),
+          activeCurrencyByCode(tx, data.usdt.paymentCurrencyCode, 'INVALID_USDT_PAYMENT_CURRENCY'),
         ]);
         const usdtAmount = D(data.usdt.usdtAmount);
-        const price = D(data.usdt.price);
-        const totalAmount = usdtAmount.mul(price);
+        const commissionPercent = D(data.usdt.commissionPercent);
+        const commissionAmountUsd = usdtAmount.mul(commissionPercent).div(100);
+        const totalUsd = usdtAmount.add(commissionAmountUsd);
+        const exchangeRate = data.usdt.paymentCurrencyCode === 'LYD' ? D(data.usdt.exchangeRate) : null;
+        if (data.usdt.paymentCurrencyCode === 'LYD' && (!exchangeRate || exchangeRate.lte(0))) {
+          throw new Error('USDT_EXCHANGE_RATE_REQUIRED');
+        }
+        const totalAmount = exchangeRate ? totalUsd.mul(exchangeRate) : totalUsd;
         const actionLabel = data.usdt.action === 'SELL' ? 'بيع USDT' : 'شراء USDT';
-        const paymentLabel = simplePaymentLabels[data.usdt.paymentMethod];
+        const paymentLabel = data.usdt.paymentCurrencyCode === 'LYD' ? 'دينار' : 'دولار';
         const executionType =
           data.executionType ||
-          `${actionLabel} ${usdtAmount.toString()} USDT عبر ${data.usdt.network} مقابل ${amountText(
-            totalAmount,
-            counterCurrency,
-          )} ${paymentLabel}`;
+          `${actionLabel} ${usdtAmount.toString()} USDT عبر ${data.usdt.network}، العمولة ${commissionPercent.toString()}%، الإجمالي ${amountText(
+            totalUsd,
+            { symbol: '$' },
+          )}، الدفع ${paymentLabel}${
+            exchangeRate
+              ? ` بسعر صرف ${exchangeRate.toString()} = ${amountText(totalAmount, paymentCurrency)}`
+              : ''
+          }`;
         const typeId = await typeIdFor(tx, 'USDT');
         const date = occurredAt(data.transactionAt);
 
@@ -389,20 +421,26 @@ export async function POST(request: Request) {
               action: data.usdt.action,
               network: data.usdt.network,
               usdtAmount: data.usdt.usdtAmount,
-              price: data.usdt.price,
+              originalUsd: usdtAmount.toString(),
+              commissionPercent: commissionPercent.toString(),
+              commissionAmount: commissionAmountUsd.toString(),
+              commissionAmountUsd: commissionAmountUsd.toString(),
+              totalUsd: totalUsd.toString(),
               totalAmount: totalAmount.toString(),
-              counterCurrencyId: counterCurrency.id,
-              counterCurrencyCode: counterCurrency.code,
-              paymentMethod: data.usdt.paymentMethod,
+              paymentTotal: totalAmount.toString(),
+              paymentCurrencyId: paymentCurrency.id,
+              paymentCurrencyCode: paymentCurrency.code,
+              exchangeRate: exchangeRate?.toString() || null,
+              totalLyd: data.usdt.paymentCurrencyCode === 'LYD' ? totalAmount.toString() : null,
               txId: data.usdt.txId || data.txId || null,
             }),
-            currencyId: counterCurrency.id,
+            currencyId: paymentCurrency.id,
             agreedAmount: totalAmount,
             receivedAmount: data.usdt.action === 'SELL' ? totalAmount : D(0),
             paidAmount: data.usdt.action === 'BUY' ? totalAmount : D(0),
             receivableAmount: D(0),
             payableAmount: D(0),
-            exchangeRate: price,
+            exchangeRate: exchangeRate || undefined,
             txId: data.usdt.txId || data.txId,
             transactionAt: date,
             dueAt: data.dueAt ? new Date(data.dueAt) : null,
@@ -415,11 +453,11 @@ export async function POST(request: Request) {
           data.usdt.action === 'SELL'
             ? [
                 { currencyId: usdtCurrency.id, direction: 'OUT' as const, amount: usdtAmount },
-                { currencyId: counterCurrency.id, direction: 'IN' as const, amount: totalAmount },
+                { currencyId: paymentCurrency.id, direction: 'IN' as const, amount: totalAmount },
               ]
             : [
                 { currencyId: usdtCurrency.id, direction: 'IN' as const, amount: usdtAmount },
-                { currencyId: counterCurrency.id, direction: 'OUT' as const, amount: totalAmount },
+                { currencyId: paymentCurrency.id, direction: 'OUT' as const, amount: totalAmount },
               ];
 
         for (const movement of movements) {
@@ -1071,10 +1109,15 @@ export async function POST(request: Request) {
       });
     });
 
+    const auditValue =
+      operationKind === OPERATION_KIND.USDT
+        ? { number, ...data, savedDetails: jsonDetails(transaction.operationDetails) }
+        : { number, ...data };
+
     await audit('TRANSACTION_CREATE', {
       entityType: 'FinancialTransaction',
       entityId: transaction.id,
-      newValue: { number, ...data },
+      newValue: auditValue,
       description: 'إضافة معاملة',
     });
 
@@ -1101,7 +1144,8 @@ export async function POST(request: Request) {
     if ((error as Error).message === 'USDT_REQUIRES_PERSON') return fail('اختر الزبون قبل عملية USDT');
     if ((error as Error).message === 'MISSING_USDT_DATA') return fail('أدخل بيانات USDT');
     if ((error as Error).message === 'USDT_CURRENCY_NOT_FOUND') return fail('عملة USDT غير مفعلة في الإعدادات');
-    if ((error as Error).message === 'INVALID_USDT_COUNTER_CURRENCY') return fail('اختر عملة مقابلة صحيحة لعملية USDT');
+    if ((error as Error).message === 'INVALID_USDT_PAYMENT_CURRENCY') return fail('اختر عملة دفع صحيحة لعملية USDT');
+    if ((error as Error).message === 'USDT_EXCHANGE_RATE_REQUIRED') return fail('أدخل سعر الصرف عند الدفع بالدينار');
     if ((error as Error).message === 'CARD_OPERATION_REQUIRES_PERSON') return fail('اختر الزبون قبل عملية البطاقة');
     if ((error as Error).message === 'MISSING_CARD_OPERATION_DATA') return fail('أدخل بيانات عملية البطاقة');
     if ((error as Error).message === 'MISSING_CASHBOX_MOVEMENT_DATA') return fail('أدخل بيانات حركة الصندوق');

@@ -33,6 +33,7 @@ type CashDirection = 'IN' | 'OUT' | 'NONE';
 type SimplePaymentMethod = 'CASH' | 'TRANSFER' | 'CARD';
 type DetailedPaymentMethod = 'LYD_CASH' | 'USD_CASH' | 'LYD_TRANSFER' | 'USD_TRANSFER' | 'CARD';
 type UsdtAction = 'BUY' | 'SELL';
+type UsdtPaymentCurrency = 'USD' | 'LYD';
 type CardAction = 'RECEIVE_CARD' | 'PAY_CARD_VALUE' | 'WITHDRAW_FROM_CARD';
 type ConversionAction = 'SELL_CURRENCY' | 'BUY_CURRENCY' | 'TRANSFER_AMOUNT';
 type ExpenseAction = 'PAY_BILL' | 'GENERAL_EXPENSE';
@@ -72,9 +73,9 @@ type UsdtForm = {
   network: 'TRC20' | 'BEP20' | 'OTHER';
   customNetwork: string;
   usdtAmount: string;
-  price: string;
-  counterCurrencyId: string;
-  paymentMethod: SimplePaymentMethod;
+  commissionPercent: string;
+  paymentCurrencyCode: UsdtPaymentCurrency;
+  exchangeRate: string;
   txId: string;
 };
 
@@ -190,6 +191,11 @@ const usdtActionLabels: Record<UsdtAction, string> = {
   SELL: 'بيع USDT',
 };
 
+const usdtPaymentCurrencyLabels: Record<UsdtPaymentCurrency, string> = {
+  USD: 'دولار',
+  LYD: 'دينار',
+};
+
 const cardActionLabels: Record<CardAction, string> = {
   RECEIVE_CARD: 'استلام بطاقة',
   PAY_CARD_VALUE: 'دفع قيمة بطاقة',
@@ -285,8 +291,8 @@ export default function NewTransaction({
   const usdCurrency = currencies.find((currency) => currency.code === 'USD');
   const lydCurrency = currencies.find((currency) => currency.code === 'LYD');
   const usdtCurrency = currencies.find((currency) => currency.code === 'USDT');
-  const counterCurrencies = currencies.filter((currency) => ['LYD', 'USD'].includes(currency.code));
-  const defaultCounterCurrencyId = lydCurrency?.id || usdCurrency?.id || counterCurrencies[0]?.id || defaultCurrencyId;
+  const usdDisplayCurrency = usdCurrency || ({ id: 'USD', code: 'USD', name: 'دولار', symbol: '$' } as CurrencyOption);
+  const lydDisplayCurrency = lydCurrency || ({ id: 'LYD', code: 'LYD', name: 'دينار', symbol: 'دينار' } as CurrencyOption);
   const [form, setForm] = useState<FormState>(initialForm);
   const [manualForm, setManualForm] = useState<ManualForm>({
     currencyId: defaultCurrencyId,
@@ -298,9 +304,9 @@ export default function NewTransaction({
     network: 'TRC20',
     customNetwork: '',
     usdtAmount: '',
-    price: '',
-    counterCurrencyId: defaultCounterCurrencyId,
-    paymentMethod: 'CASH',
+    commissionPercent: '',
+    paymentCurrencyCode: usdCurrency ? 'USD' : 'LYD',
+    exchangeRate: '',
     txId: '',
   });
   const [cardForm, setCardForm] = useState<CardOperationForm>({
@@ -367,7 +373,6 @@ export default function NewTransaction({
 
   const selectedOperation = operationOptions.find((operation) => operation.value === form.operationKind);
   const manualCurrency = currencies.find((currency) => currency.id === manualForm.currencyId);
-  const usdtCounterCurrency = currencies.find((currency) => currency.id === usdtForm.counterCurrencyId);
   const cardCurrency = currencies.find((currency) => currency.id === cardForm.currencyId);
   const cashboxCurrency = currencies.find((currency) => currency.id === cashboxForm.currencyId);
   const fromCurrency = currencies.find((currency) => currency.id === conversionForm.fromCurrencyId);
@@ -377,7 +382,11 @@ export default function NewTransaction({
   const expenseCurrency = currencies.find((currency) => currency.id === expenseForm.currencyId);
 
   const usdtNetwork = usdtForm.network === 'OTHER' ? usdtForm.customNetwork.trim() || 'أخرى' : usdtForm.network;
-  const usdtTotal = money(usdtForm.usdtAmount) * money(usdtForm.price);
+  const usdtOriginalUsd = money(usdtForm.usdtAmount);
+  const usdtCommissionAmount = usdtOriginalUsd * (money(usdtForm.commissionPercent) / 100);
+  const usdtTotalUsd = usdtOriginalUsd + usdtCommissionAmount;
+  const usdtTotalLyd = usdtForm.paymentCurrencyCode === 'LYD' ? usdtTotalUsd * money(usdtForm.exchangeRate) : 0;
+  const usdtPaymentTotal = usdtForm.paymentCurrencyCode === 'LYD' ? usdtTotalLyd : usdtTotalUsd;
   const cardTotal = money(cardForm.cardCount) * money(cardForm.cardValue);
   const sheinDenomination =
     sheinForm.denomination === CUSTOM_DENOMINATION ? sheinForm.customDenomination : sheinForm.denomination;
@@ -389,10 +398,14 @@ export default function NewTransaction({
   const transferTotal = money(transferForm.amount) + money(transferForm.commission);
 
   const manualExecution = form.executionType || 'كتابة يدوية';
-  const usdtExecution = `${usdtActionLabels[usdtForm.action]} ${formatNumber(usdtForm.usdtAmount)} USDT عبر ${usdtNetwork} مقابل ${formatAmount(
-    usdtTotal,
-    usdtCounterCurrency,
-  )} ${simplePaymentLabels[usdtForm.paymentMethod]}`;
+  const usdtExecution = `${usdtActionLabels[usdtForm.action]} ${formatNumber(
+    usdtForm.usdtAmount,
+  )} USDT عبر ${usdtNetwork}، العمولة ${formatNumber(usdtForm.commissionPercent)}%، الإجمالي ${formatAmount(
+    usdtTotalUsd,
+    usdDisplayCurrency,
+  )}، الدفع ${usdtPaymentCurrencyLabels[usdtForm.paymentCurrencyCode]}${
+    usdtForm.paymentCurrencyCode === 'LYD' ? ` (${formatAmount(usdtPaymentTotal, lydDisplayCurrency)})` : ''
+  }`;
   const cardExecution = `${cardActionLabels[cardForm.action]} ${formatNumber(cardForm.cardCount)} بطاقات، قيمة كل بطاقة ${formatAmount(
     cardForm.cardValue,
     cardCurrency,
@@ -518,9 +531,15 @@ export default function NewTransaction({
     if (form.operationKind === 'USDT') {
       if (!form.personId) return toast.error('اختر الزبون');
       if (!usdtCurrency) return toast.error('عملة USDT غير مفعلة في الإعدادات');
-      if (!usdtForm.counterCurrencyId) return toast.error('اختر العملة المقابلة');
       if (money(usdtForm.usdtAmount) <= 0) return toast.error('أدخل كمية USDT');
-      if (money(usdtForm.price) <= 0) return toast.error('أدخل السعر');
+      if (usdtForm.commissionPercent.trim() === '') return toast.error('أدخل نسبة العمولة');
+      if (money(usdtForm.commissionPercent) < 0) return toast.error('نسبة العمولة لا يمكن أن تكون سالبة');
+      if (!usdtForm.paymentCurrencyCode) return toast.error('اختر عملة الدفع');
+      if (usdtForm.paymentCurrencyCode === 'USD' && !usdCurrency) return toast.error('عملة الدولار غير مفعلة في الإعدادات');
+      if (usdtForm.paymentCurrencyCode === 'LYD') {
+        if (!lydCurrency) return toast.error('عملة الدينار غير مفعلة في الإعدادات');
+        if (money(usdtForm.exchangeRate) <= 0) return toast.error('أدخل سعر الصرف');
+      }
 
       body = {
         operationKind: 'USDT',
@@ -532,9 +551,9 @@ export default function NewTransaction({
           action: usdtForm.action,
           network: usdtNetwork,
           usdtAmount: money(usdtForm.usdtAmount),
-          price: money(usdtForm.price),
-          counterCurrencyId: usdtForm.counterCurrencyId,
-          paymentMethod: usdtForm.paymentMethod,
+          commissionPercent: money(usdtForm.commissionPercent),
+          paymentCurrencyCode: usdtForm.paymentCurrencyCode,
+          exchangeRate: usdtForm.paymentCurrencyCode === 'LYD' ? money(usdtForm.exchangeRate) : undefined,
           txId: usdtForm.txId || undefined,
         },
       };
@@ -785,38 +804,54 @@ export default function NewTransaction({
               placeholder="500"
             />
           </Field>
-          <Field label="السعر">
+          <Field label="نسبة العمولة %">
             <input
               type="number"
               min="0"
               step="0.000001"
-              value={usdtForm.price}
-              onChange={(event) => setNumeric(event.target.value, (value) => setUsdtForm({ ...usdtForm, price: value }))}
-              placeholder="5.4"
+              value={usdtForm.commissionPercent}
+              onChange={(event) =>
+                setNumeric(event.target.value, (value) => setUsdtForm({ ...usdtForm, commissionPercent: value }))
+              }
+              placeholder="3"
             />
           </Field>
-          <Field label="العملة المقابلة">
-            <select value={usdtForm.counterCurrencyId} onChange={(event) => setUsdtForm({ ...usdtForm, counterCurrencyId: event.target.value })}>
-              {renderCurrencyOptions(counterCurrencies.length ? counterCurrencies : currencies)}
-            </select>
-          </Field>
-          <Field label="طريقة الدفع">
+          <Field label="عملة الدفع">
             <select
-              value={usdtForm.paymentMethod}
-              onChange={(event) => setUsdtForm({ ...usdtForm, paymentMethod: event.target.value as SimplePaymentMethod })}
+              value={usdtForm.paymentCurrencyCode}
+              onChange={(event) => setUsdtForm({ ...usdtForm, paymentCurrencyCode: event.target.value as UsdtPaymentCurrency })}
             >
-              {Object.entries(simplePaymentLabels).map(([value, label]) => (
+              {Object.entries(usdtPaymentCurrencyLabels).map(([value, label]) => (
                 <option key={value} value={value}>
                   {label}
                 </option>
               ))}
             </select>
           </Field>
+          {usdtForm.paymentCurrencyCode === 'LYD' ? (
+            <Field label="سعر الصرف">
+              <input
+                type="number"
+                min="0"
+                step="0.000001"
+                value={usdtForm.exchangeRate}
+                onChange={(event) => setNumeric(event.target.value, (value) => setUsdtForm({ ...usdtForm, exchangeRate: value }))}
+                placeholder="8.5"
+              />
+            </Field>
+          ) : null}
           <Field label="TxID اختياري" className="md:col-span-2">
             <input value={usdtForm.txId} onChange={(event) => setUsdtForm({ ...usdtForm, txId: event.target.value })} />
           </Field>
-          <div className="rounded-lg bg-slate-50 px-3 py-2 text-sm font-bold text-slate-600 dark:bg-slate-950 dark:text-slate-300 md:col-span-2">
-            الإجمالي: {formatAmount(usdtTotal, usdtCounterCurrency)}
+          <div className="grid gap-2 rounded-lg bg-slate-50 px-3 py-2 text-sm font-bold text-slate-600 dark:bg-slate-950 dark:text-slate-300 md:col-span-2 sm:grid-cols-2">
+            <div>قيمة USDT الأصلية: {formatAmount(usdtOriginalUsd, usdDisplayCurrency)}</div>
+            <div>العمولة: {formatAmount(usdtCommissionAmount, usdDisplayCurrency)}</div>
+            <div>الإجمالي بالدولار: {formatAmount(usdtTotalUsd, usdDisplayCurrency)}</div>
+            {usdtForm.paymentCurrencyCode === 'LYD' ? (
+              <div>الإجمالي بالدينار: {formatAmount(usdtTotalLyd, lydDisplayCurrency)}</div>
+            ) : (
+              <div>الإجمالي المطلوب: {formatAmount(usdtTotalUsd, usdDisplayCurrency)}</div>
+            )}
           </div>
         </>
       );
