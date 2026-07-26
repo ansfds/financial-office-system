@@ -9,6 +9,7 @@ export async function createCashboxMovement(
     currencyId: string;
     direction: 'IN' | 'OUT';
     amount: Prisma.Decimal | number | string;
+    paymentMethod?: string | null;
     reason: string;
     transactionId?: string | null;
     personId?: string | null;
@@ -36,6 +37,7 @@ export async function createCashboxMovement(
       personId: input.personId || null,
       direction: input.direction,
       amount,
+      paymentMethod: input.paymentMethod || null,
       reason: input.reason,
       sourceType: input.sourceType || null,
       sourceId: input.sourceId || null,

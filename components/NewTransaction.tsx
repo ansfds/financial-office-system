@@ -18,6 +18,16 @@ import {
   X,
 } from 'lucide-react';
 import { toast } from 'sonner';
+import { formatMoney, formatNumber, normalizeNumberInput } from '@/lib/format';
+import {
+  detailedPaymentCurrencyCode,
+  detailedPaymentLabels,
+  detailedPaymentMethods,
+  simplePaymentLabels,
+  simplePaymentMethods,
+  type DetailedPaymentMethod,
+  type SimplePaymentMethod,
+} from '@/lib/payment-methods';
 
 type OperationKind =
   | 'MANUAL'
@@ -30,8 +40,6 @@ type OperationKind =
   | 'EXPENSE';
 
 type CashDirection = 'IN' | 'OUT' | 'NONE';
-type SimplePaymentMethod = 'CASH' | 'TRANSFER' | 'CARD';
-type DetailedPaymentMethod = 'LYD_CASH' | 'USD_CASH' | 'LYD_TRANSFER' | 'USD_TRANSFER' | 'CARD';
 type UsdtAction = 'BUY' | 'SELL';
 type UsdtPaymentCurrency = 'USD' | 'LYD';
 type CardAction = 'RECEIVE_CARD' | 'PAY_CARD_VALUE' | 'WITHDRAW_FROM_CARD';
@@ -66,6 +74,7 @@ type ManualForm = {
   currencyId: string;
   amount: string;
   cashDirection: CashDirection;
+  movementMethod: SimplePaymentMethod;
 };
 
 type UsdtForm = {
@@ -75,6 +84,7 @@ type UsdtForm = {
   usdtAmount: string;
   commissionPercent: string;
   paymentCurrencyCode: UsdtPaymentCurrency;
+  paymentMethod: SimplePaymentMethod;
   exchangeRate: string;
   txId: string;
 };
@@ -158,28 +168,6 @@ const operationOptions: Array<{ value: OperationKind; label: string; icon: React
   { value: 'EXPENSE', label: 'مصروف / دفع فاتورة', icon: <ReceiptText size={18} /> },
 ];
 
-const simplePaymentLabels: Record<SimplePaymentMethod, string> = {
-  CASH: 'كاش',
-  TRANSFER: 'حوالة',
-  CARD: 'بطاقة مصرفية',
-};
-
-const detailedPaymentLabels: Record<DetailedPaymentMethod, string> = {
-  LYD_CASH: 'كاش دينار',
-  USD_CASH: 'كاش دولار',
-  LYD_TRANSFER: 'حوالة دينار',
-  USD_TRANSFER: 'حوالة دولار',
-  CARD: 'بطاقة مصرفية',
-};
-
-const detailedPaymentCurrencyCode: Record<DetailedPaymentMethod, string> = {
-  LYD_CASH: 'LYD',
-  USD_CASH: 'USD',
-  LYD_TRANSFER: 'LYD',
-  USD_TRANSFER: 'USD',
-  CARD: 'LYD',
-};
-
 const cashDirectionLabels: Record<CashDirection, string> = {
   IN: 'داخل',
   OUT: 'خارج',
@@ -248,22 +236,8 @@ function money(value: string | number | null | undefined) {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
-function normalizeNumberInput(value: string) {
-  const eastern = '٠١٢٣٤٥٦٧٨٩';
-  const persian = '۰۱۲۳۴۵۶۷۸۹';
-
-  return value
-    .replace(/[٠-٩]/g, (digit) => String(eastern.indexOf(digit)))
-    .replace(/[۰-۹]/g, (digit) => String(persian.indexOf(digit)))
-    .replace(',', '.');
-}
-
-function formatNumber(value: string | number) {
-  return money(value).toLocaleString('en-US');
-}
-
 function formatAmount(value: string | number, currency?: CurrencyOption) {
-  return `${formatNumber(value)} ${currency?.symbol || currency?.name || ''}`.trim();
+  return formatMoney(value, currency);
 }
 
 function Field({ label, children, className = '' }: { label: string; children: ReactNode; className?: string }) {
@@ -298,6 +272,7 @@ export default function NewTransaction({
     currencyId: defaultCurrencyId,
     amount: '',
     cashDirection: 'IN',
+    movementMethod: 'CASH',
   });
   const [usdtForm, setUsdtForm] = useState<UsdtForm>({
     action: 'SELL',
@@ -306,6 +281,7 @@ export default function NewTransaction({
     usdtAmount: '',
     commissionPercent: '',
     paymentCurrencyCode: usdCurrency ? 'USD' : 'LYD',
+    paymentMethod: 'CASH',
     exchangeRate: '',
     txId: '',
   });
@@ -403,7 +379,7 @@ export default function NewTransaction({
   )} USDT عبر ${usdtNetwork}، العمولة ${formatNumber(usdtForm.commissionPercent)}%، الإجمالي ${formatAmount(
     usdtTotalUsd,
     usdDisplayCurrency,
-  )}، الدفع ${usdtPaymentCurrencyLabels[usdtForm.paymentCurrencyCode]}${
+  )}، الدفع ${usdtPaymentCurrencyLabels[usdtForm.paymentCurrencyCode]} (${simplePaymentLabels[usdtForm.paymentMethod]})${
     usdtForm.paymentCurrencyCode === 'LYD' ? ` (${formatAmount(usdtPaymentTotal, lydDisplayCurrency)})` : ''
   }`;
   const cardExecution = `${cardActionLabels[cardForm.action]} ${formatNumber(cardForm.cardCount)} بطاقات، قيمة كل بطاقة ${formatAmount(
@@ -524,6 +500,7 @@ export default function NewTransaction({
           currencyId: manualForm.currencyId,
           amount: money(manualForm.amount),
           cashDirection: manualForm.cashDirection,
+          movementMethod: manualForm.movementMethod,
         },
       };
     }
@@ -553,6 +530,7 @@ export default function NewTransaction({
           usdtAmount: money(usdtForm.usdtAmount),
           commissionPercent: money(usdtForm.commissionPercent),
           paymentCurrencyCode: usdtForm.paymentCurrencyCode,
+          paymentMethod: usdtForm.paymentMethod,
           exchangeRate: usdtForm.paymentCurrencyCode === 'LYD' ? money(usdtForm.exchangeRate) : undefined,
           txId: usdtForm.txId || undefined,
         },
@@ -766,6 +744,20 @@ export default function NewTransaction({
               ))}
             </select>
           </Field>
+          {manualForm.cashDirection !== 'NONE' ? (
+            <Field label="طريقة الحركة" className="md:col-span-2">
+              <select
+                value={manualForm.movementMethod}
+                onChange={(event) => setManualForm({ ...manualForm, movementMethod: event.target.value as SimplePaymentMethod })}
+              >
+                {simplePaymentMethods.map((value) => (
+                  <option key={value} value={value}>
+                    {simplePaymentLabels[value]}
+                  </option>
+                ))}
+              </select>
+            </Field>
+          ) : null}
         </>
       );
     }
@@ -824,6 +816,18 @@ export default function NewTransaction({
               {Object.entries(usdtPaymentCurrencyLabels).map(([value, label]) => (
                 <option key={value} value={value}>
                   {label}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <Field label="طريقة الدفع">
+            <select
+              value={usdtForm.paymentMethod}
+              onChange={(event) => setUsdtForm({ ...usdtForm, paymentMethod: event.target.value as SimplePaymentMethod })}
+            >
+              {simplePaymentMethods.map((value) => (
+                <option key={value} value={value}>
+                  {simplePaymentLabels[value]}
                 </option>
               ))}
             </select>
@@ -913,9 +917,9 @@ export default function NewTransaction({
                   value={cardForm.paymentMethod}
                   onChange={(event) => setCardForm({ ...cardForm, paymentMethod: event.target.value as DetailedPaymentMethod })}
                 >
-                  {Object.entries(detailedPaymentLabels).map(([value, label]) => (
+                  {detailedPaymentMethods.map((value) => (
                     <option key={value} value={value}>
-                      {label}
+                      {detailedPaymentLabels[value]}
                     </option>
                   ))}
                 </select>
@@ -970,9 +974,9 @@ export default function NewTransaction({
               value={cashboxForm.movementMethod}
               onChange={(event) => setCashboxForm({ ...cashboxForm, movementMethod: event.target.value as SimplePaymentMethod })}
             >
-              {Object.entries(simplePaymentLabels).map(([value, label]) => (
+              {simplePaymentMethods.map((value) => (
                 <option key={value} value={value}>
-                  {label}
+                  {simplePaymentLabels[value]}
                 </option>
               ))}
             </select>
@@ -1004,9 +1008,9 @@ export default function NewTransaction({
               value={conversionForm.paymentMethod}
               onChange={(event) => setConversionForm({ ...conversionForm, paymentMethod: event.target.value as SimplePaymentMethod })}
             >
-              {Object.entries(simplePaymentLabels).map(([value, label]) => (
+              {simplePaymentMethods.map((value) => (
                 <option key={value} value={value}>
-                  {label}
+                  {simplePaymentLabels[value]}
                 </option>
               ))}
             </select>
@@ -1111,9 +1115,9 @@ export default function NewTransaction({
               value={transferForm.paymentMethod}
               onChange={(event) => setTransferForm({ ...transferForm, paymentMethod: event.target.value as SimplePaymentMethod })}
             >
-              {Object.entries(simplePaymentLabels).map(([value, label]) => (
+              {simplePaymentMethods.map((value) => (
                 <option key={value} value={value}>
-                  {label}
+                  {simplePaymentLabels[value]}
                 </option>
               ))}
             </select>
@@ -1187,9 +1191,9 @@ export default function NewTransaction({
               value={sheinForm.paymentMethod}
               onChange={(event) => setSheinForm({ ...sheinForm, paymentMethod: event.target.value as DetailedPaymentMethod })}
             >
-              {Object.entries(detailedPaymentLabels).map(([value, label]) => (
+              {detailedPaymentMethods.map((value) => (
                 <option key={value} value={value}>
-                  {label}
+                  {detailedPaymentLabels[value]}
                 </option>
               ))}
             </select>
@@ -1238,9 +1242,9 @@ export default function NewTransaction({
             value={expenseForm.paymentMethod}
             onChange={(event) => setExpenseForm({ ...expenseForm, paymentMethod: event.target.value as SimplePaymentMethod })}
           >
-            {Object.entries(simplePaymentLabels).map(([value, label]) => (
+            {simplePaymentMethods.map((value) => (
               <option key={value} value={value}>
-                {label}
+                {simplePaymentLabels[value]}
               </option>
             ))}
           </select>

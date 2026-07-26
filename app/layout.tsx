@@ -2,9 +2,16 @@ import './globals.css';
 import { Toaster } from 'sonner';
 import ThemeProvider from '@/components/ThemeProvider';
 
+const logoUrl = 'https://i.postimg.cc/k4nQr4gx/680242520-122094061526346951-872670812110961262-n.jpg';
+
 export const metadata = {
-  title: 'منظومة محاسبة ( شركة الوسيط العالمي للحوالات المالية )',
+  title: 'منظومة محاسبة | شركة الوسيط العالمي',
   description: 'إدارة المعاملات والصندوق والمخزن والديون',
+  icons: {
+    icon: [{ url: logoUrl }],
+    shortcut: [{ url: logoUrl }],
+    apple: [{ url: logoUrl }],
+  },
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

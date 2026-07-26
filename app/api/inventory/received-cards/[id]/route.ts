@@ -3,25 +3,12 @@ import { audit, requireSession } from '@/lib/auth';
 import { balanceWarning, createCashboxMovement } from '@/lib/cashbox';
 import { apiError, fail, ok } from '@/lib/http';
 import { D } from '@/lib/money';
+import { detailedPaymentCurrencyCode, detailedPaymentLabels } from '@/lib/payment-methods';
 import { revalidateFinancePaths } from '@/lib/revalidate';
 import { z } from 'zod';
 
-const settlementMethods = ['USD_CASH', 'USD_TRANSFER', 'LYD_CASH', 'LYD_TRANSFER'] as const;
+const settlementMethods = ['USD_CASH', 'USD_TRANSFER', 'USD_CARD', 'LYD_CASH', 'LYD_TRANSFER', 'LYD_OFFICE_TRANSFER', 'LYD_CARD'] as const;
 const settlementStatuses = new Set(['PARTIAL', 'SETTLED', 'COMPLETED']);
-
-const methodLabels: Record<(typeof settlementMethods)[number], string> = {
-  USD_CASH: 'دولار كاش',
-  USD_TRANSFER: 'دولار حوالة',
-  LYD_CASH: 'دينار كاش',
-  LYD_TRANSFER: 'دينار حوالة',
-};
-
-const methodCurrencyCode: Record<(typeof settlementMethods)[number], 'USD' | 'LYD'> = {
-  USD_CASH: 'USD',
-  USD_TRANSFER: 'USD',
-  LYD_CASH: 'LYD',
-  LYD_TRANSFER: 'LYD',
-};
 
 const updateReceivedCardSchema = z.object({
   bankName: z.string().trim().optional().nullable(),
@@ -98,7 +85,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
 
       if (settlementPaymentMethod) {
         const settlementCurrency = await tx.currency.findFirst({
-          where: { code: methodCurrencyCode[settlementPaymentMethod as (typeof settlementMethods)[number]], isActive: true },
+          where: { code: detailedPaymentCurrencyCode[settlementPaymentMethod as keyof typeof detailedPaymentCurrencyCode], isActive: true },
         });
         if (!settlementCurrency) throw new Error('INVALID_SETTLEMENT_CURRENCY');
         settlementCurrencyId = settlementCurrency.id;
@@ -133,6 +120,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
           transactionId: oldReceiptMovement?.transactionId || null,
           direction: 'OUT',
           amount: oldReceiptMovement?.amount || oldValue.valueUsd,
+          paymentMethod: oldReceiptMovement?.paymentMethod || null,
           reason: `عكس أثر استلام بطاقة سابق ${personName} #${oldValue.sequence}`.trim(),
           personId,
           sourceType: 'ReceivedCustomerCard',
@@ -162,6 +150,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
           currencyId: oldValue.settlementCurrencyId as string,
           direction: 'IN',
           amount: oldValue.settlementAmount as any,
+          paymentMethod: oldValue.settlementPaymentMethod,
           reason: `عكس تصفية بطاقة ${personName} #${oldValue.sequence}`.trim(),
           personId,
           sourceType: 'ReceivedCustomerCard',
@@ -178,7 +167,8 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
           currencyId: settlementCurrencyId,
           direction: 'OUT',
           amount: settlementAmount,
-          reason: `تصفية بطاقة ${personName} #${oldValue.sequence} (${methodLabels[settlementPaymentMethod as (typeof settlementMethods)[number]]})`.trim(),
+          paymentMethod: settlementPaymentMethod,
+          reason: `تصفية بطاقة ${personName} #${oldValue.sequence} (${detailedPaymentLabels[settlementPaymentMethod as keyof typeof detailedPaymentLabels]})`.trim(),
           personId,
           sourceType: 'ReceivedCustomerCard',
           sourceId: id,
@@ -256,7 +246,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
       return fail('عملة التصفية يجب أن تكون دينار أو دولار');
     }
     if ((error as Error).message === 'INVALID_SETTLEMENT_METHOD') {
-      return fail('طريقة الدفع يجب أن تكون دولار كاش أو دولار حوالة أو دينار كاش أو دينار حوالة');
+      return fail('اختر طريقة دفع صحيحة للتصفية');
     }
     if ((error as Error).message === 'SETTLEMENT_REQUIRES_AMOUNT_METHOD_AND_CURRENCY') {
       return fail('تصفية البطاقة تتطلب مبلغ التصفية وطريقة الدفع');

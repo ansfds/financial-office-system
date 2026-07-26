@@ -1,6 +1,10 @@
 import Page from '@/components/Page';
 import SheinSalesReportClient from '@/components/SheinSalesReportClient';
+import { summarizeCashboxByMethod } from '@/lib/cashbox-summary';
 import { db } from '@/lib/db';
+import { formatDateTime, formatMoney, formatNumber, numberValue } from '@/lib/format';
+import { detailedPaymentLabels, lydBreakdownMethods, usdBreakdownMethods } from '@/lib/payment-methods';
+import Link from 'next/link';
 import type { ReactNode } from 'react';
 
 export const dynamic = 'force-dynamic';
@@ -43,11 +47,7 @@ const operationLabels: Record<string, string> = {
 };
 
 function amount(value: any) {
-  return Number(value || 0);
-}
-
-function formatMoney(value: number, symbol = '') {
-  return `${value.toLocaleString('en-US')} ${symbol}`.trim();
+  return numberValue(value);
 }
 
 function moneyBucketsLabel(buckets: Map<string, { amount: number; symbol: string }>) {
@@ -60,9 +60,7 @@ function operationDetails(transaction: any) {
   const symbol = transaction.currency?.symbol || '';
 
   if (transaction.operationKind === 'CARD_OPERATION') {
-    return `${amount(details.cardCount).toLocaleString('en-US')} بطاقات × ${amount(details.cardValue).toLocaleString(
-      'en-US',
-    )} ${symbol} = ${amount(details.cardTotal).toLocaleString('en-US')} ${symbol}`;
+    return `${formatNumber(details.cardCount)} بطاقات × ${formatMoney(details.cardValue, symbol)} = ${formatMoney(details.cardTotal, symbol)}`;
   }
 
   if (transaction.operationKind === 'USDT') {
@@ -70,21 +68,19 @@ function operationDetails(transaction: any) {
       const paymentLabel = details.paymentCurrencyCode === 'LYD' ? 'دينار' : 'دولار';
       const paymentTotal =
         details.paymentCurrencyCode === 'LYD'
-          ? `${amount(details.totalLyd || details.paymentTotal).toLocaleString('en-US')} ${symbol}`
-          : `${amount(details.totalUsd).toLocaleString('en-US')} $`;
+          ? formatMoney(details.totalLyd || details.paymentTotal, symbol)
+          : formatMoney(details.totalUsd, '$');
 
-      return `${amount(details.usdtAmount).toLocaleString('en-US')} USDT عبر ${
+      return `${formatMoney(details.usdtAmount, 'USDT')} عبر ${
         details.network || '—'
       } - عمولة ${details.commissionPercent ?? 0}% - الدفع ${paymentLabel}: ${paymentTotal}`;
     }
 
-    return `${amount(details.usdtAmount).toLocaleString('en-US')} USDT عبر ${details.network || '—'}`;
+    return `${formatMoney(details.usdtAmount, 'USDT')} عبر ${details.network || '—'}`;
   }
 
   if (transaction.operationKind === 'SHEIN_CARD_SALE') {
-    return `${amount(details.cardCount).toLocaleString('en-US')} كروت - إجمالي ${amount(details.totalAmount).toLocaleString(
-      'en-US',
-    )} ${symbol}`;
+    return `${formatNumber(details.cardCount)} كروت - إجمالي ${formatMoney(details.totalAmount, symbol)}`;
   }
 
   if (transaction.operationKind === 'MONEY_TRANSFER') {
@@ -181,7 +177,10 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
     }),
     db.cashboxMovement.findMany({
       where: { occurredAt: { gte: fromDate, lte: toDate } },
-      include: { currency: true },
+      include: {
+        currency: true,
+        transaction: { select: { operationKind: true, operationDetails: true, sheinPaymentMethod: true } },
+      },
       orderBy: { occurredAt: 'desc' },
     }),
     db.financialTransaction.findMany({
@@ -225,6 +224,7 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
   const employees = Array.from(
     new Set(todayMovements.map((movement) => movement.createdBy).filter(Boolean)),
   );
+  const cashboxSummary = summarizeCashboxByMethod(todayMovements);
 
   const sheinSold = sheinSummary
     .filter((item) => item.status === 'SOLD')
@@ -282,6 +282,14 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
             عرض التقرير
           </button>
         </form>
+        <div className="flex flex-wrap gap-3">
+          <Link
+            href={`/reports/daily?date=${dateInput(fromDate)}`}
+            className="rounded-lg bg-slate-900 px-5 py-3 text-sm font-bold text-white hover:bg-slate-800 dark:bg-slate-100 dark:text-slate-950 dark:hover:bg-white"
+          >
+            تقرير اليوم PDF
+          </Link>
+        </div>
 
         <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
           <SheinSalesReportClient soldCount={sheinSold} sales={JSON.parse(JSON.stringify(sheinSales))} />
@@ -315,16 +323,16 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
                   <tr key={item.currency.id}>
                     <td>{item.currency.name}</td>
                     <td>
-                      {amount(item.balance).toLocaleString('en-US')} {item.currency.symbol}
+                      {formatMoney(item.balance, item.currency)}
                     </td>
                     <td className="font-bold text-emerald-600">
-                      {item.incoming.toLocaleString('en-US')} {item.currency.symbol}
+                      {formatMoney(item.incoming, item.currency)}
                     </td>
                     <td className="font-bold text-red-600">
-                      {item.outgoing.toLocaleString('en-US')} {item.currency.symbol}
+                      {formatMoney(item.outgoing, item.currency)}
                     </td>
                     <td className={item.difference >= 0 ? 'font-bold text-emerald-600' : 'font-bold text-red-600'}>
-                      {item.difference.toLocaleString('en-US')} {item.currency.symbol}
+                      {formatMoney(item.difference, item.currency)}
                     </td>
                   </tr>
                 ))}
@@ -334,6 +342,11 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
           <div className="mt-4 text-sm text-slate-500">
             الموظف المسؤول: {employees.length ? employees.join('، ') : 'لا توجد حركات اليوم'}
           </div>
+        </section>
+
+        <section className="grid gap-5 lg:grid-cols-2">
+          <MethodBreakdown title="تفصيل الدينار" methods={lydBreakdownMethods} summary={cashboxSummary} symbol="د.ل" />
+          <MethodBreakdown title="تفصيل الدولار" methods={usdBreakdownMethods} summary={cashboxSummary} symbol="$" />
         </section>
 
         <section className="card p-5">
@@ -357,12 +370,12 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
                   <tr key={index}>
                     <td>{currencies.find((currency) => currency.id === item.currencyId)?.name}</td>
                     <td>{item.status}</td>
-                    <td>{item._count}</td>
-                    <td>{item._sum.agreedAmount?.toString()}</td>
-                    <td>{item._sum.receivedAmount?.toString()}</td>
-                    <td>{item._sum.paidAmount?.toString()}</td>
-                    <td>{item._sum.receivableAmount?.toString()}</td>
-                    <td>{item._sum.payableAmount?.toString()}</td>
+                    <td>{formatNumber(item._count)}</td>
+                    <td>{formatMoney(item._sum.agreedAmount)}</td>
+                    <td>{formatMoney(item._sum.receivedAmount)}</td>
+                    <td>{formatMoney(item._sum.paidAmount)}</td>
+                    <td>{formatMoney(item._sum.receivableAmount)}</td>
+                    <td>{formatMoney(item._sum.payableAmount)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -387,13 +400,13 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
               <tbody>
                 {recentOperations.map((transaction) => (
                   <tr key={transaction.id}>
-                    <td>{new Date(transaction.transactionAt).toLocaleString('en-GB')}</td>
+                    <td>{formatDateTime(transaction.transactionAt)}</td>
                     <td>{operationLabels[transaction.operationKind || ''] || transaction.type?.name || transaction.customType || '—'}</td>
                     <td>{transaction.executionType || '—'}</td>
                     <td>{operationDetails(transaction)}</td>
                     <td>{transaction.person?.fullName || '—'}</td>
                     <td>
-                      {amount(transaction.agreedAmount).toLocaleString('en-US')} {transaction.currency.symbol}
+                      {formatMoney(transaction.agreedAmount, transaction.currency.symbol)}
                     </td>
                   </tr>
                 ))}
@@ -418,7 +431,7 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
             {sheinSummary.map((item, index) => (
               <div key={index} className="flex justify-between border-b border-slate-100 py-2 dark:border-slate-800">
                 <span>
-                  {item.denomination.toString()}$ - {sheinStatusLabels[item.status] || item.status}
+                  {formatMoney(item.denomination, '$')} - {sheinStatusLabels[item.status] || item.status}
                 </span>
                 <b>{item._count}</b>
               </div>
@@ -445,7 +458,33 @@ function SummaryCard({ title, value }: { title: string; value: ReactNode }) {
   return (
     <div className="card p-5">
       <div className="text-sm text-slate-500">{title}</div>
-      <div className="mt-2 text-2xl font-black">{typeof value === 'number' ? value.toLocaleString('en-US') : value}</div>
+      <div className="mt-2 text-2xl font-black">{typeof value === 'number' ? formatNumber(value) : value}</div>
     </div>
+  );
+}
+
+function MethodBreakdown({
+  title,
+  methods,
+  summary,
+  symbol,
+}: {
+  title: string;
+  methods: readonly string[];
+  summary: Record<string, number>;
+  symbol: string;
+}) {
+  return (
+    <section className="card p-5">
+      <h2 className="mb-4 font-black">{title}</h2>
+      <div className="grid gap-3 sm:grid-cols-2">
+        {methods.map((method) => (
+          <div key={method} className="rounded-lg border border-slate-200 p-3 dark:border-slate-800">
+            <div className="text-sm text-slate-500">{detailedPaymentLabels[method as keyof typeof detailedPaymentLabels]}</div>
+            <div className="mt-2 text-xl font-black">{formatMoney(summary[method] || 0, symbol)}</div>
+          </div>
+        ))}
+      </div>
+    </section>
   );
 }

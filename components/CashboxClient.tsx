@@ -4,15 +4,15 @@ import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { ArrowLeftRight, ChevronDown, Loader2, Plus, Repeat2 } from 'lucide-react';
 import { toast } from 'sonner';
-
-function numberValue(value: unknown) {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : 0;
-}
-
-function formatAmount(value: unknown) {
-  return numberValue(value).toLocaleString('en-US');
-}
+import { formatDate, formatDateTime, formatMoney, formatNumber, formatRate, numberValue } from '@/lib/format';
+import {
+  detailedPaymentLabels,
+  lydBreakdownMethods,
+  simplePaymentLabels,
+  simplePaymentMethods,
+  usdBreakdownMethods,
+  type SimplePaymentMethod,
+} from '@/lib/payment-methods';
 
 function dayKey(value: string) {
   const date = new Date(value);
@@ -23,6 +23,7 @@ export default function CashboxClient() {
   const router = useRouter();
   const [movements, setMovements] = useState<any[]>([]);
   const [currencies, setCurrencies] = useState<any[]>([]);
+  const [summaries, setSummaries] = useState<Record<string, number>>({});
   const [loading, setLoading] = useState(false);
   const [openDay, setOpenDay] = useState('');
   const [currencyFilterId, setCurrencyFilterId] = useState('');
@@ -30,6 +31,7 @@ export default function CashboxClient() {
     currencyId: '',
     direction: 'IN',
     amount: '',
+    movementMethod: 'CASH' as SimplePaymentMethod,
     reason: '',
     note: '',
     createdBy: '',
@@ -39,6 +41,7 @@ export default function CashboxClient() {
     toCurrencyId: '',
     fromAmount: '',
     toAmount: '',
+    movementMethod: 'CASH' as SimplePaymentMethod,
     operatorName: '',
     notes: '',
   });
@@ -74,7 +77,9 @@ export default function CashboxClient() {
     if (!cashboxResponse.ok) return toast.error(cashboxData.error || 'تعذر تحميل الصندوق');
     if (!settingsResponse.ok) return toast.error(settingsData.error || 'تعذر تحميل الإعدادات');
 
-    setMovements(Array.isArray(cashboxData) ? cashboxData : []);
+    const loadedMovements = Array.isArray(cashboxData) ? cashboxData : cashboxData.movements || [];
+    setMovements(loadedMovements);
+    setSummaries(Array.isArray(cashboxData) ? {} : cashboxData.summaries || {});
     setCurrencies(settingsData.currencies || []);
 
     const defaultCurrencyId = settingsData.currencies?.[0]?.id || '';
@@ -88,7 +93,7 @@ export default function CashboxClient() {
       fromCurrencyId: value.fromCurrencyId || usd?.id || loadedConversionCurrencies[0]?.id || '',
       toCurrencyId: value.toCurrencyId || lyd?.id || loadedConversionCurrencies[1]?.id || '',
     }));
-    setOpenDay((value) => value || (cashboxData[0] ? dayKey(cashboxData[0].occurredAt) : ''));
+    setOpenDay((value) => value || (loadedMovements[0] ? dayKey(loadedMovements[0].occurredAt) : ''));
   }
 
   useEffect(() => {
@@ -157,6 +162,11 @@ export default function CashboxClient() {
   return (
     <div className="space-y-5">
       <section className="card p-5">
+        <div className="mb-5 grid gap-3 md:grid-cols-2">
+          <MethodSummary title="تفصيل رصيد الدينار" methods={lydBreakdownMethods} summary={summaries} symbol="د.ل" />
+          <MethodSummary title="تفصيل رصيد الدولار" methods={usdBreakdownMethods} summary={summaries} symbol="$" />
+        </div>
+
         <div className="mb-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
           <div>
             <h2 className="text-lg font-black">حركة صندوق يدوية</h2>
@@ -200,6 +210,16 @@ export default function CashboxClient() {
             value={manualForm.amount}
             onChange={(event) => setManualForm({ ...manualForm, amount: event.target.value })}
           />
+          <select
+            value={manualForm.movementMethod}
+            onChange={(event) => setManualForm({ ...manualForm, movementMethod: event.target.value as SimplePaymentMethod })}
+          >
+            {simplePaymentMethods.map((method) => (
+              <option key={method} value={method}>
+                {simplePaymentLabels[method]}
+              </option>
+            ))}
+          </select>
           <input
             placeholder="السبب"
             value={manualForm.reason}
@@ -280,8 +300,19 @@ export default function CashboxClient() {
           </div>
 
           <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm font-bold dark:border-slate-800 dark:bg-slate-950 md:col-span-3">
-            سعر الصرف = {exchangeRate ? exchangeRate.toLocaleString('en-US', { maximumFractionDigits: 8 }) : '0'}
+            سعر الصرف = {exchangeRate ? formatRate(exchangeRate) : '0'}
           </div>
+          <select
+            className="md:col-span-3"
+            value={conversionForm.movementMethod}
+            onChange={(event) => setConversionForm({ ...conversionForm, movementMethod: event.target.value as SimplePaymentMethod })}
+          >
+            {simplePaymentMethods.map((method) => (
+              <option key={method} value={method}>
+                {simplePaymentLabels[method]}
+              </option>
+            ))}
+          </select>
           <input
             placeholder="اسم منفذ العملية"
             value={conversionForm.operatorName}
@@ -314,9 +345,9 @@ export default function CashboxClient() {
                 onClick={() => setOpenDay(openDay === date ? '' : date)}
                 className="flex w-full items-center justify-between gap-3 bg-slate-50 px-4 py-3 text-right font-black dark:bg-slate-950"
               >
-                <span>معاملات يوم {new Date(date).toLocaleDateString('en-GB')}</span>
+                <span>معاملات يوم {formatDate(date)}</span>
                 <span className="inline-flex items-center gap-2 text-sm text-slate-500">
-                  {items.length} حركة
+                  {formatNumber(items.length)} حركة
                   <ChevronDown size={18} />
                 </span>
               </button>
@@ -343,15 +374,15 @@ export default function CashboxClient() {
                         <tr key={movement.id}>
                           <td>{movement.direction === 'IN' ? 'داخل' : movement.direction === 'OUT' ? 'خارج' : 'بدون أثر'}</td>
                           <td className={movement.direction === 'IN' ? 'font-bold text-emerald-600' : 'font-bold text-red-600'}>
-                            {formatAmount(movement.amount)}
+                            {formatMoney(movement.amount)}
                           </td>
                           <td>{movement.currency?.symbol || movement.currency?.name}</td>
-                          <td>{formatAmount(movement.balanceBefore)}</td>
-                          <td>{formatAmount(movement.balanceAfter)}</td>
+                          <td>{formatMoney(movement.balanceBefore)}</td>
+                          <td>{formatMoney(movement.balanceAfter)}</td>
                           <td>{movement.reason}</td>
                           <td>{movement.person?.fullName || movement.transaction?.person?.fullName || '—'}</td>
                           <td>{movement.createdBy || 'system'}</td>
-                          <td>{new Date(movement.occurredAt).toLocaleString('en-GB')}</td>
+                          <td>{formatDateTime(movement.occurredAt)}</td>
                           <td>{movement.note || '—'}</td>
                         </tr>
                       ))}
@@ -368,6 +399,37 @@ export default function CashboxClient() {
           ) : null}
         </div>
       </section>
+    </div>
+  );
+}
+
+function MethodSummary({
+  title,
+  methods,
+  summary,
+  symbol,
+}: {
+  title: string;
+  methods: readonly string[];
+  summary: Record<string, number>;
+  symbol: string;
+}) {
+  const total = methods.reduce((sum, method) => sum + numberValue(summary[method]), 0);
+
+  return (
+    <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 dark:border-slate-800 dark:bg-slate-950">
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <h3 className="font-black">{title}</h3>
+        <span className="font-black text-indigo-600">{formatMoney(total, symbol)}</span>
+      </div>
+      <div className="grid gap-2 sm:grid-cols-2">
+        {methods.map((method) => (
+          <div key={method} className="flex items-center justify-between rounded-lg bg-white px-3 py-2 text-sm dark:bg-slate-900">
+            <span className="text-slate-500">{detailedPaymentLabels[method as keyof typeof detailedPaymentLabels]}</span>
+            <b>{formatMoney(summary[method] || 0, symbol)}</b>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

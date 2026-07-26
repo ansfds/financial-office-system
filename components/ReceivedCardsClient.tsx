@@ -4,6 +4,8 @@ import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { ChevronDown, Loader2, Plus, Save } from 'lucide-react';
 import { toast } from 'sonner';
+import { formatDate, formatMoney, numberValue } from '@/lib/format';
+import { detailedPaymentLabels } from '@/lib/payment-methods';
 
 const statusLabels: Record<string, string> = {
   RECEIVED: 'غير مصفاة',
@@ -21,22 +23,12 @@ const statusOptions = [
   { value: 'CANCELLED', label: 'ملغاة' },
 ];
 
-const settlementMethodLabels: Record<string, string> = {
-  USD_CASH: 'دولار كاش',
-  USD_TRANSFER: 'دولار حوالة',
-  LYD_CASH: 'دينار كاش',
-  LYD_TRANSFER: 'دينار حوالة',
-};
+const settlementMethods = ['USD_CASH', 'USD_TRANSFER', 'USD_CARD', 'LYD_CASH', 'LYD_TRANSFER', 'LYD_OFFICE_TRANSFER', 'LYD_CARD'];
 
 const settlementStatuses = new Set(['PARTIAL', 'SETTLED', 'COMPLETED']);
 
 function decimal(value: any) {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : 0;
-}
-
-function formatAmount(value: any, symbol = '') {
-  return `${decimal(value).toLocaleString('en-US')} ${symbol}`.trim();
+  return numberValue(value);
 }
 
 function cardBaseAmount(card: any) {
@@ -57,7 +49,7 @@ function currencyCodeForMethod(method?: string | null) {
 
 function moneyBucketsLabel(buckets: Map<string, { amount: number; symbol: string }>) {
   const items = Array.from(buckets.values()).filter((item) => item.amount > 0);
-  return items.length ? items.map((item) => formatAmount(item.amount, item.symbol)).join('، ') : '0';
+  return items.length ? items.map((item) => formatMoney(item.amount, item.symbol)).join('، ') : '0';
 }
 
 export default function ReceivedCardsClient({
@@ -194,8 +186,8 @@ export default function ReceivedCardsClient({
 
   function batchSummary(batch: any) {
     const symbol = batch.currency?.symbol || '$';
-    const perCard = formatAmount(batch.agreedAmountPerCard, symbol);
-    const total = formatAmount(decimal(batch.agreedAmountPerCard) * decimal(batch.cardCount), symbol);
+    const perCard = formatMoney(batch.agreedAmountPerCard, symbol);
+    const total = formatMoney(decimal(batch.agreedAmountPerCard) * decimal(batch.cardCount), symbol);
     return `استلام ${batch.cardCount} بطاقات، قيمة كل بطاقة ${perCard}، الإجمالي ${total} #${batch.id.slice(-4).toUpperCase()}`;
   }
 
@@ -282,7 +274,7 @@ export default function ReceivedCardsClient({
                   <div className="font-black">{batchSummary(batch)}</div>
                   <div className="mt-1 text-sm text-slate-500">
                     {batch.person?.customerNo ? `${batch.person.customerNo} - ` : ''}
-                    {batch.person?.fullName} · {new Date(batch.receivedAt).toLocaleDateString('en-GB')}
+                    {batch.person?.fullName} · {formatDate(batch.receivedAt)}
                   </div>
                 </div>
                 <div>
@@ -291,7 +283,7 @@ export default function ReceivedCardsClient({
                 </div>
                 <div>
                   <div className="text-xs text-slate-500">المتبقي داخل البطاقات</div>
-                  <div className="font-black">{formatAmount(remainingTotal, '$')}</div>
+                  <div className="font-black">{formatMoney(remainingTotal, '$')}</div>
                 </div>
                 <div className="flex items-center gap-2 font-bold text-indigo-600">
                   عرض البطاقات
@@ -379,7 +371,7 @@ export default function ReceivedCardsClient({
                               />
                             </td>
                             <td className="font-bold text-slate-700 dark:text-slate-200">
-                              {formatAmount(cardRemaining(card), '$')}
+                              {formatMoney(cardRemaining(card), '$')}
                             </td>
                             <td>
                               <select
@@ -388,9 +380,9 @@ export default function ReceivedCardsClient({
                                   updateCard(batch.id, card.id, { settlementPaymentMethod: event.target.value })
                                 }
                               >
-                                {Object.entries(settlementMethodLabels).map(([value, label]) => (
+                                {settlementMethods.map((value) => (
                                   <option key={value} value={value}>
-                                    {label}
+                                    {detailedPaymentLabels[value as keyof typeof detailedPaymentLabels]}
                                   </option>
                                 ))}
                               </select>

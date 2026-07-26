@@ -3,6 +3,7 @@ import { audit, requireSession } from '@/lib/auth';
 import { createCashboxMovement } from '@/lib/cashbox';
 import { apiError, fail, ok } from '@/lib/http';
 import { D } from '@/lib/money';
+import { paymentMethodForCurrency, simplePaymentMethods } from '@/lib/payment-methods';
 import { revalidateFinancePaths } from '@/lib/revalidate';
 import { z } from 'zod';
 
@@ -11,6 +12,7 @@ const conversionSchema = z.object({
   toCurrencyId: z.string().min(1),
   fromAmount: z.coerce.number().positive(),
   toAmount: z.coerce.number().positive(),
+  movementMethod: z.enum(simplePaymentMethods).default('CASH'),
   operatorName: z.string().trim().min(2),
   notes: z.string().trim().optional().nullable(),
   occurredAt: z.string().optional().nullable(),
@@ -63,6 +65,7 @@ export async function POST(request: Request) {
         currencyId: input.fromCurrencyId,
         direction: 'OUT',
         amount: fromAmount,
+        paymentMethod: paymentMethodForCurrency(fromCurrency?.code, input.movementMethod),
         reason,
         note: input.notes || null,
         createdBy: input.operatorName,
@@ -74,6 +77,7 @@ export async function POST(request: Request) {
         currencyId: input.toCurrencyId,
         direction: 'IN',
         amount: toAmount,
+        paymentMethod: paymentMethodForCurrency(toCurrency?.code, input.movementMethod),
         reason,
         note: input.notes || null,
         createdBy: input.operatorName,

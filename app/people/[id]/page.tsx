@@ -1,5 +1,6 @@
 import Page from '@/components/Page';
 import { db } from '@/lib/db';
+import { formatDate, formatMoney, formatNumber } from '@/lib/format';
 import { notFound } from 'next/navigation';
 
 export const dynamic = 'force-dynamic';
@@ -22,19 +23,12 @@ const operationLabels: Record<string, string> = {
   EXPENSE: 'مصروف / دفع فاتورة',
 };
 
-function numberValue(value: any) {
-  const parsed = Number(value || 0);
-  return Number.isFinite(parsed) ? parsed : 0;
-}
-
 function transactionDetails(transaction: any) {
   const details = transaction.operationDetails || {};
   const symbol = transaction.currency?.symbol || '';
 
   if (transaction.operationKind === 'CARD_OPERATION') {
-    return `${numberValue(details.cardCount).toLocaleString('en-US')} بطاقات × ${numberValue(details.cardValue).toLocaleString(
-      'en-US',
-    )} ${symbol} = ${numberValue(details.cardTotal).toLocaleString('en-US')} ${symbol}`;
+    return `${formatNumber(details.cardCount)} بطاقات × ${formatMoney(details.cardValue, symbol)} = ${formatMoney(details.cardTotal, symbol)}`;
   }
 
   if (transaction.operationKind === 'USDT') {
@@ -42,15 +36,15 @@ function transactionDetails(transaction: any) {
       const paymentLabel = details.paymentCurrencyCode === 'LYD' ? 'دينار' : 'دولار';
       const paymentTotal =
         details.paymentCurrencyCode === 'LYD'
-          ? `${numberValue(details.totalLyd || details.paymentTotal).toLocaleString('en-US')} ${symbol}`
-          : `${numberValue(details.totalUsd).toLocaleString('en-US')} $`;
+          ? formatMoney(details.totalLyd || details.paymentTotal, symbol)
+          : formatMoney(details.totalUsd, '$');
 
-      return `${numberValue(details.usdtAmount).toLocaleString('en-US')} USDT عبر ${
+      return `${formatMoney(details.usdtAmount, 'USDT')} عبر ${
         details.network || '—'
       } - عمولة ${details.commissionPercent ?? 0}% - الدفع ${paymentLabel}: ${paymentTotal}`;
     }
 
-    return `${numberValue(details.usdtAmount).toLocaleString('en-US')} USDT عبر ${details.network || '—'}`;
+    return `${formatMoney(details.usdtAmount, 'USDT')} عبر ${details.network || '—'}`;
   }
 
   if (transaction.operationKind === 'MONEY_TRANSFER') {
@@ -129,11 +123,11 @@ export default async function PersonPage({ params }: { params: Promise<{ id: str
                     <td>{transaction.executionType || '—'}</td>
                     <td>{transactionDetails(transaction)}</td>
                     <td>
-                      {transaction.agreedAmount.toString()} {transaction.currency.symbol}
+                      {formatMoney(transaction.agreedAmount, transaction.currency)}
                     </td>
-                    <td>{transaction.receivedAmount.toString()}</td>
-                    <td>{transaction.paidAmount.toString()}</td>
-                    <td>{remaining.gt(0) ? remaining.toString() : '0'}</td>
+                    <td>{formatMoney(transaction.receivedAmount, transaction.currency)}</td>
+                    <td>{formatMoney(transaction.paidAmount, transaction.currency)}</td>
+                    <td>{formatMoney(remaining.gt(0) ? remaining : 0, transaction.currency)}</td>
                     <td>{remaining.lte(0) ? 'مكتمل' : transaction.status}</td>
                   </tr>
                 );
@@ -150,13 +144,13 @@ export default async function PersonPage({ params }: { params: Promise<{ id: str
             {person.cardBatches.map((batch) => (
               <div key={batch.id} className="rounded-lg border border-slate-200 p-3 dark:border-slate-800">
                 <div className="font-bold">
-                  {batch.cardCount} بطاقات - {new Date(batch.receivedAt).toLocaleDateString('en-GB')}
+                  {formatNumber(batch.cardCount)} بطاقات - {formatDate(batch.receivedAt)}
                 </div>
                 <div className="mt-2 text-sm text-slate-500">
-                  المتفق عليه لكل بطاقة: {batch.agreedAmountPerCard.toString()} {batch.currency?.symbol || ''}
+                  المتفق عليه لكل بطاقة: {formatMoney(batch.agreedAmountPerCard, batch.currency?.symbol || '')}
                 </div>
                 <div className="mt-1 text-sm text-slate-500">
-                  الإجمالي: {batch.agreedAmountPerCard.mul(batch.cardCount).toString()} {batch.currency?.symbol || ''}
+                  الإجمالي: {formatMoney(batch.agreedAmountPerCard.mul(batch.cardCount), batch.currency?.symbol || '')}
                 </div>
               </div>
             ))}
@@ -171,7 +165,7 @@ export default async function PersonPage({ params }: { params: Promise<{ id: str
               <div key={card.id} className="rounded-lg border border-slate-200 p-3 dark:border-slate-800">
                 <div className="font-bold">{card.code}</div>
                 <div className="mt-2 text-sm text-slate-500">
-                  فئة {card.denomination.toString()} - {card.status}
+                  فئة {formatMoney(card.denomination, '$')} - {card.status}
                 </div>
               </div>
             ))}

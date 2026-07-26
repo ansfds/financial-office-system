@@ -3,6 +3,16 @@ import { audit, requireSession } from '@/lib/auth';
 import { apiError, fail, ok } from '@/lib/http';
 import { D, statusOf } from '@/lib/money';
 import { createCashboxMovement } from '@/lib/cashbox';
+import { formatMoney } from '@/lib/format';
+import {
+  detailedPaymentCurrencyCode,
+  detailedPaymentLabels,
+  detailedPaymentMethods,
+  normalizeDetailedPaymentMethod,
+  paymentMethodForCurrency,
+  simplePaymentLabels,
+  simplePaymentMethods,
+} from '@/lib/payment-methods';
 import { revalidateFinancePaths } from '@/lib/revalidate';
 import { z } from 'zod';
 
@@ -23,27 +33,7 @@ const OPERATION_KIND = {
   EXPENSE: 'EXPENSE',
 } as const;
 
-const simplePaymentLabels: Record<string, string> = {
-  CASH: 'كاش',
-  TRANSFER: 'حوالة',
-  CARD: 'بطاقة مصرفية',
-};
-
-const paymentMethodLabels: Record<string, string> = {
-  LYD_CASH: 'كاش دينار',
-  USD_CASH: 'كاش دولار',
-  LYD_TRANSFER: 'حوالة دينار',
-  USD_TRANSFER: 'حوالة دولار',
-  CARD: 'بطاقة مصرفية',
-};
-
-const paymentMethodCurrencyCode: Record<string, string> = {
-  LYD_CASH: 'LYD',
-  USD_CASH: 'USD',
-  LYD_TRANSFER: 'LYD',
-  USD_TRANSFER: 'USD',
-  CARD: 'LYD',
-};
+const transactionDetailedPaymentMethods = [...detailedPaymentMethods, 'CARD'] as [string, ...string[]];
 
 const operationKindSchema = z.enum([
   OPERATION_KIND.MANUAL,
@@ -98,6 +88,7 @@ const transactionSchema = z.object({
       currencyId: z.string().min(1),
       amount: z.coerce.number().positive(),
       cashDirection: z.enum(['IN', 'OUT', 'NONE']),
+      movementMethod: z.enum(simplePaymentMethods).default('CASH'),
     })
     .optional(),
   usdt: z
@@ -107,6 +98,7 @@ const transactionSchema = z.object({
       usdtAmount: requiredPositiveNumber,
       commissionPercent: requiredNonNegativeNumber,
       paymentCurrencyCode: z.enum(['USD', 'LYD']),
+      paymentMethod: z.enum(simplePaymentMethods).default('CASH'),
       exchangeRate: optionalPositiveNumber,
       txId: z.string().trim().optional(),
     })
@@ -127,7 +119,7 @@ const transactionSchema = z.object({
       cardValue: z.coerce.number().positive(),
       currencyId: z.string().min(1),
       paymentAmount: z.coerce.number().min(0).default(0),
-      paymentMethod: z.enum(['LYD_CASH', 'USD_CASH', 'LYD_TRANSFER', 'USD_TRANSFER', 'CARD']),
+      paymentMethod: z.enum(transactionDetailedPaymentMethods),
       cardStatus: z
         .enum(['RECEIVED', 'IN_SETTLEMENT', 'SETTLED', 'PARTIAL', 'COMPLETED', 'CANCELLED'])
         .default('RECEIVED'),
@@ -138,7 +130,7 @@ const transactionSchema = z.object({
       action: z.enum(['IN', 'OUT']),
       currencyId: z.string().min(1),
       amount: z.coerce.number().positive(),
-      movementMethod: z.enum(['CASH', 'TRANSFER', 'CARD']),
+      movementMethod: z.enum(simplePaymentMethods),
       reason: z.string().trim().min(3),
     })
     .optional(),
@@ -150,7 +142,7 @@ const transactionSchema = z.object({
       fromAmount: z.coerce.number().positive(),
       toAmount: z.coerce.number().positive(),
       exchangeRate: z.coerce.number().positive().optional(),
-      paymentMethod: z.enum(['CASH', 'TRANSFER', 'CARD']).default('CASH'),
+      paymentMethod: z.enum(simplePaymentMethods).default('CASH'),
       notes: z.string().trim().optional(),
     })
     .optional(),
@@ -161,7 +153,7 @@ const transactionSchema = z.object({
       currencyId: z.string().min(1),
       amount: z.coerce.number().positive(),
       commission: z.coerce.number().min(0).default(0),
-      paymentMethod: z.enum(['CASH', 'TRANSFER', 'CARD']),
+      paymentMethod: z.enum(simplePaymentMethods),
       status: z.enum(['IN_PROGRESS', 'COMPLETED', 'CANCELLED']),
       transferNumber: z.string().trim().optional(),
     })
@@ -169,7 +161,7 @@ const transactionSchema = z.object({
   sheinSale: z
     .object({
       denomination: z.coerce.number().positive(),
-      paymentMethod: z.enum(['LYD_CASH', 'USD_CASH', 'LYD_TRANSFER', 'USD_TRANSFER', 'CARD']),
+      paymentMethod: z.enum(transactionDetailedPaymentMethods),
       pricePerCard: z.coerce.number().positive(),
       cardCount: z.coerce.number().int().positive(),
       notes: z.string().trim().optional(),
@@ -182,7 +174,7 @@ const transactionSchema = z.object({
       expenseType: z.string().trim().min(2),
       currencyId: z.string().min(1),
       amount: z.coerce.number().positive(),
-      paymentMethod: z.enum(['CASH', 'TRANSFER', 'CARD']),
+      paymentMethod: z.enum(simplePaymentMethods),
       invoiceNumber: z.string().trim().optional(),
     })
     .optional(),
@@ -207,7 +199,11 @@ async function typeIdFor(tx: any, name: string) {
 }
 
 function amountText(amount: unknown, currency?: { name?: string | null; symbol?: string | null }) {
-  return `${D(amount).toString()} ${currency?.symbol || currency?.name || ''}`.trim();
+  return formatMoney(amount, currency);
+}
+
+function normalizedPaymentMethod(method: string) {
+  return normalizeDetailedPaymentMethod(method) || method;
 }
 
 function jsonDetails(value: unknown) {
@@ -280,8 +276,12 @@ export async function GET(request: Request) {
           agreedAmount: true,
           receivedAmount: true,
           paidAmount: true,
+          bankName: true,
+          verificationReceived: true,
+          secureInternalNote: true,
           notes: true,
           status: true,
+          transactionAt: true,
           sheinPaymentMethod: true,
           person: { select: { id: true, fullName: true, customerNo: true } },
           currency: { select: { id: true, code: true, name: true, symbol: true } },
@@ -341,6 +341,7 @@ export async function POST(request: Request) {
               currencyId: currency.id,
               currencyCode: currency.code,
               cashDirection: data.manual.cashDirection,
+              movementMethod: data.manual.movementMethod,
             }),
             currencyId: currency.id,
             agreedAmount: amount,
@@ -362,6 +363,7 @@ export async function POST(request: Request) {
             personId: data.personId || null,
             direction: data.manual.cashDirection,
             amount,
+            paymentMethod: paymentMethodForCurrency(currency.code, data.manual.movementMethod),
             reason: executionType,
             sourceType: 'FinancialTransaction',
             sourceId: created.id,
@@ -430,6 +432,7 @@ export async function POST(request: Request) {
               paymentTotal: totalAmount.toString(),
               paymentCurrencyId: paymentCurrency.id,
               paymentCurrencyCode: paymentCurrency.code,
+              paymentMethod: data.usdt.paymentMethod,
               exchangeRate: exchangeRate?.toString() || null,
               totalLyd: data.usdt.paymentCurrencyCode === 'LYD' ? totalAmount.toString() : null,
               txId: data.usdt.txId || data.txId || null,
@@ -467,6 +470,10 @@ export async function POST(request: Request) {
             personId: data.personId,
             direction: movement.direction,
             amount: movement.amount,
+            paymentMethod:
+              movement.currencyId === usdtCurrency.id
+                ? 'USDT'
+                : paymentMethodForCurrency(paymentCurrency.code, data.usdt.paymentMethod),
             reason: executionType,
             sourceType: 'USDTOperation',
             sourceId: created.id,
@@ -492,7 +499,8 @@ export async function POST(request: Request) {
         const cardTotal = cardValue.mul(cardCount);
         const paymentAmount = D(data.cardOperation.paymentAmount || cardTotal);
         const initialCardStatus = data.cardOperation.action === 'RECEIVE_CARD' ? 'RECEIVED' : data.cardOperation.cardStatus;
-        const paymentLabel = paymentMethodLabels[data.cardOperation.paymentMethod];
+        const paymentMethod = normalizedPaymentMethod(data.cardOperation.paymentMethod);
+        const paymentLabel = detailedPaymentLabels[paymentMethod as keyof typeof detailedPaymentLabels] || paymentMethod;
         const actionLabel =
           data.cardOperation.action === 'RECEIVE_CARD'
             ? 'استلام بطاقة'
@@ -519,7 +527,7 @@ export async function POST(request: Request) {
           currencyId: currency.id,
           currencyCode: currency.code,
           paymentAmount: paymentAmount.toString(),
-          paymentMethod: data.cardOperation.paymentMethod,
+          paymentMethod,
           cardStatus: initialCardStatus,
           cashEffect: data.cardOperation.action === 'RECEIVE_CARD' ? 'NONE_ON_RECEIPT' : 'IMMEDIATE',
           receivedCardBatchId: null as string | null,
@@ -590,6 +598,7 @@ export async function POST(request: Request) {
             personId: data.personId,
             direction: data.cardOperation.action === 'PAY_CARD_VALUE' ? 'OUT' : 'IN',
             amount: paymentAmount,
+            paymentMethod,
             reason: `${executionType} (${paymentLabel})`,
             sourceType: 'CardOperation',
             sourceId: created.id,
@@ -633,6 +642,7 @@ export async function POST(request: Request) {
               currencyId: currency.id,
               currencyCode: currency.code,
               movementMethod: data.cashboxMovement.movementMethod,
+              paymentMethod: paymentMethodForCurrency(currency.code, data.cashboxMovement.movementMethod),
               reason: data.cashboxMovement.reason,
             }),
             currencyId: currency.id,
@@ -654,6 +664,7 @@ export async function POST(request: Request) {
           personId: data.personId || null,
           direction: data.cashboxMovement.action,
           amount,
+          paymentMethod: paymentMethodForCurrency(currency.code, data.cashboxMovement.movementMethod),
           reason: data.cashboxMovement.reason,
           sourceType: 'CashboxMovement',
           sourceId: created.id,
@@ -737,6 +748,7 @@ export async function POST(request: Request) {
           personId: data.personId || null,
           direction: 'OUT',
           amount: fromAmount,
+          paymentMethod: paymentMethodForCurrency(fromCurrency?.code, data.conversion.paymentMethod),
           reason: executionType,
           sourceType: 'CurrencyConversion',
           note: data.notes || data.conversion.notes || null,
@@ -749,6 +761,7 @@ export async function POST(request: Request) {
           personId: data.personId || null,
           direction: 'IN',
           amount: toAmount,
+          paymentMethod: paymentMethodForCurrency(toCurrency?.code, data.conversion.paymentMethod),
           reason: executionType,
           sourceType: 'CurrencyConversion',
           note: data.notes || data.conversion.notes || null,
@@ -839,6 +852,7 @@ export async function POST(request: Request) {
             personId: data.personId,
             direction: 'IN',
             amount: totalAmount,
+            paymentMethod: paymentMethodForCurrency(currency.code, data.moneyTransfer.paymentMethod),
             reason: `${executionType} (${simplePaymentLabels[data.moneyTransfer.paymentMethod]})`,
             sourceType: 'MoneyTransfer',
             sourceId: created.id,
@@ -857,7 +871,8 @@ export async function POST(request: Request) {
         if (!data.personId) throw new Error('SHEIN_SALE_REQUIRES_PERSON');
         if (!data.sheinSale) throw new Error('MISSING_SHEIN_SALE_DATA');
 
-        const currencyCode = paymentMethodCurrencyCode[data.sheinSale.paymentMethod];
+        const paymentMethod = normalizedPaymentMethod(data.sheinSale.paymentMethod);
+        const currencyCode = detailedPaymentCurrencyCode[paymentMethod as keyof typeof detailedPaymentCurrencyCode];
         const currency = await tx.currency.findFirst({ where: { code: currencyCode, isActive: true } });
         if (!currency) throw new Error('SHEIN_SALE_CURRENCY_NOT_FOUND');
 
@@ -865,7 +880,7 @@ export async function POST(request: Request) {
         const pricePerCard = D(data.sheinSale.pricePerCard);
         const cardCount = data.sheinSale.cardCount;
         const totalAmount = pricePerCard.mul(cardCount);
-        const paymentLabel = paymentMethodLabels[data.sheinSale.paymentMethod];
+        const paymentLabel = detailedPaymentLabels[paymentMethod as keyof typeof detailedPaymentLabels] || paymentMethod;
         const executionType =
           data.executionType ||
           `بيع ${cardCount} كروت شي إن فئة ${denomination.toString()}$ بسعر ${amountText(
@@ -895,7 +910,7 @@ export async function POST(request: Request) {
             operationKind: OPERATION_KIND.SHEIN_CARD_SALE,
             operationDetails: jsonDetails({
               denomination: data.sheinSale.denomination,
-              paymentMethod: data.sheinSale.paymentMethod,
+              paymentMethod,
               cardCount,
               pricePerCard: data.sheinSale.pricePerCard,
               totalAmount: totalAmount.toString(),
@@ -910,7 +925,7 @@ export async function POST(request: Request) {
             transactionAt: date,
             dueAt: data.dueAt ? new Date(data.dueAt) : null,
             notes: data.notes || data.sheinSale.notes || undefined,
-            sheinPaymentMethod: data.sheinSale.paymentMethod,
+            sheinPaymentMethod: paymentMethod as any,
             status: 'COMPLETED',
           },
         });
@@ -921,6 +936,7 @@ export async function POST(request: Request) {
           personId: data.personId,
           direction: 'IN',
           amount: totalAmount,
+          paymentMethod,
           reason: executionType,
           sourceType: 'SheinCardSale',
           note: data.notes || data.sheinSale.notes || null,
@@ -932,7 +948,7 @@ export async function POST(request: Request) {
             transactionId: created.id,
             personId: data.personId,
             currencyId: currency.id,
-            paymentMethod: data.sheinSale.paymentMethod,
+            paymentMethod: paymentMethod as any,
             denomination,
             cardCount,
             pricePerCard,
@@ -959,7 +975,7 @@ export async function POST(request: Request) {
               status: 'SOLD',
               salePrice: pricePerCard,
               saleCurrencyId: currency.id,
-              salePaymentMethod: data.sheinSale.paymentMethod,
+              salePaymentMethod: paymentMethod as any,
               saleCashboxMovementId: movement.id,
               buyerPersonId: data.personId,
               soldAt: date,
@@ -1032,6 +1048,7 @@ export async function POST(request: Request) {
           personId: data.personId || null,
           direction: 'OUT',
           amount,
+          paymentMethod: paymentMethodForCurrency(currency.code, data.expense.paymentMethod),
           reason: `${executionType} - ${data.expense.payee}`,
           sourceType: 'Expense',
           sourceId: created.id,
@@ -1047,6 +1064,7 @@ export async function POST(request: Request) {
 
       if (!data.currencyId || data.agreedAmount === undefined) throw new Error('MISSING_STANDARD_TRANSACTION_DATA');
 
+      const standardCurrency = await activeCurrency(tx, data.currencyId);
       const agreedAmount = D(data.agreedAmount);
       const receivedAmount = D(data.receivedAmount);
       const paidAmount = D(data.paidAmount);
@@ -1069,7 +1087,7 @@ export async function POST(request: Request) {
           ...standardData,
           personId: data.personId || null,
           typeId: data.typeId || null,
-          currencyId: data.currencyId,
+          currencyId: standardCurrency.id,
           number,
           agreedAmount,
           receivedAmount,
@@ -1092,11 +1110,12 @@ export async function POST(request: Request) {
         if (movement.amount.lte(0)) continue;
 
         await createCashboxMovement(tx, {
-          currencyId: data.currencyId,
+          currencyId: standardCurrency.id,
           transactionId: created.id,
           personId: data.personId || null,
           direction: movement.direction,
           amount: movement.amount,
+          paymentMethod: paymentMethodForCurrency(standardCurrency.code, 'CASH'),
           reason: movement.reason,
           sourceType: 'FinancialTransaction',
           sourceId: created.id,

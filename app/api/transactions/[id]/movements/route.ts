@@ -2,8 +2,10 @@ import { Prisma } from '@prisma/client';
 import { db } from '@/lib/db';
 import { audit, requireSession } from '@/lib/auth';
 import { createCashboxMovement } from '@/lib/cashbox';
+import { inferMovementPaymentMethod } from '@/lib/cashbox-summary';
 import { apiError, fail, ok } from '@/lib/http';
 import { D, statusOf } from '@/lib/money';
+import { normalizeDetailedPaymentMethod, paymentMethodForCurrency } from '@/lib/payment-methods';
 import { revalidateFinancePaths } from '@/lib/revalidate';
 import { z } from 'zod';
 
@@ -21,6 +23,7 @@ const movementSchema = z.object({
   ]),
   amount: z.coerce.number().positive(),
   currencyId: z.string(),
+  paymentMethod: z.string().optional().nullable(),
   occurredAt: z.string().optional(),
   notes: z.string().optional(),
 });
@@ -37,6 +40,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     const amount = D(input.amount);
     const result = await db.$transaction(async (tx) => {
       const transaction = await tx.financialTransaction.findUniqueOrThrow({ where: { id } });
+      const currency = await tx.currency.findUnique({ where: { id: input.currencyId } });
       let receivedAmount = transaction.receivedAmount;
       let paidAmount = transaction.paidAmount;
       let receivableAmount = transaction.receivableAmount;
@@ -93,6 +97,17 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
           personId: transaction.personId,
           direction,
           amount,
+          paymentMethod:
+            normalizeDetailedPaymentMethod(input.paymentMethod) ||
+            inferMovementPaymentMethod({
+              currency,
+              transaction: {
+                operationKind: transaction.operationKind,
+                operationDetails: transaction.operationDetails,
+                sheinPaymentMethod: transaction.sheinPaymentMethod,
+              },
+            }) ||
+            paymentMethodForCurrency(currency?.code, 'CASH'),
           reason: input.notes || input.type,
           sourceType: 'TransactionMovement',
           sourceId: movement.id,

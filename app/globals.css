@@ -92,3 +92,37 @@ tbody tr {
     transform: translateY(0);
   }
 }
+
+@media print {
+  body {
+    background: white !important;
+    color: #0f172a !important;
+  }
+
+  aside,
+  button[aria-label='فتح القائمة'],
+  .no-print,
+  .no-print * {
+    display: none !important;
+  }
+
+  main {
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+
+  .daily-report {
+    display: block !important;
+  }
+
+  .card,
+  .table-wrap {
+    break-inside: avoid;
+    border-color: #cbd5e1 !important;
+    box-shadow: none !important;
+  }
+
+  table {
+    min-width: 0 !important;
+  }
+}

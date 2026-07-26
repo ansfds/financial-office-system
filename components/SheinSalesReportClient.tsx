@@ -2,20 +2,13 @@
 
 import { useMemo, useState } from 'react';
 import { ChevronDown, ShoppingBag } from 'lucide-react';
+import { formatDate, formatMoney, formatNumber, numberValue } from '@/lib/format';
+import { detailedPaymentLabels, detailedPaymentMethods } from '@/lib/payment-methods';
 
-const paymentMethodLabels: Record<string, string> = {
-  USD_CASH: 'دولار كاش',
-  USD_TRANSFER: 'دولار حوالة',
-  LYD_CASH: 'دينار كاش',
-  LYD_TRANSFER: 'دينار حوالة',
-  CARD: 'بطاقة مصرفية',
-};
-
-const paymentOrder = ['USD_CASH', 'USD_TRANSFER', 'LYD_CASH', 'LYD_TRANSFER', 'CARD'];
+const paymentOrder = detailedPaymentMethods;
 
 function amount(value: unknown) {
-  const parsed = Number(value || 0);
-  return Number.isFinite(parsed) ? parsed : 0;
+  return numberValue(value);
 }
 
 function dayKey(value: string) {
@@ -23,8 +16,7 @@ function dayKey(value: string) {
 }
 
 function displayDay(key: string) {
-  const [year, month, day] = key.split('-');
-  return `${Number(day)}-${Number(month)}-${year}`;
+  return formatDate(`${key}T00:00:00`);
 }
 
 export default function SheinSalesReportClient({
@@ -69,7 +61,7 @@ export default function SheinSalesReportClient({
           <div className="text-sm text-slate-500">عدد كروت شي إن المباعة</div>
           <ShoppingBag size={20} className="text-indigo-600" />
         </div>
-        <div className="mt-2 text-2xl font-black">{soldCount.toLocaleString('en-US')}</div>
+        <div className="mt-2 text-2xl font-black">{formatNumber(soldCount)}</div>
       </button>
 
       {open ? (
@@ -91,7 +83,7 @@ export default function SheinSalesReportClient({
                       : 'bg-slate-100 text-slate-700 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-100'
                   }`}
                 >
-                  {displayDay(key)} ({items.reduce((sum, sale) => sum + Number(sale.cardCount || 0), 0).toLocaleString('en-US')})
+                  {displayDay(key)} ({formatNumber(items.reduce((sum, sale) => sum + Number(sale.cardCount || 0), 0))})
                 </button>
               ))}
               {!grouped.length ? <span className="text-sm text-slate-500">لا توجد مبيعات مسجلة بعد</span> : null}
@@ -103,8 +95,8 @@ export default function SheinSalesReportClient({
               <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
                 {paymentOrder.map((method) => (
                   <div key={method} className="rounded-lg border border-slate-200 p-4 dark:border-slate-800">
-                    <div className="text-sm text-slate-500">{paymentMethodLabels[method]}</div>
-                    <div className="mt-2 text-xl font-black">{(totals.get(method) || 0).toLocaleString('en-US')}</div>
+                    <div className="text-sm text-slate-500">{detailedPaymentLabels[method]}</div>
+                    <div className="mt-2 text-xl font-black">{formatMoney(totals.get(method) || 0)}</div>
                   </div>
                 ))}
               </div>
@@ -126,15 +118,15 @@ export default function SheinSalesReportClient({
                   <tbody>
                     {selectedSales.map((sale) => (
                       <tr key={sale.id}>
-                        <td>{amount(sale.denomination).toLocaleString('en-US')}$</td>
-                        <td>{Number(sale.cardCount || 0).toLocaleString('en-US')}</td>
+                        <td>{formatMoney(sale.denomination, '$')}</td>
+                        <td>{formatNumber(sale.cardCount || 0)}</td>
                         <td>
-                          {amount(sale.pricePerCard).toLocaleString('en-US')} {sale.currency?.symbol || ''}
+                          {formatMoney(sale.pricePerCard, sale.currency?.symbol || '')}
                         </td>
                         <td className="font-bold">
-                          {amount(sale.totalAmount).toLocaleString('en-US')} {sale.currency?.symbol || ''}
+                          {formatMoney(sale.totalAmount, sale.currency?.symbol || '')}
                         </td>
-                        <td>{paymentMethodLabels[sale.paymentMethod] || sale.paymentMethod}</td>
+                        <td>{detailedPaymentLabels[sale.paymentMethod as keyof typeof detailedPaymentLabels] || sale.paymentMethod}</td>
                         <td>{sale.person?.fullName || '—'}</td>
                         <td>
                           {sale.items?.length

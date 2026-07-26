@@ -3,6 +3,7 @@ import { audit, requireSession } from '@/lib/auth';
 import { createCashboxMovement } from '@/lib/cashbox';
 import { apiError, fail, ok } from '@/lib/http';
 import { D } from '@/lib/money';
+import { paymentMethodForCurrency } from '@/lib/payment-methods';
 import { decryptField } from '@/lib/secure-fields';
 import { revalidateFinancePaths } from '@/lib/revalidate';
 import { z } from 'zod';
@@ -124,10 +125,15 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
         oldValue.salePrice &&
         oldValue.saleCurrencyId
       ) {
+        const oldSaleCurrency = await tx.currency.findUnique({ where: { id: oldValue.saleCurrencyId } });
+        const oldSaleMovement = oldValue.saleCashboxMovementId
+          ? await tx.cashboxMovement.findUnique({ where: { id: oldValue.saleCashboxMovementId } })
+          : null;
         await createCashboxMovement(tx, {
           currencyId: oldValue.saleCurrencyId,
           direction: 'OUT',
           amount: oldValue.salePrice,
+          paymentMethod: oldSaleMovement?.paymentMethod || paymentMethodForCurrency(oldSaleCurrency?.code, 'CASH'),
           reason: `عكس بيع كرت شي إن ${oldValue.code}`,
           personId: oldValue.buyerPersonId || null,
           sourceType: 'SheinCard',
@@ -139,10 +145,12 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
       }
 
       if (saleDetailsChanged && salePrice && saleCurrencyId) {
+        const saleCurrency = await tx.currency.findUnique({ where: { id: saleCurrencyId } });
         const movement = await createCashboxMovement(tx, {
           currencyId: saleCurrencyId,
           direction: 'IN',
           amount: salePrice,
+          paymentMethod: paymentMethodForCurrency(saleCurrency?.code, 'CASH'),
           reason: `بيع كرت شي إن ${oldValue.code}`,
           personId: buyerPersonId,
           sourceType: 'SheinCard',

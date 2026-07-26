@@ -5,6 +5,7 @@ import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Edit3, Info, Save, Search, UserPlus, X } from 'lucide-react';
 import { toast } from 'sonner';
+import { formatDate } from '@/lib/format';
 
 const categoryLabels: Record<string, string> = {
   VIP: 'عميل مميز',
@@ -38,10 +39,6 @@ function formFromPerson(person: any): PersonForm {
     externalId: person.externalId || '',
     category: person.category || 'REGULAR',
   };
-}
-
-function formatDate(value: string) {
-  return new Date(value).toLocaleDateString('en-GB');
 }
 
 export default function PeopleClient({ initialPeople }: { initialPeople: any[] }) {

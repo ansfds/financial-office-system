@@ -75,7 +75,10 @@ enum SheinPaymentMethod {
   LYD_CASH
   USD_CASH
   LYD_TRANSFER
+  LYD_OFFICE_TRANSFER
+  LYD_CARD
   USD_TRANSFER
+  USD_CARD
   CARD
 }
 
@@ -231,6 +234,7 @@ model CashboxMovement {
   personId      String?
   direction     CashDirection
   amount        Decimal               @db.Decimal(20, 6)
+  paymentMethod String?
   reason        String
   sourceType    String?
   sourceId      String?
@@ -250,6 +254,7 @@ model CashboxMovement {
   @@index([currencyId])
   @@index([transactionId])
   @@index([personId])
+  @@index([paymentMethod])
   @@index([sourceType, sourceId])
 }
 

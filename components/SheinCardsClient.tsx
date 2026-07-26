@@ -4,6 +4,7 @@ import { Fragment, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { ChevronDown, Eye, EyeOff, Loader2, Mail, MessageCircle, Plus, Save, X } from 'lucide-react';
 import { toast } from 'sonner';
+import { formatDateTime, formatMoney, formatNumber, numberValue } from '@/lib/format';
 
 const fixedDenominations = ['100', '300', '500', '800', '1000'];
 const companyWhatsAppPhone = '218935085091';
@@ -60,8 +61,7 @@ function blankForm(saleCurrencyId: string): SheinForm {
 }
 
 function money(value: unknown) {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : 0;
+  return numberValue(value);
 }
 
 export default function SheinCardsClient({
@@ -386,7 +386,7 @@ export default function SheinCardsClient({
           className={`card p-4 text-right ${activeDenomination === 'all' ? 'ring-2 ring-indigo-400' : ''}`}
         >
           <div className="text-sm text-slate-500">كل الكروت</div>
-          <div className="mt-2 text-2xl font-black">{cards.length}</div>
+              <div className="mt-2 text-2xl font-black">{formatNumber(cards.length)}</div>
         </button>
         {denominationFilters.map((denomination) => {
           const item = summary.get(denomination) || { total: 0, available: 0 };
@@ -398,8 +398,8 @@ export default function SheinCardsClient({
               className={`card p-4 text-right ${activeDenomination === denomination ? 'ring-2 ring-indigo-400' : ''}`}
             >
               <div className="text-sm text-slate-500">فئة {denomination}$</div>
-              <div className="mt-2 text-2xl font-black">{item.available}</div>
-              <div className="mt-1 text-xs text-slate-500">من أصل {item.total}</div>
+              <div className="mt-2 text-2xl font-black">{formatNumber(item.available)}</div>
+              <div className="mt-1 text-xs text-slate-500">من أصل {formatNumber(item.total)}</div>
             </button>
           );
         })}
@@ -439,7 +439,7 @@ export default function SheinCardsClient({
                       />
                     </td>
                     <td className="font-black">{card.code}</td>
-                    <td>{Number(card.denomination).toLocaleString('en-US')}$</td>
+                    <td>{formatMoney(card.denomination, '$')}</td>
                     <td>
                       <div className="grid gap-2">
                         {secretsVisible ? (
@@ -515,9 +515,9 @@ export default function SheinCardsClient({
                         ))}
                       </select>
                     </td>
-                    <td className="text-xs text-slate-500">{new Date(card.createdAt).toLocaleString('en-GB')}</td>
+                    <td className="text-xs text-slate-500">{formatDateTime(card.createdAt)}</td>
                     <td className="text-xs text-slate-500">
-                      {card.soldAt ? new Date(card.soldAt).toLocaleString('en-GB') : '—'}
+                      {card.soldAt ? formatDateTime(card.soldAt) : '—'}
                     </td>
                     <td>
                       <div className="flex flex-wrap gap-2">
@@ -553,10 +553,10 @@ export default function SheinCardsClient({
                                 className="grid gap-2 rounded-lg border border-slate-200 bg-white p-3 text-sm dark:border-slate-800 dark:bg-slate-900 md:grid-cols-[140px_120px_1fr_auto]"
                               >
                                 <span className="font-bold">{logTypeLabel(log.type)}</span>
-                                <span>{log.amount ? Number(log.amount).toLocaleString('en-US') : '—'}</span>
+                                <span>{log.amount ? formatMoney(log.amount) : '—'}</span>
                                 <span className="text-slate-600 dark:text-slate-300">{log.note || '—'}</span>
                                 <span className="text-xs text-slate-500">
-                                  {new Date(log.createdAt).toLocaleString('en-GB')}
+                                  {formatDateTime(log.createdAt)}
                                 </span>
                               </div>
                             ))

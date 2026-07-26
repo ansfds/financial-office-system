@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { AlertTriangle, Loader2, Trash2, X } from 'lucide-react';
 import { toast } from 'sonner';
+import { formatNumber } from '@/lib/format';
 
 export default function DangerSettings() {
   const router = useRouter();
@@ -32,7 +33,7 @@ export default function DangerSettings() {
 
     if (!response.ok) return toast.error(result.error || 'تعذر تصفير المعاملات القديمة');
 
-    toast.success(`تمت أرشفة ${result.archivedTransactions.toLocaleString('en-US')} معاملة`);
+    toast.success(`تمت أرشفة ${formatNumber(result.archivedTransactions)} معاملة`);
     setOpen(false);
     setForm({ accessCode: '', backupConfirmed: false, includeSheinCards: false, includeReceivedCards: false });
     router.refresh();

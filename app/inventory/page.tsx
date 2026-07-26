@@ -7,9 +7,9 @@ export const revalidate = 0;
 export const fetchCache = 'force-no-store';
 
 const sheinImage =
-  'https://images.unsplash.com/photo-1607083206968-13611e3d76db?auto=format&fit=crop&w=1200&q=80';
+  'https://likecard-space.fra1.cdn.digitaloceanspaces.com/products/68999479adf2b_1754895481.webp';
 const cardsImage =
-  'https://images.unsplash.com/photo-1556742049-0cfed4f6a45d?auto=format&fit=crop&w=1200&q=80';
+  'https://i.postimg.cc/7hXQ1M9L/636368438-4227956897416651-6308784819037591604-n.jpg';
 
 export default function InventoryPage() {
   return (

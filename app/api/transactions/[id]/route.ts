@@ -1,8 +1,11 @@
 import { Prisma } from '@prisma/client';
 import { db } from '@/lib/db';
 import { audit, requireSession } from '@/lib/auth';
+import { createCashboxMovement } from '@/lib/cashbox';
+import { inferMovementPaymentMethod } from '@/lib/cashbox-summary';
 import { apiError, fail, ok } from '@/lib/http';
 import { D, statusOf } from '@/lib/money';
+import { paymentMethodForCurrency } from '@/lib/payment-methods';
 import { revalidateFinancePaths } from '@/lib/revalidate';
 import { z } from 'zod';
 
@@ -31,7 +34,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
     const payload = parsed.data;
 
     const result = await db.$transaction(async (tx) => {
-      const oldValue = await tx.financialTransaction.findUniqueOrThrow({ where: { id } });
+      const oldValue = await tx.financialTransaction.findUniqueOrThrow({ where: { id }, include: { currency: true } });
       const receivedAmount =
         payload.receivedAmount === undefined ? oldValue.receivedAmount : D(payload.receivedAmount);
       const paidAmount = payload.paidAmount === undefined ? oldValue.paidAmount : D(payload.paidAmount);
@@ -56,15 +59,24 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
         if (movement.delta.eq(0)) continue;
 
         const amount = absDecimal(movement.delta);
+        const paymentMethod =
+          inferMovementPaymentMethod({
+            currency: oldValue.currency,
+            transaction: {
+              operationKind: oldValue.operationKind,
+              operationDetails: oldValue.operationDetails,
+              sheinPaymentMethod: oldValue.sheinPaymentMethod,
+            },
+          }) || paymentMethodForCurrency(oldValue.currency.code, 'CASH');
         const last = await tx.cashboxMovement.findFirst({
           where: { currencyId: oldValue.currencyId },
-          orderBy: { occurredAt: 'desc' },
+          orderBy: [{ occurredAt: 'desc' }, { createdAt: 'desc' }],
         });
         const balanceBefore = last?.balanceAfter || D(0);
         const balanceAfter =
           movement.direction === 'IN' ? balanceBefore.add(amount) : balanceBefore.sub(amount);
 
-        await tx.transactionMovement.create({
+        const createdMovement = await tx.transactionMovement.create({
           data: {
             transactionId: id,
             type: movement.direction === 'IN' ? 'CASH_IN' : 'CASH_OUT',
@@ -77,16 +89,16 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
           },
         });
 
-        await tx.cashboxMovement.create({
-          data: {
-            currencyId: oldValue.currencyId,
-            transactionId: id,
-            direction: movement.direction,
-            amount,
-            reason: movement.reason,
-            balanceBefore,
-            balanceAfter,
-          },
+        await createCashboxMovement(tx, {
+          currencyId: oldValue.currencyId,
+          transactionId: id,
+          personId: oldValue.personId,
+          direction: movement.direction,
+          amount,
+          paymentMethod,
+          reason: movement.reason,
+          sourceType: 'TransactionEdit',
+          sourceId: createdMovement.id,
         });
       }
 

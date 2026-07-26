@@ -1,8 +1,12 @@
 import Link from 'next/link';
 import Page from '@/components/Page';
 import { getSession } from '@/lib/auth';
+import { lydBreakdown, sumMethods, summarizeCashboxByMethod } from '@/lib/cashbox-summary';
 import { db } from '@/lib/db';
+import { formatMoney, formatNumber } from '@/lib/format';
+import { detailedPaymentLabels, lydBreakdownMethods } from '@/lib/payment-methods';
 import { redirect } from 'next/navigation';
+import type { ReactNode } from 'react';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -22,7 +26,7 @@ const operationLabels: Record<string, string> = {
 export default async function Dashboard() {
   if (!(await getSession())) redirect('/login');
 
-  const [people, transactions, currencies, latestBalances, sheinAvailable, receivedCards, recent] =
+  const [people, transactions, currencies, latestBalances, cashboxMovements, sheinAvailable, receivedCards, recent] =
     await Promise.all([
       db.person.count({ where: { deletedAt: null, status: 'ACTIVE' } }),
       db.financialTransaction.count({ where: { deletedAt: null } }),
@@ -32,6 +36,12 @@ export default async function Dashboard() {
         FROM "CashboxMovement"
         ORDER BY "currencyId", "occurredAt" DESC, "createdAt" DESC
       `,
+      db.cashboxMovement.findMany({
+        include: {
+          currency: true,
+          transaction: { select: { operationKind: true, operationDetails: true, sheinPaymentMethod: true } },
+        },
+      }),
       db.sheinCard.count({ where: { status: 'AVAILABLE' } }),
       db.receivedCustomerCard.count({ where: { status: { not: 'CANCELLED' } } }),
       db.financialTransaction.findMany({
@@ -54,25 +64,44 @@ export default async function Dashboard() {
         take: 8,
       }),
     ]);
+  const cashboxSummary = summarizeCashboxByMethod(cashboxMovements);
 
   return (
     <Page title="لوحة التحكم">
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <Stat title="عدد الزبائن" value={people} href="/people" />
-        <Stat title="عدد المعاملات" value={transactions} href="/transactions" />
-        <Stat title="عدد كروت شي إن المتوفرة" value={sheinAvailable} href="/inventory/shein-cards" />
-        <Stat title="عدد البطاقات المستلمة" value={receivedCards} href="/inventory/received-cards" />
+        <Stat title="عدد الزبائن" value={formatNumber(people)} href="/people" />
+        <Stat title="عدد المعاملات" value={formatNumber(transactions)} href="/transactions" />
+        <Stat title="عدد كروت شي إن المتوفرة" value={formatNumber(sheinAvailable)} href="/inventory/shein-cards" />
+        <Stat title="عدد البطاقات المستلمة" value={formatNumber(receivedCards)} href="/inventory/received-cards" />
       </div>
 
       <div className="mt-4 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        {currencies.slice(0, 4).map((currency) => (
-          <Stat
-            key={currency.id}
-            title={`رصيد ${currency.name}`}
-            value={`${latestBalances.find((item) => item.currencyId === currency.id)?.balanceAfter || 0} ${currency.symbol}`}
-            href={`/cashbox?currencyId=${currency.id}`}
-          />
-        ))}
+        {currencies.slice(0, 4).map((currency) => {
+          const latestBalance = latestBalances.find((item) => item.currencyId === currency.id)?.balanceAfter || 0;
+          const balance = currency.code === 'LYD' ? sumMethods(cashboxSummary, lydBreakdownMethods) : latestBalance;
+
+          if (currency.code === 'LYD') {
+            return (
+              <BalanceDetailsStat
+                key={currency.id}
+                title={`رصيد ${currency.name}`}
+                value={formatMoney(balance, currency)}
+                href={`/cashbox?currencyId=${currency.id}`}
+                breakdown={lydBreakdown(cashboxSummary)}
+                symbol={currency.symbol}
+              />
+            );
+          }
+
+          return (
+            <Stat
+              key={currency.id}
+              title={`رصيد ${currency.name}`}
+              value={formatMoney(latestBalance, currency)}
+              href={`/cashbox?currencyId=${currency.id}`}
+            />
+          );
+        })}
       </div>
 
       <div className="card mt-6 p-5">
@@ -112,9 +141,9 @@ export default async function Dashboard() {
                     </td>
                     <td>{operationLabels[transaction.operationKind || ''] || transaction.type?.name || transaction.customType || '—'}</td>
                     <td>
-                      {transaction.agreedAmount.toString()} {transaction.currency.symbol}
+                      {formatMoney(transaction.agreedAmount, transaction.currency)}
                     </td>
-                    <td>{remaining.gt(0) ? remaining.toString() : '0'}</td>
+                    <td>{formatMoney(remaining.gt(0) ? remaining : 0, transaction.currency)}</td>
                     <td>{remaining.lte(0) ? 'مكتمل' : transaction.status}</td>
                   </tr>
                 );
@@ -127,7 +156,7 @@ export default async function Dashboard() {
   );
 }
 
-function Stat({ title, value, href }: { title: string; value: any; href?: string }) {
+function Stat({ title, value, href }: { title: string; value: ReactNode; href?: string }) {
   const content = (
     <div className="card h-full p-5 hover:-translate-y-0.5 hover:shadow-lg">
       <div className="text-sm text-slate-500">{title}</div>
@@ -136,4 +165,38 @@ function Stat({ title, value, href }: { title: string; value: any; href?: string
   );
 
   return href ? <Link href={href}>{content}</Link> : content;
+}
+
+function BalanceDetailsStat({
+  title,
+  value,
+  href,
+  breakdown,
+  symbol,
+}: {
+  title: string;
+  value: ReactNode;
+  href: string;
+  breakdown: Array<{ method: string; amount: number }>;
+  symbol: string;
+}) {
+  return (
+    <details className="card h-full p-5 hover:-translate-y-0.5 hover:shadow-lg">
+      <summary className="cursor-pointer list-none">
+        <div className="text-sm text-slate-500">{title}</div>
+        <div className="mt-2 text-2xl font-black">{value}</div>
+      </summary>
+      <div className="mt-4 grid gap-2 border-t border-slate-100 pt-3 text-sm dark:border-slate-800">
+        {breakdown.map((item) => (
+          <div key={item.method} className="flex items-center justify-between gap-3">
+            <span className="text-slate-500">{detailedPaymentLabels[item.method as keyof typeof detailedPaymentLabels]}</span>
+            <b>{formatMoney(item.amount, symbol)}</b>
+          </div>
+        ))}
+        <Link href={href} className="mt-2 text-sm font-bold text-indigo-600 hover:text-indigo-500">
+          فتح الصندوق
+        </Link>
+      </div>
+    </details>
+  );
 }
