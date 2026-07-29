@@ -7,6 +7,7 @@ export const revalidate = 0;
 export const fetchCache = 'force-no-store';
 
 export default async function SettingsPage() {
+  const resetEnabled = Boolean(process.env.RESET_SYSTEM_PASSWORD?.trim());
   const [currencies, transactionTypes] = await Promise.all([
     db.currency.findMany({ orderBy: { code: 'asc' } }),
     db.transactionType.findMany({ orderBy: { name: 'asc' } }),
@@ -43,10 +44,13 @@ export default async function SettingsPage() {
             ثم شغّل npm run seed:users لتحديث كلمات المرور المشفرة في قاعدة البيانات. لا يتم حفظ CVV داخل قاعدة البيانات،
             وتستخدم المنظومة فقط خيار استلام بيانات التحقق أو ملاحظات داخلية آمنة.
           </p>
+          <p className="mt-2 text-sm leading-7 text-slate-500">
+            كلمة مرور التصفير مستقلة وتقرأ من RESET_SYSTEM_PASSWORD فقط، ولا يتم حفظها داخل الكود أو GitHub.
+          </p>
         </div>
 
         <div className="lg:col-span-2">
-          <DangerSettings />
+          <DangerSettings resetEnabled={resetEnabled} />
         </div>
       </div>
     </Page>

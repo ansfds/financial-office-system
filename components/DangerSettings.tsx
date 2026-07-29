@@ -6,21 +6,55 @@ import { AlertTriangle, Loader2, Trash2, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { formatNumber } from '@/lib/format';
 
-export default function DangerSettings() {
+const RESET_CONFIRMATION_TEXT = 'RESET SYSTEM DATA';
+
+type DangerSettingsProps = {
+  resetEnabled: boolean;
+};
+
+export default function DangerSettings({ resetEnabled }: DangerSettingsProps) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [form, setForm] = useState({
-    password: '',
-    backupConfirmed: false,
+    resetPassword: '',
+    confirmationText: '',
     includeSheinCards: false,
     includeReceivedCards: false,
   });
 
+  function resetForm() {
+    setForm({
+      resetPassword: '',
+      confirmationText: '',
+      includeSheinCards: false,
+      includeReceivedCards: false,
+    });
+  }
+
+  function openResetModal() {
+    if (!resetEnabled) {
+      toast.error('التصفير معطل حتى يتم ضبط RESET_SYSTEM_PASSWORD في متغيرات البيئة');
+      return;
+    }
+
+    setOpen(true);
+  }
+
   async function resetTransactions(event: React.FormEvent) {
     event.preventDefault();
-    if (!form.password.trim()) return toast.error('أدخل كلمة المرور');
-    if (!window.confirm('تأكيد نهائي: سيتم أرشفة جميع المعاملات القديمة ولن يتم حذف الزبائن أو العملات.')) return;
+    if (!resetEnabled) return toast.error('التصفير معطل مؤقتًا');
+    if (!form.resetPassword.trim()) return toast.error('أدخل كلمة مرور التصفير');
+    if (form.confirmationText !== RESET_CONFIRMATION_TEXT) {
+      return toast.error(`اكتب عبارة التأكيد كما هي: ${RESET_CONFIRMATION_TEXT}`);
+    }
+    if (
+      !window.confirm(
+        'تأكيد نهائي: سيتم أرشفة جميع المعاملات القديمة بعد إنشاء نسخة احتياطية تلقائية. لن يتم حذف الزبائن أو العملات.',
+      )
+    ) {
+      return;
+    }
 
     setLoading(true);
     const response = await fetch('/api/admin/reset-transactions', {
@@ -35,7 +69,7 @@ export default function DangerSettings() {
 
     toast.success(`تمت أرشفة ${formatNumber(result.archivedTransactions)} معاملة`);
     setOpen(false);
-    setForm({ password: '', backupConfirmed: false, includeSheinCards: false, includeReceivedCards: false });
+    resetForm();
     router.refresh();
   }
 
@@ -49,13 +83,23 @@ export default function DangerSettings() {
               حذف جميع المعاملات القديمة
             </h2>
             <p className="mt-2 text-sm leading-7 text-slate-500">
-              يتم تنفيذها كأرشفة للمعاملات وحركاتها، ولا تمس الزبائن أو العملات أو المخزون إلا بخيار صريح.
+              يتم تنفيذها كأرشفة للمعاملات وحركاتها فقط، ولا تمس الزبائن أو العملات أو المخزون إلا بخيار صريح.
+            </p>
+            <p
+              className={`mt-2 text-sm font-bold ${
+                resetEnabled ? 'text-emerald-700 dark:text-emerald-300' : 'text-red-700 dark:text-red-300'
+              }`}
+            >
+              {resetEnabled
+                ? 'التصفير محمي بكلمة مرور مستقلة وعبارة تأكيد، مع نسخة احتياطية تلقائية قبل التنفيذ.'
+                : 'زر التصفير معطل حتى يتم ضبط RESET_SYSTEM_PASSWORD في Vercel Environment Variables.'}
             </p>
           </div>
           <button
             type="button"
-            onClick={() => setOpen(true)}
-            className="inline-flex items-center justify-center gap-2 rounded-lg bg-red-600 px-4 py-3 font-bold text-white hover:bg-red-500"
+            onClick={openResetModal}
+            disabled={!resetEnabled}
+            className="inline-flex items-center justify-center gap-2 rounded-lg bg-red-600 px-4 py-3 font-bold text-white hover:bg-red-500 disabled:cursor-not-allowed disabled:bg-slate-300 disabled:text-slate-600 dark:disabled:bg-slate-800 dark:disabled:text-slate-400"
           >
             <Trash2 size={18} />
             حذف جميع المعاملات القديمة
@@ -73,7 +117,7 @@ export default function DangerSettings() {
               <div>
                 <h2 className="text-lg font-black text-red-700 dark:text-red-300">تحذير مهم</h2>
                 <p className="mt-2 text-sm leading-7 text-slate-500">
-                  سيتم أرشفة كل المعاملات القديمة فقط. الزبائن والعملات والإعدادات تبقى كما هي.
+                  سيتم إنشاء نسخة احتياطية تلقائية داخل قاعدة البيانات ثم أرشفة كل المعاملات القديمة فقط. الزبائن والعملات والإعدادات تبقى كما هي.
                 </p>
               </div>
               <button
@@ -90,19 +134,22 @@ export default function DangerSettings() {
             <div className="grid gap-4">
               <input
                 type="password"
-                value={form.password}
-                onChange={(event) => setForm({ ...form, password: event.target.value })}
-                placeholder="كلمة المرور"
+                value={form.resetPassword}
+                onChange={(event) => setForm({ ...form, resetPassword: event.target.value })}
+                placeholder="كلمة مرور التصفير"
+                autoComplete="off"
               />
 
-              <label className="flex items-center gap-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm font-bold text-amber-800 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-200">
-                <input
-                  type="checkbox"
-                  checked={form.backupConfirmed}
-                  onChange={(event) => setForm({ ...form, backupConfirmed: event.target.checked })}
-                />
-                أؤكد أنني أخذت نسخة احتياطية قبل تنفيذ الأرشفة
-              </label>
+              <input
+                value={form.confirmationText}
+                onChange={(event) => setForm({ ...form, confirmationText: event.target.value })}
+                placeholder={RESET_CONFIRMATION_TEXT}
+                autoComplete="off"
+              />
+
+              <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm font-bold text-emerald-800 dark:border-emerald-900 dark:bg-emerald-950 dark:text-emerald-200">
+                سيتم تسجيل نسخة احتياطية تلقائية قبل الأرشفة، وسيتم حفظ اسم المستخدم الحالي في سجل التعديلات.
+              </div>
 
               <label className="flex items-center gap-3 rounded-lg border border-slate-200 bg-white p-3 text-sm font-bold dark:border-slate-800 dark:bg-slate-900">
                 <input
