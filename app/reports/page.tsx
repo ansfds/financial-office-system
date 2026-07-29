@@ -2,6 +2,7 @@ import Page from '@/components/Page';
 import SheinSalesReportClient from '@/components/SheinSalesReportClient';
 import { summarizeCashboxByMethod } from '@/lib/cashbox-summary';
 import { db } from '@/lib/db';
+import { buildWalletSnapshot, walletBuckets } from '@/lib/customer-wallet';
 import { formatDateTime, formatMoney, formatNumber, numberValue } from '@/lib/format';
 import { detailedPaymentLabels, lydBreakdownMethods, usdBreakdownMethods } from '@/lib/payment-methods';
 import Link from 'next/link';
@@ -48,6 +49,15 @@ const operationLabels: Record<string, string> = {
 
 function amount(value: any) {
   return numberValue(value);
+}
+
+function walletTotalsLabel(items: Array<{ currency: { symbol?: string | null; name?: string | null }; amount: number }>) {
+  const visible = items.filter((item) => item.amount !== 0);
+  return visible.length ? visible.map((item) => formatMoney(item.amount, item.currency)).join('، ') : '0';
+}
+
+function walletMethodLabel(method: string) {
+  return walletBuckets.find((bucket) => bucket.paymentMethod === method)?.label || method;
 }
 
 function moneyBucketsLabel(buckets: Map<string, { amount: number; symbol: string }>) {
@@ -125,6 +135,9 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
     receivedCardRows,
     todayMovements,
     recentOperations,
+    walletTransactions,
+    walletSettlements,
+    walletSettlementRows,
   ] = await Promise.all([
     db.financialTransaction.groupBy({
       by: ['currencyId', 'status'],
@@ -201,6 +214,28 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
       orderBy: { transactionAt: 'desc' },
       take: 50,
     }),
+    db.financialTransaction.findMany({
+      where: { deletedAt: null, personId: { not: null } },
+      include: {
+        currency: true,
+        person: { select: { id: true, fullName: true, customerNo: true } },
+      },
+    }),
+    db.customerWalletSettlement.findMany({
+      include: {
+        currency: true,
+        person: { select: { id: true, fullName: true, customerNo: true } },
+      },
+    }),
+    db.customerWalletSettlement.findMany({
+      where: { occurredAt: { gte: fromDate, lte: toDate } },
+      include: {
+        currency: true,
+        person: { select: { id: true, fullName: true, customerNo: true } },
+      },
+      orderBy: { occurredAt: 'desc' },
+      take: 200,
+    }),
   ]);
 
   const dailyByCurrency = currencies.map((currency) => {
@@ -225,6 +260,35 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
     new Set(todayMovements.map((movement) => movement.createdBy).filter(Boolean)),
   );
   const cashboxSummary = summarizeCashboxByMethod(todayMovements);
+  const walletSnapshot = buildWalletSnapshot(walletTransactions, walletSettlements, currencies);
+  const walletPeople = new Map<string, { id: string; fullName: string; customerNo?: string | null }>();
+
+  for (const transaction of walletTransactions) {
+    if (transaction.person) walletPeople.set(transaction.person.id, transaction.person);
+  }
+  for (const settlement of walletSettlements) {
+    if (settlement.person) walletPeople.set(settlement.person.id, settlement.person);
+  }
+
+  const customerWalletReports = Array.from(walletPeople.values())
+    .map((person) => {
+      const snapshot = buildWalletSnapshot(
+        walletTransactions.filter((transaction) => transaction.personId === person.id),
+        walletSettlements.filter((settlement) => settlement.personId === person.id),
+        currencies,
+      );
+      const totalCredit = snapshot.totals.credit.reduce((sum, item) => sum + item.amount, 0);
+      const totalDebt = snapshot.totals.debt.reduce((sum, item) => sum + item.amount, 0);
+      return {
+        person,
+        snapshot,
+        totalCredit,
+        totalDebt,
+      };
+    })
+    .filter((item) => item.totalCredit !== 0 || item.totalDebt !== 0)
+    .sort((a, b) => b.totalCredit + b.totalDebt - (a.totalCredit + a.totalDebt))
+    .slice(0, 100);
 
   const sheinSold = sheinSummary
     .filter((item) => item.status === 'SOLD')
@@ -303,6 +367,112 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
           <SummaryCard title="بطاقات غير مصفاة" value={receivedCardStats.unsettled} />
           <SummaryCard title="بطاقات مصفاة جزئيا" value={receivedCardStats.partial} />
           <SummaryCard title="بطاقات مصفاة بالكامل" value={receivedCardStats.full} />
+        </section>
+
+        <section className="grid gap-4 md:grid-cols-2">
+          <SummaryCard title="إجمالي أرصدة الزبائن عند الشركة" value={walletTotalsLabel(walletSnapshot.totals.credit)} />
+          <SummaryCard title="إجمالي الديون المطلوبة من الزبائن" value={walletTotalsLabel(walletSnapshot.totals.debt)} />
+        </section>
+
+        <section className="card p-5">
+          <h2 className="mb-4 font-black">تقرير الأرصدة حسب العملة وطريقة الدفع</h2>
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>الخانة</th>
+                  <th>رصيد للزبون</th>
+                  <th>دين على الزبون</th>
+                </tr>
+              </thead>
+              <tbody>
+                {walletSnapshot.rows.map((row) => (
+                  <tr key={`${row.currency.id}-${row.paymentMethod}`}>
+                    <td>{row.label}</td>
+                    <td>{formatMoney(row.credit, row.currency)}</td>
+                    <td>{formatMoney(row.debt, row.currency)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section className="card p-5">
+          <h2 className="mb-4 font-black">تقرير حسب الزبون</h2>
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>الزبون</th>
+                  <th>رصيد للزبون</th>
+                  <th>دين على الزبون</th>
+                </tr>
+              </thead>
+              <tbody>
+                {customerWalletReports.map((item) => (
+                  <tr key={item.person.id}>
+                    <td>
+                      <Link href={`/people/${item.person.id}`} className="font-bold text-indigo-600 hover:text-indigo-500">
+                        {item.person.customerNo ? `${item.person.customerNo} - ` : ''}
+                        {item.person.fullName}
+                      </Link>
+                    </td>
+                    <td>{walletTotalsLabel(item.snapshot.totals.credit)}</td>
+                    <td>{walletTotalsLabel(item.snapshot.totals.debt)}</td>
+                  </tr>
+                ))}
+                {!customerWalletReports.length ? (
+                  <tr>
+                    <td colSpan={3} className="text-center text-slate-500">
+                      لا توجد أرصدة أو ديون زبائن.
+                    </td>
+                  </tr>
+                ) : null}
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section className="card p-5">
+          <h2 className="mb-4 font-black">تقرير التسويات</h2>
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>التاريخ</th>
+                  <th>الزبون</th>
+                  <th>المستخدم</th>
+                  <th>نوع التسوية</th>
+                  <th>نوع الحساب</th>
+                  <th>طريقة الدفع</th>
+                  <th>المبلغ</th>
+                  <th>السبب</th>
+                </tr>
+              </thead>
+              <tbody>
+                {walletSettlementRows.map((settlement) => (
+                  <tr key={settlement.id}>
+                    <td>{formatDateTime(settlement.occurredAt)}</td>
+                    <td>{settlement.person?.fullName || '—'}</td>
+                    <td>{settlement.username || 'system'}</td>
+                    <td>{settlement.direction === 'ADD' ? 'إضافة' : 'خصم'}</td>
+                    <td>{settlement.accountType === 'CREDIT' ? 'رصيد للزبون' : 'دين على الزبون'}</td>
+                    <td>{walletMethodLabel(settlement.paymentMethod)}</td>
+                    <td>{formatMoney(settlement.amount, settlement.currency)}</td>
+                    <td>{settlement.reason}</td>
+                  </tr>
+                ))}
+                {!walletSettlementRows.length ? (
+                  <tr>
+                    <td colSpan={8} className="text-center text-slate-500">
+                      لا توجد تسويات في الفترة.
+                    </td>
+                  </tr>
+                ) : null}
+              </tbody>
+            </table>
+          </div>
         </section>
 
         <section className="card p-5">

@@ -1,6 +1,8 @@
 import Page from '@/components/Page';
+import CustomerWalletClient from '@/components/CustomerWalletClient';
 import { db } from '@/lib/db';
 import { formatDate, formatMoney, formatNumber } from '@/lib/format';
+import { buildWalletSnapshot } from '@/lib/customer-wallet';
 import { notFound } from 'next/navigation';
 
 export const dynamic = 'force-dynamic';
@@ -60,28 +62,37 @@ function transactionDetails(transaction: any) {
 
 export default async function PersonPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const person = await db.person.findUnique({
-    where: { id },
-    include: {
-      transactions: {
-        where: { deletedAt: null },
-        include: { currency: true, type: true },
-        orderBy: { transactionAt: 'desc' },
+  const [person, currencies] = await Promise.all([
+    db.person.findUnique({
+      where: { id },
+      include: {
+        transactions: {
+          where: { deletedAt: null },
+          include: { currency: true, type: true },
+          orderBy: { transactionAt: 'desc' },
+        },
+        cardBatches: {
+          include: { cards: { orderBy: { sequence: 'asc' } }, currency: true },
+          orderBy: { receivedAt: 'desc' },
+        },
+        sheinSales: {
+          orderBy: { updatedAt: 'desc' },
+        },
+        walletSettlements: {
+          include: { currency: true },
+          orderBy: { occurredAt: 'desc' },
+        },
       },
-      cardBatches: {
-        include: { cards: { orderBy: { sequence: 'asc' } }, currency: true },
-        orderBy: { receivedAt: 'desc' },
-      },
-      sheinSales: {
-        orderBy: { updatedAt: 'desc' },
-      },
-    },
-  });
+    }),
+    db.currency.findMany({ where: { isActive: true }, orderBy: { code: 'asc' } }),
+  ]);
 
   if (!person) notFound();
+  const walletSnapshot = buildWalletSnapshot(person.transactions, person.walletSettlements, currencies);
 
   return (
     <Page title={`${person.customerNo ? `${person.customerNo} - ` : ''}${person.fullName}`}>
+      <h2 className="mb-4 font-black">معلومات الزبون</h2>
       <div className="grid gap-4 md:grid-cols-4">
         <Info title="رقم العميل" value={person.customerNo || '—'} />
         <Info title="التصنيف" value={categoryLabels[person.category] || person.category} />
@@ -90,6 +101,13 @@ export default async function PersonPage({ params }: { params: Promise<{ id: str
         <Info title="معلومات إضافية" value={person.externalId || '—'} />
         <Info title="ملاحظات" value={person.notes || '—'} />
       </div>
+
+      <CustomerWalletClient
+        personId={person.id}
+        snapshot={JSON.parse(JSON.stringify(walletSnapshot))}
+        settlements={JSON.parse(JSON.stringify(person.walletSettlements))}
+        currencies={JSON.parse(JSON.stringify(currencies))}
+      />
 
       <div className="card mt-6 p-5">
         <h2 className="mb-4 font-black">المعاملات</h2>

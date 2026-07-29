@@ -82,6 +82,16 @@ enum SheinPaymentMethod {
   CARD
 }
 
+enum CustomerWalletAccountType {
+  CREDIT
+  DEBT
+}
+
+enum CustomerWalletSettlementDirection {
+  ADD
+  SUBTRACT
+}
+
 model SystemSetting {
   id        String   @id @default(cuid())
   key       String   @unique
@@ -99,6 +109,7 @@ model User {
   sessions     LoginSession[]
   attempts     LoginAttempt[]
   auditLogs    AuditLog[]
+  walletSettlements CustomerWalletSettlement[]
 
   @@index([isActive])
   @@map("Users")
@@ -122,6 +133,7 @@ model Person {
   sheinCardSales SheinCardSale[]
   cardBatches  ReceivedCardBatch[]
   cashboxMovements CashboxMovement[]   @relation("CashboxMovementPerson")
+  walletSettlements CustomerWalletSettlement[]
 
   @@index([fullName])
   @@index([phone])
@@ -149,6 +161,7 @@ model Currency {
   sheinSalesReports SheinCardSale[]
   conversionSources CurrencyConversion[]   @relation("CurrencyConversionSource")
   conversionTargets CurrencyConversion[]   @relation("CurrencyConversionTarget")
+  walletSettlements CustomerWalletSettlement[]
 
   @@index([createdAt])
   @@index([isActive])
@@ -333,6 +346,36 @@ model AuditLog {
   createdAt   DateTime @default(now())
   user        User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
 
+  @@index([createdAt])
+  @@index([userId])
+  @@index([username])
+}
+
+model CustomerWalletSettlement {
+  id            String                            @id @default(cuid())
+  personId      String
+  currencyId    String
+  paymentMethod String
+  accountType   CustomerWalletAccountType
+  direction     CustomerWalletSettlementDirection
+  amount        Decimal                           @db.Decimal(20, 6)
+  balanceBefore Decimal                           @db.Decimal(20, 6)
+  balanceAfter  Decimal                           @db.Decimal(20, 6)
+  reason        String
+  note          String?
+  userId        String?
+  username      String?
+  occurredAt    DateTime                          @default(now())
+  createdAt     DateTime                          @default(now())
+  person        Person                            @relation(fields: [personId], references: [id])
+  currency      Currency                          @relation(fields: [currencyId], references: [id])
+  user          User?                             @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([personId])
+  @@index([currencyId])
+  @@index([paymentMethod])
+  @@index([accountType])
+  @@index([occurredAt])
   @@index([createdAt])
   @@index([userId])
   @@index([username])
