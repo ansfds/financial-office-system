@@ -39,8 +39,9 @@ export default async function SettingsPage() {
         <div className="card p-5 lg:col-span-2">
           <h2 className="font-black">الأمان</h2>
           <p className="mt-2 text-sm leading-7 text-slate-500">
-            غيّر رمز الدخول من متغير البيئة SYSTEM_ACCESS_CODE في الاستضافة ثم أعد النشر. لا يتم حفظ CVV داخل قاعدة
-            البيانات، وتستخدم المنظومة فقط خيار استلام بيانات التحقق أو ملاحظات داخلية آمنة.
+            غيّر كلمات مرور المستخدمين من متغيرات البيئة USER_MOHAMMED_PASSWORD وUSER_HOSSAM_PASSWORD وUSER_ANS_PASSWORD في الاستضافة،
+            ثم شغّل npm run seed:users لتحديث كلمات المرور المشفرة في قاعدة البيانات. لا يتم حفظ CVV داخل قاعدة البيانات،
+            وتستخدم المنظومة فقط خيار استلام بيانات التحقق أو ملاحظات داخلية آمنة.
           </p>
         </div>
 

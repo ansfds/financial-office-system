@@ -1,25 +1,40 @@
-import { audit, requireSession, safeCodeMatch } from '@/lib/auth';
+import argon2 from 'argon2';
+import { audit, requireSession } from '@/lib/auth';
 import { db } from '@/lib/db';
 import { apiError, fail, ok } from '@/lib/http';
 import { revalidateFinancePaths } from '@/lib/revalidate';
 import { z } from 'zod';
 
 const resetSchema = z.object({
-  accessCode: z.string().min(1),
+  password: z.string().min(1),
   backupConfirmed: z.literal(true),
   includeSheinCards: z.coerce.boolean().default(false),
   includeReceivedCards: z.coerce.boolean().default(false),
 });
 
+export const runtime = 'nodejs';
+
 export async function POST(request: Request) {
   try {
-    await requireSession();
+    const session = await requireSession();
 
     const parsed = resetSchema.safeParse(await request.json());
-    if (!parsed.success) return fail('أدخل رمز الدخول وأكد أخذ نسخة احتياطية قبل التصفير');
+    if (!parsed.success) return fail('أدخل كلمة المرور وأكد أخذ نسخة احتياطية قبل التصفير');
 
     const input = parsed.data;
-    if (!safeCodeMatch(input.accessCode)) return fail('رمز الدخول غير صحيح', 403);
+    const user = session.userId
+      ? await db.user.findUnique({
+          where: { id: session.userId },
+          select: { passwordHash: true, isActive: true },
+        })
+      : null;
+
+    const passwordValid = Boolean(
+      user?.isActive &&
+        (await argon2.verify(user.passwordHash, input.password).catch(() => false)),
+    );
+
+    if (!passwordValid) return fail('كلمة المرور غير صحيحة', 403);
 
     const archivedAt = new Date();
     const result = await db.$transaction(async (tx) => {
@@ -88,7 +103,7 @@ export async function POST(request: Request) {
       entityType: 'FinancialTransactionBatch',
       entityId: result.deletedItemId,
       newValue: result as any,
-      description: 'حذف جميع المعاملات القديمة بنظام الأرشفة',
+      description: 'أرشفة جميع المعاملات القديمة',
     });
     revalidateFinancePaths();
 

@@ -4,8 +4,7 @@ const ALGORITHM = 'aes-256-gcm';
 const VERSION = 'v1';
 
 function key() {
-  const secret =
-    process.env.CARD_ENCRYPTION_KEY || process.env.SESSION_SECRET || process.env.SYSTEM_ACCESS_CODE;
+  const secret = process.env.CARD_ENCRYPTION_KEY || process.env.SESSION_SECRET;
 
   if (!secret) {
     throw new Error('CARD_ENCRYPTION_KEY is required to protect card secrets');

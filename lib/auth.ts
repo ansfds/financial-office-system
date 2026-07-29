@@ -1,5 +1,5 @@
 import { cookies, headers } from 'next/headers';
-import { createHash, createHmac, randomUUID, timingSafeEqual } from 'crypto';
+import { createHmac, randomUUID, timingSafeEqual } from 'crypto';
 import { db } from './db';
 
 export const COOKIE = 'fos_session';
@@ -60,14 +60,7 @@ export async function clientMeta() {
   };
 }
 
-export function safeCodeMatch(input: string) {
-  const secret = process.env.SYSTEM_ACCESS_CODE || '';
-  const a = createHash('sha256').update(input).digest();
-  const b = createHash('sha256').update(secret).digest();
-  return a.length === b.length && timingSafeEqual(a, b);
-}
-
-export async function createSession() {
+export async function createSession(user: { id: string; username: string }) {
   const id = randomUUID();
   const meta = await clientMeta();
   const expiresAt = new Date(Date.now() + sessionMinutes() * 60_000);
@@ -75,6 +68,8 @@ export async function createSession() {
   await db.loginSession.create({
     data: {
       id,
+      userId: user.id,
+      username: user.username,
       expiresAt,
       ip: meta.ip,
       userAgent: meta.ua,
@@ -99,8 +94,28 @@ export async function getSession() {
     return null;
   }
 
-  const session = await db.loginSession.findUnique({ where: { id } });
+  const session = await db.loginSession.findUnique({
+    where: { id },
+    include: {
+      user: {
+        select: {
+          id: true,
+          username: true,
+          isActive: true,
+        },
+      },
+    },
+  });
   if (!session || session.revokedAt || session.expiresAt < new Date()) {
+    await clearSessionCookie();
+    return null;
+  }
+
+  if (!session.userId || !session.username || !session.user?.isActive) {
+    await db.loginSession.update({
+      where: { id },
+      data: { revokedAt: new Date() },
+    });
     await clearSessionCookie();
     return null;
   }
@@ -133,6 +148,12 @@ export async function requireSession() {
 export async function audit(action: string, data: any = {}) {
   const meta = await clientMeta();
   const sessionId = unpack((await cookies()).get(COOKIE)?.value) || undefined;
+  const sessionUser = sessionId
+    ? await db.loginSession.findUnique({
+        where: { id: sessionId },
+        select: { userId: true, username: true },
+      })
+    : null;
 
   await db.auditLog.create({
     data: {
@@ -141,6 +162,8 @@ export async function audit(action: string, data: any = {}) {
       userAgent: meta.ua,
       sessionId,
       ...data,
+      userId: data.userId ?? sessionUser?.userId,
+      username: data.username ?? sessionUser?.username,
     },
   });
 }

@@ -7,6 +7,8 @@ export async function GET() {
 
   return ok({
     authenticated: true,
+    userId: session.userId,
+    username: session.username,
     expiresAt: session.expiresAt,
     lastActivityAt: session.lastActivityAt,
   });

@@ -4,7 +4,7 @@
 
 ## الوظائف المنفذة
 
-- دخول برمز سري يتحقق منه الخادم فقط.
+- دخول بأسماء المستخدمين الثلاثة وكلمات مرور مشفرة في قاعدة البيانات.
 - Cookie موقعة وآمنة من نوع httpOnly.
 - تحديد عدد محاولات الدخول وتسجيل المحاولات الفاشلة.
 - إدارة الأشخاص وأرشفتهم بالحذف الناعم.
@@ -20,7 +20,7 @@
 
 1. ثبّت Node.js 20 أو أحدث وPostgreSQL.
 2. انسخ `.env.example` إلى `.env`.
-3. أدخل رابط قاعدة البيانات ورمز الدخول ومفتاح جلسة طويلًا.
+3. أدخل رابط قاعدة البيانات ومفتاح جلسة طويلًا وكلمات مرور المستخدمين الثلاثة.
 4. نفّذ:
 
 ```bash
@@ -28,6 +28,7 @@ npm install
 npx prisma generate
 npx prisma migrate dev --name init
 npm run db:seed
+npm run seed:users
 npm run dev
 ```
 
@@ -43,19 +44,20 @@ openssl rand -hex 48
 
 1. ارفع المشروع إلى GitHub بدون ملف `.env`.
 2. أنشئ قاعدة PostgreSQL سحابية.
-3. أضف في Vercel: `DATABASE_URL`, `SYSTEM_ACCESS_CODE`, `SESSION_SECRET` وباقي المتغيرات.
+3. أضف في Vercel: `DATABASE_URL`, `SESSION_SECRET`, `USER_MOHAMMED_PASSWORD`, `USER_HOSSAM_PASSWORD`, `USER_ANS_PASSWORD` وباقي المتغيرات.
 4. شغّل migration على قاعدة الإنتاج:
 
 ```bash
 npx prisma migrate deploy
 npm run db:seed
+npm run seed:users
 ```
 
 5. انشر المشروع.
 
 ## الأمان
 
-لا تضع `SYSTEM_ACCESS_CODE` في أي متغير يبدأ بـ `NEXT_PUBLIC_`. لا ترفعه إلى GitHub. جميع API المالية تتحقق من جلسة موجودة في قاعدة البيانات، والـCookie موقعة بـHMAC.
+لا تضع كلمات المرور في أي متغير يبدأ بـ `NEXT_PUBLIC_` ولا ترفعها إلى GitHub. سكربت المستخدمين يحفظ `passwordHash` فقط، وجميع API المالية تتحقق من جلسة موجودة في قاعدة البيانات، والـCookie موقعة بـHMAC.
 
 ## النسخ الاحتياطي
 

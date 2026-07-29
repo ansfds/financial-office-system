@@ -11,7 +11,7 @@ export default function DangerSettings() {
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [form, setForm] = useState({
-    accessCode: '',
+    password: '',
     backupConfirmed: false,
     includeSheinCards: false,
     includeReceivedCards: false,
@@ -19,7 +19,7 @@ export default function DangerSettings() {
 
   async function resetTransactions(event: React.FormEvent) {
     event.preventDefault();
-    if (!form.accessCode.trim()) return toast.error('أدخل رمز دخول المنظومة');
+    if (!form.password.trim()) return toast.error('أدخل كلمة المرور');
     if (!window.confirm('تأكيد نهائي: سيتم أرشفة جميع المعاملات القديمة ولن يتم حذف الزبائن أو العملات.')) return;
 
     setLoading(true);
@@ -35,7 +35,7 @@ export default function DangerSettings() {
 
     toast.success(`تمت أرشفة ${formatNumber(result.archivedTransactions)} معاملة`);
     setOpen(false);
-    setForm({ accessCode: '', backupConfirmed: false, includeSheinCards: false, includeReceivedCards: false });
+    setForm({ password: '', backupConfirmed: false, includeSheinCards: false, includeReceivedCards: false });
     router.refresh();
   }
 
@@ -90,9 +90,9 @@ export default function DangerSettings() {
             <div className="grid gap-4">
               <input
                 type="password"
-                value={form.accessCode}
-                onChange={(event) => setForm({ ...form, accessCode: event.target.value })}
-                placeholder="SYSTEM_ACCESS_CODE"
+                value={form.password}
+                onChange={(event) => setForm({ ...form, password: event.target.value })}
+                placeholder="كلمة المرور"
               />
 
               <label className="flex items-center gap-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm font-bold text-amber-800 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-200">
