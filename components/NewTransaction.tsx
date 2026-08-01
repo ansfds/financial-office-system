@@ -47,6 +47,7 @@ type ConversionAction = 'SELL_CURRENCY' | 'BUY_CURRENCY' | 'TRANSFER_AMOUNT';
 type ExpenseAction = 'PAY_BILL' | 'GENERAL_EXPENSE';
 type TransferStatus = 'IN_PROGRESS' | 'COMPLETED' | 'CANCELLED';
 type ReceivedCardStatus = 'RECEIVED' | 'IN_SETTLEMENT' | 'SETTLED' | 'PARTIAL' | 'COMPLETED' | 'CANCELLED';
+type ExecutionStatus = 'COMPLETED' | 'PENDING' | 'NOT_EXECUTED';
 
 type PersonOption = {
   id: string;
@@ -67,6 +68,7 @@ type FormState = {
   personId: string;
   operationKind: OperationKind;
   executionType: string;
+  executionStatus: ExecutionStatus;
   notes: string;
 };
 
@@ -207,6 +209,12 @@ const transferStatusLabels: Record<TransferStatus, string> = {
   CANCELLED: 'ملغية',
 };
 
+const executionStatusLabels: Record<ExecutionStatus, string> = {
+  COMPLETED: 'تم التنفيذ',
+  PENDING: 'في انتظار اكتمال التنفيذ',
+  NOT_EXECUTED: 'لم يتم التنفيذ',
+};
+
 const cardStatusLabels: Record<ReceivedCardStatus, string> = {
   RECEIVED: 'مستلمة',
   IN_SETTLEMENT: 'قيد التصفية',
@@ -220,6 +228,7 @@ const initialForm: FormState = {
   personId: '',
   operationKind: 'MANUAL',
   executionType: '',
+  executionStatus: 'COMPLETED',
   notes: '',
 };
 
@@ -678,6 +687,8 @@ export default function NewTransaction({
         },
       };
     }
+
+    body.executionStatus = form.executionStatus;
 
     setLoading(true);
     const response = await fetch('/api/transactions', {
@@ -1296,6 +1307,19 @@ export default function NewTransaction({
           {selectedOperation?.icon}
           <span>{selectedOperation?.label}</span>
         </div>
+
+        <Field label="حالة التنفيذ" className="md:col-span-2">
+          <select
+            value={form.executionStatus}
+            onChange={(event) => setField('executionStatus', event.target.value as ExecutionStatus)}
+          >
+            {Object.entries(executionStatusLabels).map(([value, label]) => (
+              <option key={value} value={value}>
+                {label}
+              </option>
+            ))}
+          </select>
+        </Field>
 
         {renderOperationFields()}
 

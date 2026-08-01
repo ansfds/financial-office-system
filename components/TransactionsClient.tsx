@@ -2,7 +2,7 @@
 
 import { type ReactNode, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Eye, Save, Search, X } from 'lucide-react';
+import { CheckCircle2, Eye, Link2, Loader2, Save, Search, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { formatDateTime, formatMoney, formatNumber, numberValue } from '@/lib/format';
 import {
@@ -18,6 +18,20 @@ const statusLabels: Record<string, string> = {
   IN_PROGRESS: 'قيد التنفيذ',
   OVERDUE: 'متأخرة',
   CANCELLED: 'ملغاة',
+};
+
+type ExecutionStatus = 'PENDING' | 'COMPLETED' | 'NOT_EXECUTED';
+
+const executionStatusLabels: Record<ExecutionStatus, string> = {
+  PENDING: 'في انتظار التنفيذ',
+  COMPLETED: 'تم التنفيذ',
+  NOT_EXECUTED: 'لم يتم التنفيذ',
+};
+
+const notExecutedActionLabels: Record<string, string> = {
+  REFUND: 'إرجاع المبلغ للزبون',
+  CONVERT_TO_WALLET: 'تحويله إلى رصيد للزبون في المحفظة',
+  KEEP_WITH_NOTE: 'إبقاؤه مع ملاحظة',
 };
 
 const operationLabels: Record<string, string> = {
@@ -131,20 +145,25 @@ export default function TransactionsClient({
   initialTotal,
   pageSize,
   initialQuery = '',
+  initialExecutionStatus = 'PENDING',
 }: {
   initialTransactions: any[];
   initialPage: number;
   initialTotal: number;
   pageSize: number;
   initialQuery?: string;
+  initialExecutionStatus?: ExecutionStatus;
 }) {
   const router = useRouter();
   const [transactions, setTransactions] = useState(initialTransactions);
   const [q, setQ] = useState(initialQuery);
   const [page, setPage] = useState(initialPage);
   const [total, setTotal] = useState(initialTotal);
+  const [activeExecutionStatus, setActiveExecutionStatus] = useState<ExecutionStatus>(initialExecutionStatus);
   const [loading, setLoading] = useState(false);
   const [savingId, setSavingId] = useState('');
+  const [availableCards, setAvailableCards] = useState<any[]>([]);
+  const [executionLoading, setExecutionLoading] = useState(false);
   const [noteModal, setNoteModal] = useState<{ open: boolean; text: string }>({ open: false, text: '' });
   const [editor, setEditor] = useState<{ transaction: any; draft: any } | null>(null);
 
@@ -153,16 +172,17 @@ export default function TransactionsClient({
     setPage(initialPage);
     setTotal(initialTotal);
     setQ(initialQuery);
-  }, [initialPage, initialQuery, initialTotal, initialTransactions]);
+    setActiveExecutionStatus(initialExecutionStatus);
+  }, [initialExecutionStatus, initialPage, initialQuery, initialTotal, initialTransactions]);
 
   function updateLocal(id: string, patch: any) {
     setTransactions((items) => items.map((item) => (item.id === id ? { ...item, ...patch } : item)));
   }
 
-  async function load(nextPage = page, search = q) {
+  async function load(nextPage = page, search = q, executionStatus = activeExecutionStatus) {
     setLoading(true);
     const response = await fetch(
-      `/api/transactions?q=${encodeURIComponent(search)}&page=${nextPage}&pageSize=${pageSize}`,
+      `/api/transactions?q=${encodeURIComponent(search)}&page=${nextPage}&pageSize=${pageSize}&executionStatus=${executionStatus}`,
       { cache: 'no-store' },
     );
     const data = await response.json();
@@ -176,30 +196,73 @@ export default function TransactionsClient({
     if (search) url.searchParams.set('q', search);
     else url.searchParams.delete('q');
     url.searchParams.set('page', String(nextPage));
+    url.searchParams.set('executionStatus', executionStatus);
     window.history.replaceState(null, '', url.toString());
   }
 
   async function search() {
-    await load(1, q);
+    await load(1, q, activeExecutionStatus);
   }
 
-  function openEditor(transaction: any) {
+  async function switchExecutionStatus(status: ExecutionStatus) {
+    setActiveExecutionStatus(status);
+    await load(1, q, status);
+  }
+
+  async function loadExecutionDetails(transactionId: string) {
+    setExecutionLoading(true);
+    const response = await fetch(`/api/transactions/${transactionId}/execution-items`, { cache: 'no-store' });
+    const data = await response.json();
+    setExecutionLoading(false);
+
+    if (!response.ok) {
+      toast.error(data.error || 'تعذر تحميل تفاصيل التنفيذ');
+      return null;
+    }
+
+    setAvailableCards(data.availableCards || []);
+    updateLocal(transactionId, data.transaction);
+    return data.transaction;
+  }
+
+  async function openEditor(transaction: any) {
+    setAvailableCards([]);
+    const detailedTransaction =
+      transaction.operationKind === 'SHEIN_CARD_SALE' ? (await loadExecutionDetails(transaction.id)) || transaction : transaction;
+
     setEditor({
-      transaction,
+      transaction: detailedTransaction,
       draft: {
-        receivedAmount: decimal(transaction.receivedAmount),
-        paidAmount: decimal(transaction.paidAmount),
-        bankName: transaction.bankName || '',
-        executionType: transaction.executionType || '',
-        verificationReceived: Boolean(transaction.verificationReceived),
-        secureInternalNote: transaction.secureInternalNote || '',
-        notes: transaction.notes || '',
+        receivedAmount: decimal(detailedTransaction.receivedAmount),
+        paidAmount: decimal(detailedTransaction.paidAmount),
+        bankName: detailedTransaction.bankName || '',
+        executionType: detailedTransaction.executionType || '',
+        executionStatus: detailedTransaction.executionStatus || 'COMPLETED',
+        executionNote: detailedTransaction.executionNote || '',
+        notExecutedAction: detailedTransaction.notExecutedAction || '',
+        verificationReceived: Boolean(detailedTransaction.verificationReceived),
+        secureInternalNote: detailedTransaction.secureInternalNote || '',
+        notes: detailedTransaction.notes || '',
       },
     });
   }
 
   async function saveEditor() {
     if (!editor) return;
+    if (
+      editor.draft.executionStatus === 'NOT_EXECUTED' &&
+      (decimal(editor.transaction.receivedAmount) > 0 || decimal(editor.transaction.paidAmount) > 0) &&
+      !editor.draft.notExecutedAction
+    ) {
+      return toast.error('اختر طريقة التعامل مع المبلغ');
+    }
+    if (
+      editor.draft.executionStatus === 'NOT_EXECUTED' &&
+      editor.draft.notExecutedAction === 'KEEP_WITH_NOTE' &&
+      !editor.draft.executionNote.trim()
+    ) {
+      return toast.error('اكتب ملاحظة واضحة');
+    }
     if (!window.confirm('تأكيد تعديل المعاملة وتحديث أثر الصندوق حسب فرق المبلغ؟')) return;
 
     setSavingId(editor.transaction.id);
@@ -211,6 +274,10 @@ export default function TransactionsClient({
         paidAmount: decimal(editor.draft.paidAmount),
         bankName: editor.draft.bankName || null,
         executionType: editor.draft.executionType || null,
+        executionStatus: editor.draft.executionStatus,
+        executionNote: editor.draft.executionNote || null,
+        notExecutedAction:
+          editor.draft.executionStatus === 'NOT_EXECUTED' ? editor.draft.notExecutedAction || null : null,
         verificationReceived: Boolean(editor.draft.verificationReceived),
         secureInternalNote: editor.draft.secureInternalNote || null,
         notes: editor.draft.notes || null,
@@ -227,8 +294,161 @@ export default function TransactionsClient({
     router.refresh();
   }
 
+  async function refreshEditorTransaction(transactionId: string, transaction?: any) {
+    const nextTransaction = transaction || (await loadExecutionDetails(transactionId));
+    if (!nextTransaction) return;
+
+    setEditor((current) => (current ? { ...current, transaction: nextTransaction } : current));
+    updateLocal(transactionId, nextTransaction);
+  }
+
+  async function updateExecutionItem(item: any, payload: any) {
+    if (!editor) return;
+
+    setSavingId(item.id);
+    const response = await fetch(`/api/transactions/${editor.transaction.id}/execution-items/${item.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const data = await response.json();
+    setSavingId('');
+
+    if (!response.ok) return toast.error(data.error || 'تعذر تحديث عنصر التنفيذ');
+
+    toast.success('تم تحديث عنصر التنفيذ');
+    await refreshEditorTransaction(editor.transaction.id, data);
+    await loadExecutionDetails(editor.transaction.id);
+    router.refresh();
+  }
+
+  async function completeAllExecutionItems() {
+    if (!editor) return;
+
+    setSavingId(editor.transaction.id);
+    const response = await fetch(`/api/transactions/${editor.transaction.id}/execution-items`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'COMPLETE_ALL' }),
+    });
+    const data = await response.json();
+    setSavingId('');
+
+    if (!response.ok) return toast.error(data.error || 'تعذر تنفيذ الطلب بالكامل');
+
+    toast.success('تم تنفيذ الطلب بالكامل');
+    await refreshEditorTransaction(editor.transaction.id, data);
+    await loadExecutionDetails(editor.transaction.id);
+    router.refresh();
+  }
+
+  function renderExecutionItemsPanel() {
+    if (!editor || editor.transaction.operationKind !== 'SHEIN_CARD_SALE') return null;
+
+    const items = editor.transaction.executionItems || [];
+    const completed = items.filter((item: any) => item.status === 'COMPLETED').length;
+    const allLinked = items.length > 0 && items.every((item: any) => item.sheinCardId);
+
+    return (
+      <div className="rounded-lg border border-slate-200 p-4 dark:border-slate-800 md:col-span-2">
+        <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <div className="text-sm font-black">كروت التنفيذ</div>
+            <div className="mt-1 text-sm text-slate-500">
+              تم تنفيذ {formatNumber(completed)} من {formatNumber(items.length)}
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={completeAllExecutionItems}
+            disabled={!allLinked || completed === items.length || savingId === editor.transaction.id}
+            className="inline-flex items-center justify-center gap-2 rounded-lg bg-emerald-600 px-4 py-2.5 text-sm font-bold text-white hover:bg-emerald-500 disabled:cursor-not-allowed disabled:bg-emerald-300"
+          >
+            {savingId === editor.transaction.id ? <Loader2 className="animate-spin" size={16} /> : <CheckCircle2 size={16} />}
+            تم تنفيذ الطلب بالكامل
+          </button>
+        </div>
+
+        {executionLoading ? (
+          <div className="flex items-center gap-2 rounded-lg bg-slate-50 p-3 text-sm font-bold text-slate-500 dark:bg-slate-950">
+            <Loader2 className="animate-spin" size={16} />
+            جار تحميل الكروت
+          </div>
+        ) : null}
+
+        <div className="grid gap-3">
+          {items.map((item: any) => {
+            const availableOptions = availableCards.filter((card) => card.id !== item.sheinCardId);
+            return (
+              <div
+                key={item.id}
+                className="grid gap-3 rounded-lg border border-slate-200 p-3 text-sm dark:border-slate-800 lg:grid-cols-[110px_150px_1fr_auto]"
+              >
+                <div className="font-black">كرت {item.itemNumber}</div>
+                <div className="font-bold">
+                  {executionStatusLabels[(item.status || 'PENDING') as ExecutionStatus] || item.status}
+                </div>
+                <select
+                  value={item.sheinCardId || ''}
+                  onChange={(event) => updateExecutionItem(item, { sheinCardId: event.target.value || null })}
+                  disabled={savingId === item.id || item.status === 'COMPLETED'}
+                >
+                  <option value="">
+                    {availableCards.length || item.sheinCard ? 'اختر كرت من المخزون' : 'لا توجد كروت متوفرة حاليا'}
+                  </option>
+                  {item.sheinCard ? (
+                    <option value={item.sheinCard.id}>
+                      {item.sheinCard.code} - مرتبط
+                    </option>
+                  ) : null}
+                  {availableOptions.map((card) => (
+                    <option key={card.id} value={card.id}>
+                      {card.code}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  onClick={() => updateExecutionItem(item, { status: 'COMPLETED' })}
+                  disabled={!item.sheinCardId || item.status === 'COMPLETED' || savingId === item.id}
+                  className="inline-flex items-center justify-center gap-2 rounded-lg bg-indigo-600 px-3 py-2 font-bold text-white hover:bg-indigo-500 disabled:cursor-not-allowed disabled:bg-indigo-300"
+                >
+                  {savingId === item.id ? <Loader2 className="animate-spin" size={16} /> : <Link2 size={16} />}
+                  تم التنفيذ
+                </button>
+                {item.sheinCard ? (
+                  <div className="text-xs font-bold text-slate-500 lg:col-span-4">
+                    الكرت الفعلي: {item.sheinCard.code}
+                  </div>
+                ) : null}
+              </div>
+            );
+          })}
+          {!items.length ? <div className="text-sm text-slate-500">لا توجد عناصر تنفيذ لهذا الطلب.</div> : null}
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-4">
+      <div className="grid gap-2 sm:grid-cols-3">
+        {(Object.keys(executionStatusLabels) as ExecutionStatus[]).map((status) => (
+          <button
+            key={status}
+            type="button"
+            onClick={() => switchExecutionStatus(status)}
+            className={`rounded-lg border px-4 py-3 text-sm font-black ${
+              activeExecutionStatus === status
+                ? 'border-indigo-600 bg-indigo-600 text-white'
+                : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800'
+            }`}
+          >
+            {executionStatusLabels[status]}
+          </button>
+        ))}
+      </div>
+
       <div className="card grid gap-2 p-4 md:grid-cols-[1fr_auto]">
         <input value={q} onChange={(event) => setQ(event.target.value)} placeholder="بحث بالزبون أو النوع أو الملاحظة" />
         <button
@@ -247,12 +467,15 @@ export default function TransactionsClient({
             <tr>
               <th>الزبون</th>
               <th>النوع</th>
+              <th>عدد العناصر</th>
               <th>التفاصيل</th>
               <th>نوع التنفيذ</th>
               <th>المستلم</th>
               <th>المدفوع</th>
               <th>المتبقي</th>
               <th>ملاحظات</th>
+              <th>أضيفت بواسطة</th>
+              <th>حالة التنفيذ</th>
               <th>الحالة</th>
               <th>عرض / تعديل</th>
             </tr>
@@ -271,6 +494,9 @@ export default function TransactionsClient({
                   )}
                 </td>
                 <td>{operationLabels[transaction.operationKind] || transaction.type?.name || transaction.customType || '—'}</td>
+                <td className="font-bold">
+                  {formatNumber(transaction.operationDetails?.cardCount || transaction.executionItems?.length || 0)}
+                </td>
                 <td className="min-w-64 text-sm text-slate-600 dark:text-slate-300">
                   <div>{detailsLabel(transaction)}</div>
                   {transaction.operationKind === 'CARD_OPERATION' &&
@@ -310,6 +536,11 @@ export default function TransactionsClient({
                     '—'
                   )}
                 </td>
+                <td>{transaction.createdBy || 'system'}</td>
+                <td className="font-bold">
+                  {executionStatusLabels[(transaction.executionStatus || 'COMPLETED') as ExecutionStatus] ||
+                    transaction.executionStatus}
+                </td>
                 <td>{remaining(transaction) === 0 ? 'مكتمل' : statusLabels[transaction.status] || transaction.status}</td>
                 <td>
                   <button
@@ -326,7 +557,7 @@ export default function TransactionsClient({
             ))}
             {!transactions.length ? (
               <tr>
-                <td colSpan={10} className="text-center text-slate-500">
+                <td colSpan={13} className="text-center text-slate-500">
                   {loading ? 'جار تحميل المعاملات...' : 'لا توجد معاملات'}
                 </td>
               </tr>
@@ -412,6 +643,46 @@ export default function TransactionsClient({
                   onChange={(event) => setEditor({ ...editor, draft: { ...editor.draft, executionType: event.target.value } })}
                 />
               </Field>
+              <Field label="حالة التنفيذ">
+                <select
+                  value={editor.draft.executionStatus}
+                  onChange={(event) =>
+                    setEditor({
+                      ...editor,
+                      draft: { ...editor.draft, executionStatus: event.target.value, notExecutedAction: '' },
+                    })
+                  }
+                >
+                  {(Object.keys(executionStatusLabels) as ExecutionStatus[]).map((status) => (
+                    <option key={status} value={status}>
+                      {executionStatusLabels[status]}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+              <Field label="ملاحظة التنفيذ">
+                <input
+                  value={editor.draft.executionNote}
+                  onChange={(event) => setEditor({ ...editor, draft: { ...editor.draft, executionNote: event.target.value } })}
+                />
+              </Field>
+              {editor.draft.executionStatus === 'NOT_EXECUTED' ? (
+                <Field label="طريقة التعامل مع المبلغ" className="md:col-span-2">
+                  <select
+                    value={editor.draft.notExecutedAction}
+                    onChange={(event) =>
+                      setEditor({ ...editor, draft: { ...editor.draft, notExecutedAction: event.target.value } })
+                    }
+                  >
+                    <option value="">اختر الإجراء</option>
+                    {Object.entries(notExecutedActionLabels).map(([value, label]) => (
+                      <option key={value} value={value}>
+                        {label}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+              ) : null}
               <Field label="المستلم">
                 <input
                   type="number"
@@ -458,6 +729,8 @@ export default function TransactionsClient({
                   onChange={(event) => setEditor({ ...editor, draft: { ...editor.draft, notes: event.target.value } })}
                 />
               </Field>
+
+              {renderExecutionItemsPanel()}
 
               <div className="rounded-lg border border-slate-200 p-4 dark:border-slate-800 md:col-span-2">
                 <div className="mb-2 text-sm font-black">تفاصيل العملية الخام</div>

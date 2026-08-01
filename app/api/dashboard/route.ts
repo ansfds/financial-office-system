@@ -6,7 +6,7 @@ export async function GET() {
   try {
     await requireSession();
 
-    const [people, transactions, recent, currencies, latestBalances, sheinAvailable, receivedCards] =
+    const [people, transactions, recent, currencies, latestBalances, sheinAvailable, sheinPending, receivedCards] =
       await Promise.all([
         db.person.count({ where: { deletedAt: null, status: 'ACTIVE' } }),
         db.financialTransaction.groupBy({
@@ -27,6 +27,12 @@ export async function GET() {
           ORDER BY "currencyId", "occurredAt" DESC, "createdAt" DESC
         `,
         db.sheinCard.count({ where: { status: 'AVAILABLE' } }),
+        db.transactionExecutionItem.count({
+          where: {
+            status: { not: 'COMPLETED' },
+            transaction: { operationKind: 'SHEIN_CARD_SALE', deletedAt: null, executionStatus: 'PENDING' },
+          },
+        }),
         db.receivedCustomerCard.count({ where: { status: { not: 'CANCELLED' } } }),
       ]);
 
@@ -42,6 +48,8 @@ export async function GET() {
       balances,
       inventory: {
         sheinAvailable,
+        sheinPending,
+        sheinDifference: sheinAvailable - sheinPending,
         receivedCards,
       },
     });

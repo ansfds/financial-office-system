@@ -2,7 +2,7 @@
 
 import { Fragment, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { ChevronDown, Eye, EyeOff, Loader2, Mail, MessageCircle, Plus, Save, X } from 'lucide-react';
+import { ChevronDown, Eye, EyeOff, Loader2, Mail, MessageCircle, Plus, Save, Search, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { formatDateTime, formatMoney, formatNumber, numberValue } from '@/lib/format';
 
@@ -11,7 +11,8 @@ const companyWhatsAppPhone = '218935085091';
 
 const statusLabels: Record<string, string> = {
   AVAILABLE: 'متوفر',
-  SOLD: 'تم البيع',
+  SOLD: 'مستخدم / منفذ',
+  USED: 'مستخدم / منفذ',
   RESERVED: 'محجوز',
   INVALID: 'غير صالح',
   CANCELLED: 'ملغي',
@@ -19,7 +20,7 @@ const statusLabels: Record<string, string> = {
 
 const statusOptions = [
   { value: 'AVAILABLE', label: 'متوفر' },
-  { value: 'SOLD', label: 'تم البيع' },
+  { value: 'USED', label: 'مستخدم / منفذ' },
   { value: 'RESERVED', label: 'محجوز' },
   { value: 'INVALID', label: 'غير صالح' },
 ];
@@ -77,6 +78,7 @@ export default function SheinCardsClient({
   const defaultSaleCurrencyId = currencies.find((currency) => currency.code === 'USD')?.id || currencies[0]?.id || '';
   const [cards, setCards] = useState<any[]>(initialCards);
   const [activeDenomination, setActiveDenomination] = useState<string>('all');
+  const [q, setQ] = useState('');
   const [openCardId, setOpenCardId] = useState('');
   const [savingId, setSavingId] = useState('');
   const [revealingId, setRevealingId] = useState('');
@@ -90,7 +92,6 @@ export default function SheinCardsClient({
     recipient: companyWhatsAppPhone,
     message: '',
   });
-  const [saleConfirmCard, setSaleConfirmCard] = useState<any | null>(null);
   const [form, setForm] = useState<SheinForm>(() => blankForm(defaultSaleCurrencyId));
 
   async function load() {
@@ -129,10 +130,24 @@ export default function SheinCardsClient({
     return [...fixedDenominations, ...extras];
   }, [summary]);
 
-  const visibleCards =
-    activeDenomination === 'all'
-      ? cards
-      : cards.filter((card) => String(Number(card.denomination)) === activeDenomination);
+  const visibleCards = (activeDenomination === 'all'
+    ? cards
+    : cards.filter((card) => String(Number(card.denomination)) === activeDenomination)
+  ).filter((card) => {
+    const term = q.trim().toLowerCase();
+    if (!term) return true;
+    return [
+      card.code,
+      String(Number(card.denomination)),
+      statusLabels[card.status] || card.status,
+      card.status,
+      card.buyer?.fullName,
+      card.linkedTransactionId,
+      card.linkedExecutionItemId,
+    ]
+      .filter(Boolean)
+      .some((value) => String(value).toLowerCase().includes(term));
+  });
 
   const allVisibleSelected = visibleCards.length > 0 && visibleCards.every((card) => selectedIds.includes(card.id));
 
@@ -184,22 +199,13 @@ export default function SheinCardsClient({
     });
   }
 
-  async function save(card: any, confirmedSale = false) {
-    if (card.status === 'SOLD' && (money(card.salePrice) <= 0 || !card.saleCurrencyId)) {
-      return toast.error('تغيير الحالة إلى تم البيع يتطلب سعر البيع وعملة الدفع');
-    }
-
-    if (card.status === 'SOLD' && !confirmedSale) {
-      setSaleConfirmCard({ ...card, saleNote: card.saleNote || card.notes || '' });
-      return;
-    }
-
+  async function save(card: any) {
     setSavingId(card.id);
     const response = await fetch(`/api/inventory/shein-cards/${card.id}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        status: card.status,
+        status: card.status === 'SOLD' ? 'USED' : card.status,
         salePrice: card.salePrice ? Number(card.salePrice) : null,
         saleCurrencyId: card.saleCurrencyId || null,
         buyerPersonId: card.buyerPersonId || null,
@@ -211,7 +217,6 @@ export default function SheinCardsClient({
     setSavingId('');
     if (!response.ok) return toast.error(data.error || 'تعذر تعديل الكرت');
     updateLocal(card.id, data);
-    setSaleConfirmCard(null);
     toast.success('تم حفظ الكرت');
     router.refresh();
   }
@@ -405,6 +410,18 @@ export default function SheinCardsClient({
         })}
       </div>
 
+      <div className="card grid gap-2 p-4 md:grid-cols-[1fr_auto]">
+        <input
+          value={q}
+          onChange={(event) => setQ(event.target.value)}
+          placeholder="بحث بالهاشتاق أو الفئة أو الحالة أو الزبون"
+        />
+        <div className="flex items-center justify-center gap-2 rounded-lg bg-slate-100 px-4 py-2.5 text-sm font-bold text-slate-600 dark:bg-slate-800 dark:text-slate-200">
+          <Search size={18} />
+          {formatNumber(visibleCards.length)}
+        </div>
+      </div>
+
       <div className="table-wrap">
         <table>
           <thead>
@@ -419,6 +436,7 @@ export default function SheinCardsClient({
               <th>سعر البيع</th>
               <th>عملة الدفع</th>
               <th>المشتري</th>
+              <th>المعاملة</th>
               <th>تاريخ الإضافة</th>
               <th>تاريخ البيع</th>
               <th>حفظ</th>
@@ -469,7 +487,7 @@ export default function SheinCardsClient({
                     </td>
                     <td>
                       <select
-                        value={card.status}
+                        value={card.status === 'SOLD' ? 'USED' : card.status}
                         onChange={(event) => updateLocal(card.id, { status: event.target.value })}
                       >
                         {statusOptions.map((status) => (
@@ -515,6 +533,16 @@ export default function SheinCardsClient({
                         ))}
                       </select>
                     </td>
+                    <td className="text-xs font-bold text-slate-500">
+                      {card.linkedTransactionId ? (
+                        <div className="grid gap-1">
+                          <span dir="ltr">{card.linkedTransactionId}</span>
+                          {card.linkedExecutionItemId ? <span dir="ltr">{card.linkedExecutionItemId}</span> : null}
+                        </div>
+                      ) : (
+                        '—'
+                      )}
+                    </td>
                     <td className="text-xs text-slate-500">{formatDateTime(card.createdAt)}</td>
                     <td className="text-xs text-slate-500">
                       {card.soldAt ? formatDateTime(card.soldAt) : '—'}
@@ -543,7 +571,7 @@ export default function SheinCardsClient({
                   </tr>
                   {openCardId === card.id ? (
                     <tr>
-                      <td colSpan={11} className="bg-slate-50 dark:bg-slate-950">
+                      <td colSpan={12} className="bg-slate-50 dark:bg-slate-950">
                         <div className="grid gap-2">
                           <div className="font-black">سجل شراء وبيع الكرت</div>
                           {card.logs?.length ? (
@@ -572,7 +600,7 @@ export default function SheinCardsClient({
             })}
             {!visibleCards.length ? (
               <tr>
-                <td colSpan={11} className="text-center text-slate-500">
+                <td colSpan={12} className="text-center text-slate-500">
                   لا توجد كروت في هذه الفئة
                 </td>
               </tr>
@@ -661,97 +689,6 @@ export default function SheinCardsClient({
         </div>
       ) : null}
 
-      {saleConfirmCard ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4">
-          <div className="w-full max-w-xl rounded-lg border border-slate-200 bg-white p-5 shadow-xl dark:border-slate-800 dark:bg-slate-900">
-            <div className="mb-5 flex items-start justify-between gap-4">
-              <div>
-                <h2 className="text-lg font-black">تأكيد بيع كرت شي إن</h2>
-                <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-                  بعد التأكيد سيتم تحديث الصندوق وتسجيل الحركة.
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => setSaleConfirmCard(null)}
-                className="rounded-lg p-2 text-slate-500 hover:bg-slate-100 hover:text-slate-900 dark:hover:bg-slate-800 dark:hover:text-slate-100"
-                aria-label="إغلاق نافذة تأكيد البيع"
-              >
-                <X size={20} />
-              </button>
-            </div>
-
-            <div className="grid gap-4 md:grid-cols-2">
-              <div>
-                <label className="mb-2 block text-sm font-bold text-slate-700 dark:text-slate-200">سعر البيع</label>
-                <input
-                  type="number"
-                  min="0"
-                  step="0.000001"
-                  value={saleConfirmCard.salePrice?.toString() || ''}
-                  onChange={(event) => setSaleConfirmCard({ ...saleConfirmCard, salePrice: event.target.value })}
-                />
-              </div>
-              <div>
-                <label className="mb-2 block text-sm font-bold text-slate-700 dark:text-slate-200">العملة</label>
-                <select
-                  value={saleConfirmCard.saleCurrencyId || ''}
-                  onChange={(event) => setSaleConfirmCard({ ...saleConfirmCard, saleCurrencyId: event.target.value })}
-                >
-                  <option value="">اختر العملة</option>
-                  {currencies.map((currency) => (
-                    <option key={currency.id} value={currency.id}>
-                      {currency.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div className="md:col-span-2">
-                <label className="mb-2 block text-sm font-bold text-slate-700 dark:text-slate-200">اسم الزبون اختياري</label>
-                <select
-                  value={saleConfirmCard.buyerPersonId || ''}
-                  onChange={(event) => setSaleConfirmCard({ ...saleConfirmCard, buyerPersonId: event.target.value })}
-                >
-                  <option value="">بدون</option>
-                  {people.map((person) => (
-                    <option key={person.id} value={person.id}>
-                      {person.customerNo ? `${person.customerNo} - ` : ''}
-                      {person.fullName}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div className="md:col-span-2">
-                <label className="mb-2 block text-sm font-bold text-slate-700 dark:text-slate-200">ملاحظة</label>
-                <textarea
-                  rows={3}
-                  value={saleConfirmCard.saleNote || ''}
-                  onChange={(event) => setSaleConfirmCard({ ...saleConfirmCard, saleNote: event.target.value })}
-                />
-              </div>
-            </div>
-
-            <div className="mt-5 grid gap-3 sm:grid-cols-2">
-              <button
-                type="button"
-                onClick={() => setSaleConfirmCard(null)}
-                className="rounded-lg border border-slate-200 px-4 py-3 font-bold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
-              >
-                إلغاء
-              </button>
-              <button
-                type="button"
-                onClick={() => save(saleConfirmCard, true)}
-                disabled={savingId === saleConfirmCard.id}
-                className="flex items-center justify-center gap-2 rounded-lg bg-indigo-600 px-4 py-3 font-bold text-white hover:bg-indigo-500 disabled:cursor-not-allowed disabled:bg-indigo-400"
-              >
-                {savingId === saleConfirmCard.id ? <Loader2 className="animate-spin" size={18} /> : <Save size={18} />}
-                تأكيد وتحديث الصندوق
-              </button>
-            </div>
-          </div>
-        </div>
-      ) : null}
     </div>
   );
 }
@@ -759,7 +696,7 @@ export default function SheinCardsClient({
 function logTypeLabel(type: string) {
   const labels: Record<string, string> = {
     PURCHASE: 'شراء',
-    SALE: 'بيع',
+    SALE: 'استخدام / تنفيذ',
     RESERVE: 'حجز',
     RELEASE: 'إتاحة',
     CANCEL: 'إلغاء',

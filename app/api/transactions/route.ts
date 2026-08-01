@@ -33,6 +33,18 @@ const OPERATION_KIND = {
   EXPENSE: 'EXPENSE',
 } as const;
 
+const EXECUTION_STATUS = {
+  COMPLETED: 'COMPLETED',
+  PENDING: 'PENDING',
+  NOT_EXECUTED: 'NOT_EXECUTED',
+} as const;
+
+const NOT_EXECUTED_ACTION = {
+  REFUND: 'REFUND',
+  CONVERT_TO_WALLET: 'CONVERT_TO_WALLET',
+  KEEP_WITH_NOTE: 'KEEP_WITH_NOTE',
+} as const;
+
 const transactionDetailedPaymentMethods = [...detailedPaymentMethods, 'CARD'] as [string, ...string[]];
 
 const operationKindSchema = z.enum([
@@ -44,6 +56,12 @@ const operationKindSchema = z.enum([
   OPERATION_KIND.MONEY_TRANSFER,
   OPERATION_KIND.SHEIN_CARD_SALE,
   OPERATION_KIND.EXPENSE,
+]);
+
+const executionStatusSchema = z.enum([
+  EXECUTION_STATUS.COMPLETED,
+  EXECUTION_STATUS.PENDING,
+  EXECUTION_STATUS.NOT_EXECUTED,
 ]);
 
 const requiredPositiveNumber = z.preprocess(
@@ -83,6 +101,12 @@ const transactionSchema = z.object({
   verificationReceived: z.coerce.boolean().default(false),
   secureInternalNote: z.string().trim().optional(),
   notes: z.string().trim().optional(),
+  executionStatus: executionStatusSchema.optional().default(EXECUTION_STATUS.COMPLETED),
+  executionNote: z.string().trim().optional(),
+  notExecutedAction: z
+    .enum([NOT_EXECUTED_ACTION.REFUND, NOT_EXECUTED_ACTION.CONVERT_TO_WALLET, NOT_EXECUTED_ACTION.KEEP_WITH_NOTE])
+    .optional()
+    .nullable(),
   manual: z
     .object({
       currencyId: z.string().min(1),
@@ -180,7 +204,32 @@ const transactionSchema = z.object({
     .optional(),
 });
 
-const transactionInclude = { person: true, currency: true, type: true };
+const executionItemInclude = {
+  customer: { select: { id: true, fullName: true, customerNo: true } },
+  sheinCard: {
+    select: {
+      id: true,
+      code: true,
+      denomination: true,
+      status: true,
+      buyerPersonId: true,
+      linkedTransactionId: true,
+      linkedExecutionItemId: true,
+      usedAt: true,
+    },
+  },
+  executedBy: { select: { id: true, username: true } },
+};
+
+const transactionInclude = {
+  person: true,
+  currency: true,
+  type: true,
+  executionItems: {
+    include: executionItemInclude,
+    orderBy: { createdAt: 'asc' as const },
+  },
+};
 
 function transactionNumber() {
   return `TX-${new Date().toISOString().slice(0, 10).replaceAll('-', '')}-${Math.random()
@@ -208,6 +257,10 @@ function normalizedPaymentMethod(method: string) {
 
 function jsonDetails(value: unknown) {
   return JSON.parse(JSON.stringify(value));
+}
+
+function executionItemNumber(index: number) {
+  return `#${String(index).padStart(5, '0')}`;
 }
 
 function occurredAt(value?: string) {
@@ -239,11 +292,13 @@ export async function GET(request: Request) {
     const url = new URL(request.url);
     const q = url.searchParams.get('q')?.trim() || '';
     const status = url.searchParams.get('status') || undefined;
+    const executionStatus = url.searchParams.get('executionStatus') || undefined;
     const page = Math.max(Number(url.searchParams.get('page') || 1), 1);
     const pageSize = Math.min(Math.max(Number(url.searchParams.get('pageSize') || 50), 10), 100);
     const where = {
       deletedAt: null,
       status: status as any,
+      executionStatus: executionStatus as any,
       OR: q
         ? [
             { number: { contains: q, mode: 'insensitive' as const } },
@@ -280,9 +335,17 @@ export async function GET(request: Request) {
           verificationReceived: true,
           secureInternalNote: true,
           notes: true,
+          executionStatus: true,
+          executionNote: true,
+          notExecutedAction: true,
           status: true,
+          createdBy: true,
           transactionAt: true,
           sheinPaymentMethod: true,
+          executionItems: {
+            include: executionItemInclude,
+            orderBy: { createdAt: 'asc' },
+          },
           person: { select: { id: true, fullName: true, customerNo: true } },
           currency: { select: { id: true, code: true, name: true, symbol: true } },
           type: { select: { id: true, name: true } },
@@ -307,7 +370,9 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
-    await requireSession();
+    const session = await requireSession();
+    const username = session.username || 'system';
+    const userId = session.userId || undefined;
 
     const parsed = transactionSchema.safeParse(await request.json());
     if (!parsed.success) return fail('تحقق من بيانات المعاملة');
@@ -353,6 +418,7 @@ export async function POST(request: Request) {
             dueAt: data.dueAt ? new Date(data.dueAt) : null,
             notes: data.notes || undefined,
             status: 'COMPLETED',
+            createdBy: username,
           },
         });
 
@@ -449,6 +515,7 @@ export async function POST(request: Request) {
             dueAt: data.dueAt ? new Date(data.dueAt) : null,
             notes: data.notes || undefined,
             status: 'COMPLETED',
+            createdBy: username,
           },
         });
 
@@ -553,6 +620,7 @@ export async function POST(request: Request) {
             dueAt: data.dueAt ? new Date(data.dueAt) : null,
             notes: data.notes || undefined,
             status: 'COMPLETED',
+            createdBy: username,
           },
         });
 
@@ -655,6 +723,7 @@ export async function POST(request: Request) {
             dueAt: data.dueAt ? new Date(data.dueAt) : null,
             notes: data.notes || undefined,
             status: 'COMPLETED',
+            createdBy: username,
           },
         });
 
@@ -739,6 +808,7 @@ export async function POST(request: Request) {
             dueAt: data.dueAt ? new Date(data.dueAt) : null,
             notes: data.notes || data.conversion.notes || undefined,
             status: 'COMPLETED',
+            createdBy: username,
           },
         });
 
@@ -842,6 +912,7 @@ export async function POST(request: Request) {
             dueAt: data.dueAt ? new Date(data.dueAt) : null,
             notes: data.notes || undefined,
             status: cancelled ? 'CANCELLED' : data.moneyTransfer.status === 'COMPLETED' ? 'COMPLETED' : 'IN_PROGRESS',
+            createdBy: username,
           },
         });
 
@@ -889,13 +960,20 @@ export async function POST(request: Request) {
           )} للكرت (${paymentLabel})`;
         const typeId = data.typeId || (await typeIdFor(tx, 'كروت شي إن'));
         const date = occurredAt(data.transactionAt);
+        const executionStatus = data.executionStatus || EXECUTION_STATUS.COMPLETED;
+        if (executionStatus === EXECUTION_STATUS.NOT_EXECUTED) {
+          throw new Error('INVALID_INITIAL_SHEIN_EXECUTION_STATUS');
+        }
+        const completeNow = executionStatus === EXECUTION_STATUS.COMPLETED;
 
-        const availableCards = await tx.sheinCard.findMany({
-          where: { denomination, status: 'AVAILABLE' },
-          orderBy: { createdAt: 'asc' },
-          take: cardCount,
-        });
-        if (availableCards.length > 0 && availableCards.length < cardCount) {
+        const availableCards = completeNow
+          ? await tx.sheinCard.findMany({
+              where: { denomination, status: 'AVAILABLE' },
+              orderBy: { createdAt: 'asc' },
+              take: cardCount,
+            })
+          : [];
+        if (completeNow && availableCards.length < cardCount) {
           throw new Error('NOT_ENOUGH_AVAILABLE_SHEIN_CARDS');
         }
 
@@ -915,6 +993,8 @@ export async function POST(request: Request) {
               pricePerCard: data.sheinSale.pricePerCard,
               totalAmount: totalAmount.toString(),
               linkedInventoryCards: availableCards.length,
+              executedCards: completeNow ? cardCount : 0,
+              executionStatus,
             }),
             currencyId: currency.id,
             agreedAmount: totalAmount,
@@ -927,6 +1007,9 @@ export async function POST(request: Request) {
             notes: data.notes || data.sheinSale.notes || undefined,
             sheinPaymentMethod: paymentMethod as any,
             status: 'COMPLETED',
+            executionStatus: executionStatus as any,
+            executionNote: data.executionNote || null,
+            createdBy: username,
           },
         });
 
@@ -955,7 +1038,7 @@ export async function POST(request: Request) {
             totalAmount,
             occurredAt: date,
             notes: data.notes || data.sheinSale.notes || null,
-            items: availableCards.length
+            items: completeNow
               ? {
                   create: availableCards.map((card) => ({ cardId: card.id })),
                 }
@@ -968,26 +1051,47 @@ export async function POST(request: Request) {
           data: { sourceId: sale.id },
         });
 
-        for (const card of availableCards) {
-          await tx.sheinCard.update({
-            where: { id: card.id },
+        for (let index = 0; index < cardCount; index += 1) {
+          const card = availableCards[index];
+          const item = await tx.transactionExecutionItem.create({
             data: {
-              status: 'SOLD',
-              salePrice: pricePerCard,
-              saleCurrencyId: currency.id,
-              salePaymentMethod: paymentMethod as any,
-              saleCashboxMovementId: movement.id,
-              buyerPersonId: data.personId,
-              soldAt: date,
-              logs: {
-                create: {
-                  type: 'SALE',
-                  amount: pricePerCard,
-                  note: executionType,
-                },
-              },
+              transactionId: created.id,
+              customerId: data.personId,
+              itemNumber: executionItemNumber(index + 1),
+              status: completeNow ? EXECUTION_STATUS.COMPLETED : EXECUTION_STATUS.PENDING,
+              sheinCardId: card?.id || null,
+              executedAt: completeNow ? date : null,
+              executedByUserId: completeNow ? userId : null,
+              note: completeNow ? executionType : null,
             },
           });
+
+          if (card) {
+            await tx.sheinCard.update({
+              where: { id: card.id },
+              data: {
+                status: 'USED',
+                salePrice: pricePerCard,
+                saleCurrencyId: currency.id,
+                salePaymentMethod: paymentMethod as any,
+                saleCashboxMovementId: movement.id,
+                buyerPersonId: data.personId,
+                linkedTransactionId: created.id,
+                linkedExecutionItemId: item.id,
+                usedAt: date,
+                usedByUserId: userId,
+                soldAt: date,
+                logs: {
+                  create: {
+                    type: 'SALE',
+                    amount: pricePerCard,
+                    note: executionType,
+                    createdBy: username,
+                  },
+                },
+              },
+            });
+          }
         }
 
         return tx.financialTransaction.findUniqueOrThrow({
@@ -1039,6 +1143,7 @@ export async function POST(request: Request) {
             dueAt: data.dueAt ? new Date(data.dueAt) : null,
             notes: data.notes || undefined,
             status: 'COMPLETED',
+            createdBy: username,
           },
         });
 
@@ -1098,6 +1203,7 @@ export async function POST(request: Request) {
           dueAt: data.dueAt ? new Date(data.dueAt) : null,
           executionType: data.executionType || data.description || null,
           status: statusOf(agreedAmount, receivedAmount, paidAmount, D(0), D(0)) as any,
+          createdBy: username,
         },
       });
 
@@ -1139,6 +1245,18 @@ export async function POST(request: Request) {
       newValue: auditValue,
       description: 'إضافة معاملة',
     });
+    if (operationKind === OPERATION_KIND.SHEIN_CARD_SALE && data.executionStatus === EXECUTION_STATUS.PENDING) {
+      await audit('TRANSACTION_EXECUTION_PENDING_CREATE', {
+        entityType: 'FinancialTransaction',
+        entityId: transaction.id,
+        newValue: {
+          transactionId: transaction.id,
+          executionStatus: data.executionStatus,
+          executionItems: (transaction as any).executionItems,
+        },
+        description: 'إنشاء معاملة كروت شي إن في انتظار التنفيذ',
+      });
+    }
 
     const transactionDetails = transaction.operationDetails as any;
     if (
@@ -1176,6 +1294,9 @@ export async function POST(request: Request) {
     if ((error as Error).message === 'SHEIN_SALE_REQUIRES_PERSON') return fail('اختر الزبون قبل بيع كروت شي إن');
     if ((error as Error).message === 'MISSING_SHEIN_SALE_DATA') return fail('أدخل بيانات بيع كروت شي إن');
     if ((error as Error).message === 'SHEIN_SALE_CURRENCY_NOT_FOUND') return fail('عملة الدفع المطلوبة غير مفعلة');
+    if ((error as Error).message === 'INVALID_INITIAL_SHEIN_EXECUTION_STATUS') {
+      return fail('اختر تم التنفيذ أو في انتظار اكتمال التنفيذ عند إضافة طلب كروت شي إن');
+    }
     if ((error as Error).message === 'NOT_ENOUGH_AVAILABLE_SHEIN_CARDS') {
       return fail('لا توجد كروت شي إن متاحة كافية لهذه الفئة في المخزن');
     }

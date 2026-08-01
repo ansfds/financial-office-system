@@ -7,13 +7,22 @@ export const revalidate = 0;
 export const fetchCache = 'force-no-store';
 
 const pageSize = 50;
+const executionStatuses = ['PENDING', 'COMPLETED', 'NOT_EXECUTED'] as const;
 
-export default async function TransactionsPage({ searchParams }: { searchParams: Promise<{ page?: string; q?: string }> }) {
+export default async function TransactionsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ page?: string; q?: string; executionStatus?: string }>;
+}) {
   const params = await searchParams;
   const page = Math.max(Number(params.page || 1), 1);
   const q = params.q?.trim() || '';
+  const executionStatus = executionStatuses.includes(params.executionStatus as any)
+    ? (params.executionStatus as (typeof executionStatuses)[number])
+    : 'PENDING';
   const where = {
     deletedAt: null,
+    executionStatus,
     OR: q
       ? [
           { number: { contains: q, mode: 'insensitive' as const } },
@@ -47,9 +56,21 @@ export default async function TransactionsPage({ searchParams }: { searchParams:
         verificationReceived: true,
         secureInternalNote: true,
         notes: true,
+        executionStatus: true,
+        executionNote: true,
+        notExecutedAction: true,
         status: true,
+        createdBy: true,
         transactionAt: true,
         sheinPaymentMethod: true,
+        executionItems: {
+          include: {
+            customer: { select: { id: true, fullName: true, customerNo: true } },
+            sheinCard: { select: { id: true, code: true, denomination: true, status: true, usedAt: true } },
+            executedBy: { select: { id: true, username: true } },
+          },
+          orderBy: { createdAt: 'asc' },
+        },
         person: { select: { id: true, fullName: true, customerNo: true } },
         currency: { select: { id: true, code: true, name: true, symbol: true } },
         type: { select: { id: true, name: true } },
@@ -69,6 +90,7 @@ export default async function TransactionsPage({ searchParams }: { searchParams:
         initialTotal={total}
         pageSize={pageSize}
         initialQuery={q}
+        initialExecutionStatus={executionStatus}
       />
     </Page>
   );

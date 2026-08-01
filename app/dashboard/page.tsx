@@ -26,7 +26,17 @@ const operationLabels: Record<string, string> = {
 export default async function Dashboard() {
   if (!(await getSession())) redirect('/login');
 
-  const [people, transactions, currencies, latestBalances, cashboxMovements, sheinAvailable, receivedCards, recent] =
+  const [
+    people,
+    transactions,
+    currencies,
+    latestBalances,
+    cashboxMovements,
+    sheinAvailable,
+    sheinPending,
+    receivedCards,
+    recent,
+  ] =
     await Promise.all([
       db.person.count({ where: { deletedAt: null, status: 'ACTIVE' } }),
       db.financialTransaction.count({ where: { deletedAt: null } }),
@@ -43,6 +53,12 @@ export default async function Dashboard() {
         },
       }),
       db.sheinCard.count({ where: { status: 'AVAILABLE' } }),
+      db.transactionExecutionItem.count({
+        where: {
+          status: { not: 'COMPLETED' },
+          transaction: { operationKind: 'SHEIN_CARD_SALE', deletedAt: null, executionStatus: 'PENDING' },
+        },
+      }),
       db.receivedCustomerCard.count({ where: { status: { not: 'CANCELLED' } } }),
       db.financialTransaction.findMany({
         where: { deletedAt: null },
@@ -65,6 +81,7 @@ export default async function Dashboard() {
       }),
     ]);
   const cashboxSummary = summarizeCashboxByMethod(cashboxMovements);
+  const sheinInventoryDifference = sheinAvailable - sheinPending;
 
   return (
     <Page title="لوحة التحكم">
@@ -73,6 +90,12 @@ export default async function Dashboard() {
         <Stat title="عدد المعاملات" value={formatNumber(transactions)} href="/transactions" />
         <Stat title="عدد كروت شي إن المتوفرة" value={formatNumber(sheinAvailable)} href="/inventory/shein-cards" />
         <Stat title="عدد البطاقات المستلمة" value={formatNumber(receivedCards)} href="/inventory/received-cards" />
+      </div>
+
+      <div className="mt-4 grid gap-4 sm:grid-cols-3">
+        <Stat title="كروت شي إن المتوفرة" value={formatNumber(sheinAvailable)} href="/inventory/shein-cards" />
+        <Stat title="طلبات شي إن في الانتظار" value={formatNumber(sheinPending)} href="/transactions?executionStatus=PENDING" />
+        <Stat title="فرق كروت شي إن" value={formatNumber(sheinInventoryDifference)} href="/transactions?executionStatus=PENDING" />
       </div>
 
       <div className="mt-4 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">

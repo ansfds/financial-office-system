@@ -17,6 +17,18 @@ enum TransactionStatus {
   CANCELLED
 }
 
+enum TransactionExecutionStatus {
+  COMPLETED
+  PENDING
+  NOT_EXECUTED
+}
+
+enum NotExecutedAction {
+  REFUND
+  CONVERT_TO_WALLET
+  KEEP_WITH_NOTE
+}
+
 enum MovementType {
   CASH_IN
   CASH_OUT
@@ -48,6 +60,7 @@ enum CustomerCategory {
 enum SheinCardStatus {
   AVAILABLE
   SOLD
+  USED
   RESERVED
   INVALID
   CANCELLED
@@ -110,6 +123,7 @@ model User {
   attempts     LoginAttempt[]
   auditLogs    AuditLog[]
   walletSettlements CustomerWalletSettlement[]
+  executedExecutionItems TransactionExecutionItem[] @relation("TransactionExecutionItemExecutor")
 
   @@index([isActive])
   @@map("Users")
@@ -134,6 +148,7 @@ model Person {
   cardBatches  ReceivedCardBatch[]
   cashboxMovements CashboxMovement[]   @relation("CashboxMovementPerson")
   walletSettlements CustomerWalletSettlement[]
+  transactionExecutionItems TransactionExecutionItem[] @relation("TransactionExecutionItemCustomer")
 
   @@index([fullName])
   @@index([phone])
@@ -203,6 +218,9 @@ model FinancialTransaction {
   verificationReceived Boolean               @default(false)
   secureInternalNote   String?
   notes                String?
+  executionStatus      TransactionExecutionStatus @default(COMPLETED)
+  executionNote        String?
+  notExecutedAction    NotExecutedAction?
   status               TransactionStatus     @default(IN_PROGRESS)
   statusOverride       Boolean               @default(false)
   createdBy            String                @default("system")
@@ -216,10 +234,12 @@ model FinancialTransaction {
   cashboxMovements     CashboxMovement[]
   attachments          Attachment[]
   sheinCardSale        SheinCardSale?
+  executionItems       TransactionExecutionItem[]
 
   @@index([transactionAt])
   @@index([createdAt])
   @@index([status])
+  @@index([executionStatus])
   @@index([personId])
   @@index([typeId])
   @@index([currencyId])
@@ -381,6 +401,31 @@ model CustomerWalletSettlement {
   @@index([username])
 }
 
+model TransactionExecutionItem {
+  id               String                     @id @default(cuid())
+  transactionId    String
+  customerId       String?
+  itemNumber       String
+  status           TransactionExecutionStatus @default(PENDING)
+  sheinCardId      String?                    @unique
+  executedAt       DateTime?
+  executedByUserId String?
+  note             String?
+  createdAt        DateTime                   @default(now())
+  updatedAt        DateTime                   @updatedAt
+  transaction      FinancialTransaction       @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+  customer         Person?                    @relation("TransactionExecutionItemCustomer", fields: [customerId], references: [id], onDelete: SetNull)
+  sheinCard        SheinCard?                 @relation("TransactionExecutionItemSheinCard", fields: [sheinCardId], references: [id], onDelete: SetNull)
+  executedBy       User?                      @relation("TransactionExecutionItemExecutor", fields: [executedByUserId], references: [id], onDelete: SetNull)
+
+  @@unique([transactionId, itemNumber])
+  @@index([transactionId])
+  @@index([customerId])
+  @@index([status])
+  @@index([executedByUserId])
+  @@index([createdAt])
+}
+
 model DeletedItem {
   id         String    @id @default(cuid())
   entityType String
@@ -410,6 +455,10 @@ model SheinCard {
   saleCurrencyId    String?
   saleCashboxMovementId String?
   salePaymentMethod SheinPaymentMethod?
+  linkedTransactionId String?
+  linkedExecutionItemId String? @unique
+  usedAt            DateTime?
+  usedByUserId      String?
   saleCurrency      Currency?       @relation("SheinCardSaleCurrency", fields: [saleCurrencyId], references: [id])
   supplier          String?
   buyerPersonId     String?
@@ -420,12 +469,15 @@ model SheinCard {
   soldAt            DateTime?
   logs              SheinCardLog[]
   saleItems         SheinCardSaleItem?
+  executionItemRefs TransactionExecutionItem[] @relation("TransactionExecutionItemSheinCard")
 
   @@index([denomination])
   @@index([status])
   @@index([createdAt])
   @@index([buyerPersonId])
   @@index([saleCurrencyId])
+  @@index([linkedTransactionId])
+  @@index([usedByUserId])
 }
 
 model SheinCardSale {
