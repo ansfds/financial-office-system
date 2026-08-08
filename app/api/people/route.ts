@@ -45,19 +45,31 @@ export async function GET(request: Request) {
               { customerNo: { contains: q, mode: 'insensitive' } },
               { externalId: { contains: q, mode: 'insensitive' } },
               { notes: { contains: q, mode: 'insensitive' } },
+              { cardBatches: { some: { cards: { some: { cardLast4: { contains: q } } } } } },
             ]
           : undefined,
       },
-      select: {
-        id: true,
-        customerNo: true,
-        fullName: true,
-        phone: true,
-        address: true,
-        externalId: true,
-        notes: true,
-        category: true,
-        createdAt: true,
+      include: {
+        cardBatches: {
+          include: {
+            currency: true,
+            cards: {
+              where: { deletedAt: null },
+              include: {
+                settlementCurrency: true,
+                operations: { where: { deletedAt: null }, orderBy: { occurredAt: 'desc' }, take: 20 },
+                stageLogs: { orderBy: { createdAt: 'desc' }, take: 8 },
+              },
+              orderBy: { sequence: 'asc' },
+            },
+          },
+          orderBy: { receivedAt: 'desc' },
+        },
+        cardDeliveries: {
+          where: { deletedAt: null },
+          include: { currency: true },
+          orderBy: { occurredAt: 'desc' },
+        },
       },
       orderBy: { createdAt: 'desc' },
       skip: (page - 1) * pageSize,

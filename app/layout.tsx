@@ -5,8 +5,8 @@ import ThemeProvider from '@/components/ThemeProvider';
 const logoUrl = 'https://i.postimg.cc/k4nQr4gx/680242520-122094061526346951-872670812110961262-n.jpg';
 
 export const metadata = {
-  title: 'منظومة محاسبة | شركة الوسيط العالمي',
-  description: 'إدارة المعاملات والصندوق والمخزن والديون',
+  title: 'منظومة الوسيط | إدارة الزبائن والبطاقات',
+  description: 'منظومة عربية لإدارة الزبائن والبطاقات وحسابات لنا وعلينا',
   icons: {
     icon: [{ url: logoUrl }],
     shortcut: [{ url: logoUrl }],

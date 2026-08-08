@@ -27,11 +27,27 @@ export async function GET(_: Request, { params }: { params: Promise<{ id: string
           orderBy: { transactionAt: 'desc' },
         },
         cardBatches: {
-          include: { cards: true, currency: true },
+          include: {
+            cards: {
+              where: { deletedAt: null },
+              include: {
+                settlementCurrency: true,
+                operations: { where: { deletedAt: null }, orderBy: { occurredAt: 'desc' }, take: 20 },
+                stageLogs: { orderBy: { createdAt: 'desc' }, take: 8 },
+              },
+              orderBy: { sequence: 'asc' },
+            },
+            currency: true,
+          },
           orderBy: { receivedAt: 'desc' },
         },
         sheinSales: {
           orderBy: { updatedAt: 'desc' },
+        },
+        cardDeliveries: {
+          where: { deletedAt: null },
+          include: { currency: true },
+          orderBy: { occurredAt: 'desc' },
         },
       },
     });
@@ -51,7 +67,32 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
     if (!parsed.success) return fail('تحقق من بيانات الزبون المدخلة');
 
     const oldValue = await db.person.findUnique({ where: { id } });
-    const person = await db.person.update({ where: { id }, data: parsed.data });
+    const person = await db.person.update({
+      where: { id },
+      data: parsed.data,
+      include: {
+        cardBatches: {
+          include: {
+            currency: true,
+            cards: {
+              where: { deletedAt: null },
+              include: {
+                settlementCurrency: true,
+                operations: { where: { deletedAt: null }, orderBy: { occurredAt: 'desc' }, take: 20 },
+                stageLogs: { orderBy: { createdAt: 'desc' }, take: 8 },
+              },
+              orderBy: { sequence: 'asc' },
+            },
+          },
+          orderBy: { receivedAt: 'desc' },
+        },
+        cardDeliveries: {
+          where: { deletedAt: null },
+          include: { currency: true },
+          orderBy: { occurredAt: 'desc' },
+        },
+      },
+    });
 
     await audit('PERSON_UPDATE', {
       entityType: 'Person',

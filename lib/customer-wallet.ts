@@ -15,8 +15,8 @@ export const walletBuckets = [
 ] as const;
 
 export const walletAccountLabels = {
-  CREDIT: 'رصيد للزبون',
-  DEBT: 'دين على الزبون',
+  CREDIT: 'علينا',
+  DEBT: 'لنا',
 } as const;
 
 export const walletSettlementDirectionLabels = {
@@ -55,6 +55,7 @@ type SettlementLike = {
   accountType: 'CREDIT' | 'DEBT';
   direction: 'ADD' | 'SUBTRACT';
   amount: unknown;
+  deletedAt?: Date | string | null;
 };
 
 export type WalletEffect = {
@@ -83,6 +84,32 @@ export type WalletSnapshot = {
     debt: Array<{ currency: CurrencyLike; amount: number }>;
   };
 };
+
+type RecalculationSettlement = {
+  id: string;
+  direction: 'ADD' | 'SUBTRACT';
+  amount: unknown;
+};
+
+export function recalculateSettlementBalances(
+  startingBalance: unknown,
+  settlements: RecalculationSettlement[],
+) {
+  let balance = D(startingBalance || 0);
+
+  return settlements.map((settlement) => {
+    const balanceBefore = balance;
+    balance = settlement.direction === 'ADD' ? balance.add(D(settlement.amount)) : balance.sub(D(settlement.amount));
+
+    if (balance.lt(0)) throw new Error('NEGATIVE_WALLET_BALANCE');
+
+    return {
+      id: settlement.id,
+      balanceBefore,
+      balanceAfter: balance,
+    };
+  });
+}
 
 function bucketKey(currencyId: string, paymentMethod: string) {
   return `${currencyId}:${paymentMethod}`;
@@ -214,6 +241,7 @@ export function buildWalletSnapshot(
   }
 
   for (const settlement of settlements) {
+    if (settlement.deletedAt) continue;
     const signedAmount =
       settlement.direction === 'ADD' ? numberValue(settlement.amount) : -numberValue(settlement.amount);
     addAmount(
@@ -272,6 +300,7 @@ export function walletAccountAmount(
   }
 
   for (const settlement of settlements) {
+    if (settlement.deletedAt) continue;
     if (
       settlement.currencyId === currencyId &&
       settlement.paymentMethod === paymentMethod &&

@@ -3,16 +3,11 @@
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import {
-  Archive,
-  BarChart3,
   LayoutDashboard,
   LogOut,
   Menu,
-  PlusCircle,
-  Receipt,
   Settings,
   ShieldCheck,
-  Trash2,
   Users,
   Wallet,
   X,
@@ -23,15 +18,10 @@ import ThemeSwitcher from './ThemeSwitcher';
 const logoUrl = 'https://i.postimg.cc/k4nQr4gx/680242520-122094061526346951-872670812110961262-n.jpg';
 
 const items = [
-  ['/dashboard', 'لوحة التحكم', LayoutDashboard],
-  ['/people', 'الزبائن', Users],
-  ['/new-transaction', 'إضافة معاملة', PlusCircle],
-  ['/transactions', 'المعاملات', Receipt],
-  ['/inventory', 'المخزن', Archive],
-  ['/cashbox', 'الصندوق', Wallet],
-  ['/reports', 'التقارير', BarChart3],
-  ['/audit', 'سجل التعديلات', ShieldCheck],
-  ['/trash', 'المحذوفات', Trash2],
+  ['/dashboard', 'الصفحة الرئيسية', LayoutDashboard],
+  ['/people', 'الزبائن والبطاقات', Users],
+  ['/accounts', 'لنا وعلينا', Wallet],
+  ['/audit', 'سجل العمليات', ShieldCheck],
   ['/settings', 'الإعدادات', Settings],
 ] as const;
 
@@ -66,9 +56,9 @@ export default function Shell({ children }: { children: React.ReactNode }) {
           <div className="flex items-center gap-3">
             <img src={logoUrl} alt="شعار شركة الوسيط العالمي" className="h-12 w-12 rounded-lg object-cover" />
             <div>
-              <div className="text-sm font-black leading-6">منظومة محاسبة</div>
+              <div className="text-sm font-black leading-6">منظومة الوسيط</div>
               <div className="text-xs leading-5 text-slate-500 dark:text-slate-400">
-                شركة الوسيط العالمي للحوالات المالية
+                إدارة الزبائن والبطاقات والحسابات
               </div>
             </div>
           </div>

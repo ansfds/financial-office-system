@@ -2,17 +2,16 @@
 
 import { useEffect } from 'react';
 
-export type ThemeMode = 'light' | 'dark' | 'bright';
+export type ThemeMode = 'light' | 'dark';
 
 const STORAGE_KEY = 'fos-theme';
-const THEMES: ThemeMode[] = ['light', 'dark', 'bright'];
+const THEMES: ThemeMode[] = ['light', 'dark'];
 
 export function applyTheme(theme: ThemeMode) {
   const root = document.documentElement;
   root.classList.remove('dark', 'theme-bright');
 
   if (theme === 'dark') root.classList.add('dark');
-  if (theme === 'bright') root.classList.add('theme-bright');
 
   root.dataset.theme = theme;
   localStorage.setItem(STORAGE_KEY, theme);

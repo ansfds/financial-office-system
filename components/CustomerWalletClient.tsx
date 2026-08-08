@@ -21,6 +21,8 @@ type CurrencyOption = {
 
 type Settlement = {
   id: string;
+  personId?: string;
+  currencyId?: string;
   paymentMethod: string;
   accountType: 'CREDIT' | 'DEBT';
   direction: 'ADD' | 'SUBTRACT';
@@ -30,6 +32,7 @@ type Settlement = {
   reason: string;
   note?: string | null;
   username?: string | null;
+  deletedAt?: string | Date | null;
   occurredAt: string | Date;
   currency: CurrencyOption;
 };
@@ -140,38 +143,49 @@ export default function CustomerWalletClient({
 
       <div className="grid gap-4 md:grid-cols-2">
         <div className="card p-5">
-          <div className="text-sm text-slate-500">إجمالي الرصيد الذي للزبون</div>
-          <div className="mt-2 text-2xl font-black text-emerald-600">{totalsLabel(snapshot.totals.credit)}</div>
+          <div className="text-sm text-slate-500">إجمالي لنا عند الزبون</div>
+          <div className="mt-2 text-2xl font-black text-emerald-600">{totalsLabel(snapshot.totals.debt)}</div>
         </div>
         <div className="card p-5">
-          <div className="text-sm text-slate-500">إجمالي الدين على الزبون</div>
-          <div className="mt-2 text-2xl font-black text-red-600">{totalsLabel(snapshot.totals.debt)}</div>
+          <div className="text-sm text-slate-500">إجمالي علينا للزبون</div>
+          <div className="mt-2 text-2xl font-black text-red-600">{totalsLabel(snapshot.totals.credit)}</div>
         </div>
       </div>
 
       <div className="card p-5">
-        <h3 className="mb-4 font-black">تفصيل الأرصدة حسب العملة وطريقة الدفع</h3>
+        <h3 className="mb-4 font-black">تفصيل الحساب حسب العملة وطريقة الدفع</h3>
         <div className="table-wrap">
           <table>
             <thead>
               <tr>
                 <th>الخانة</th>
-                <th>رصيد للزبون</th>
-                <th>دين على الزبون</th>
+                <th>لنا</th>
+                <th>علينا</th>
+                <th>الصافي</th>
               </tr>
             </thead>
             <tbody>
-              {snapshot.rows.map((row) => (
-                <tr key={`${row.currency.id}-${row.paymentMethod}`}>
-                  <td>{row.label}</td>
-                  <td className={row.credit > 0 ? 'font-bold text-emerald-600' : ''}>
-                    {formatMoney(row.credit, row.currency)}
-                  </td>
-                  <td className={row.debt > 0 ? 'font-bold text-red-600' : ''}>
-                    {formatMoney(row.debt, row.currency)}
-                  </td>
-                </tr>
-              ))}
+              {snapshot.rows.map((row) => {
+                const net = row.debt - row.credit;
+                return (
+                  <tr key={`${row.currency.id}-${row.paymentMethod}`}>
+                    <td>{row.label}</td>
+                    <td className={row.debt > 0 ? 'font-bold text-emerald-600' : ''}>
+                      {formatMoney(row.debt, row.currency)}
+                    </td>
+                    <td className={row.credit > 0 ? 'font-bold text-red-600' : ''}>
+                      {formatMoney(row.credit, row.currency)}
+                    </td>
+                    <td className={net > 0 ? 'font-black text-emerald-600' : net < 0 ? 'font-black text-red-600' : ''}>
+                      {net > 0
+                        ? `لنا عند الزبون ${formatMoney(net, row.currency)}`
+                        : net < 0
+                          ? `علينا للزبون ${formatMoney(Math.abs(net), row.currency)}`
+                          : 'الحساب مصفّى'}
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
@@ -196,7 +210,7 @@ export default function CustomerWalletClient({
               </tr>
             </thead>
             <tbody>
-              {settlements.map((settlement) => (
+              {settlements.filter((settlement) => !settlement.deletedAt).map((settlement) => (
                 <tr key={settlement.id}>
                   <td>{formatDateTime(settlement.occurredAt)}</td>
                   <td>{settlement.username || 'system'}</td>
@@ -244,8 +258,8 @@ export default function CustomerWalletClient({
                 <option value="SUBTRACT">خصم</option>
               </select>
               <select value={form.accountType} onChange={(event) => setForm({ ...form, accountType: event.target.value })}>
-                <option value="CREDIT">رصيد للزبون</option>
-                <option value="DEBT">دين على الزبون</option>
+                  <option value="DEBT">لنا</option>
+                  <option value="CREDIT">علينا</option>
               </select>
               <select
                 value={form.currencyId}

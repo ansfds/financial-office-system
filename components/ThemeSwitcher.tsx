@@ -1,13 +1,12 @@
 'use client';
 
-import { Moon, Sparkles, Sun } from 'lucide-react';
+import { Moon, Sun } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { applyTheme, getStoredTheme, ThemeMode } from './ThemeProvider';
 
 const modes: Array<{ value: ThemeMode; label: string; icon: typeof Sun }> = [
   { value: 'light', label: 'فاتح', icon: Sun },
   { value: 'dark', label: 'داكن', icon: Moon },
-  { value: 'bright', label: 'مشرق', icon: Sparkles },
 ];
 
 export default function ThemeSwitcher() {
@@ -23,7 +22,7 @@ export default function ThemeSwitcher() {
   }
 
   return (
-    <div className="grid grid-cols-3 gap-1 rounded-lg border border-slate-200 bg-slate-100 p-1 dark:border-slate-800 dark:bg-slate-950">
+    <div className="grid grid-cols-2 gap-1 rounded-lg border border-slate-200 bg-slate-100 p-1 dark:border-blue-900/60 dark:bg-slate-950">
       {modes.map(({ value, label, icon: Icon }) => (
         <button
           key={value}

@@ -19,18 +19,14 @@ html {
 }
 
 body {
-  @apply bg-slate-50 text-slate-900 antialiased transition-colors duration-300 dark:bg-slate-950 dark:text-slate-100;
+  @apply bg-slate-50 text-slate-900 antialiased transition-colors duration-200 dark:bg-[#071426] dark:text-slate-100;
   direction: rtl;
-}
-
-.theme-bright body {
-  @apply bg-amber-50 text-slate-950;
 }
 
 input,
 select,
 textarea {
-  @apply w-full rounded-lg border border-slate-200 bg-white px-3 py-2.5 outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 disabled:cursor-not-allowed disabled:bg-slate-100 dark:border-slate-700 dark:bg-slate-900 dark:focus:ring-indigo-950;
+  @apply w-full rounded-lg border border-slate-200 bg-white px-3 py-2.5 outline-none transition duration-200 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 disabled:cursor-not-allowed disabled:bg-slate-100 dark:border-blue-900/70 dark:bg-[#0d1d33] dark:focus:border-blue-400 dark:focus:ring-blue-950;
 }
 
 input[type='checkbox'] {
@@ -43,15 +39,11 @@ a {
 }
 
 .card {
-  @apply rounded-lg border border-slate-200 bg-white shadow-card transition duration-200 dark:border-slate-800 dark:bg-slate-900;
-}
-
-.theme-bright .card {
-  @apply border-amber-200 bg-white shadow-amber-900/10;
+  @apply rounded-lg border border-slate-200 bg-white shadow-card transition duration-200 dark:border-blue-900/60 dark:bg-[#0d1d33] dark:shadow-blue-950/20;
 }
 
 .table-wrap {
-  @apply overflow-x-auto rounded-lg border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900;
+  @apply overflow-x-auto rounded-lg border border-slate-200 bg-white dark:border-blue-900/60 dark:bg-[#0d1d33];
 }
 
 table {
@@ -70,16 +62,19 @@ tbody tr {
   @apply transition hover:bg-slate-50 dark:hover:bg-slate-800/60;
 }
 
-.theme-bright th {
-  @apply bg-amber-100 text-amber-950;
-}
-
-.theme-bright tbody tr:hover {
-  @apply bg-amber-50;
-}
-
 .page-enter {
   animation: page-enter 220ms ease-out both;
+}
+
+@keyframes drawer-in {
+  from {
+    opacity: 0;
+    transform: translateX(-24px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
 }
 
 @keyframes page-enter {

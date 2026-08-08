@@ -14,7 +14,15 @@ export default async function ReceivedCardsPage() {
       include: {
         person: true,
         currency: true,
-        cards: { include: { settlementCurrency: true }, orderBy: { sequence: 'asc' } },
+        cards: {
+          where: { deletedAt: null },
+          include: {
+            settlementCurrency: true,
+            operations: { where: { deletedAt: null }, orderBy: { occurredAt: 'desc' }, take: 12 },
+            stageLogs: { orderBy: { createdAt: 'desc' }, take: 8 },
+          },
+          orderBy: { sequence: 'asc' },
+        },
       },
       orderBy: { receivedAt: 'desc' },
       take: 200,

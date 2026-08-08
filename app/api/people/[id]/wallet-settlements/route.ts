@@ -19,6 +19,8 @@ const settlementSchema = z.object({
   amount: z.coerce.number().positive(),
   reason: z.string().trim().min(2),
   note: z.string().trim().optional().nullable(),
+  movementKind: z.enum(['ADJUSTMENT', 'REPAYMENT']).default('ADJUSTMENT'),
+  settlementMethod: z.string().trim().optional().nullable(),
 });
 
 export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -41,13 +43,16 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       if (!currency) throw new Error('INVALID_CURRENCY');
 
       const paymentMethod = normalizeWalletPaymentMethod(input.paymentMethod, currency.code);
+      if (input.movementKind === 'REPAYMENT' && input.direction !== 'SUBTRACT') {
+        throw new Error('REPAYMENT_MUST_SUBTRACT');
+      }
       const [transactions, settlements] = await Promise.all([
         tx.financialTransaction.findMany({
           where: { personId: id, deletedAt: null },
           include: { currency: true },
         }),
         tx.customerWalletSettlement.findMany({
-          where: { personId: id },
+          where: { personId: id, deletedAt: null },
           include: { currency: true },
         }),
       ]);
@@ -76,11 +81,32 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
           balanceAfter,
           reason: input.reason,
           note: input.note || null,
+          movementKind: input.movementKind,
+          settlementMethod: input.settlementMethod || null,
           userId: session.userId,
           username: session.username,
         },
         include: { currency: true, person: true },
       });
+
+      if (input.movementKind === 'REPAYMENT') {
+        await tx.customerAccountRepayment.create({
+          data: {
+            settlementId: created.id,
+            personId: id,
+            currencyId: currency.id,
+            paymentMethod,
+            accountType: input.accountType,
+            amount: delta,
+            balanceBefore,
+            balanceAfter,
+            reason: input.reason,
+            note: input.note || null,
+            userId: session.userId,
+            username: session.username,
+          },
+        });
+      }
 
       await tx.auditLog.create({
         data: {
@@ -109,6 +135,8 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
             balanceAfter: balanceAfter.toString(),
             reason: input.reason,
             note: input.note || null,
+            movementKind: input.movementKind,
+            settlementMethod: input.settlementMethod || null,
           },
           description: `${walletSettlementDirectionLabels[input.direction]} ${walletAccountLabels[input.accountType]} - ${person.fullName}`,
           ip: meta.ip,
@@ -119,13 +147,16 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       return created;
     });
 
-    revalidateFinancePaths([`/people/${id}`]);
+    revalidateFinancePaths([`/people/${id}`, '/accounts']);
     return ok(settlement, 201);
   } catch (error) {
     if ((error as Error).message === 'PERSON_NOT_FOUND') return fail('الزبون غير موجود', 404);
     if ((error as Error).message === 'INVALID_CURRENCY') return fail('اختر عملة صحيحة');
     if ((error as Error).message === 'NEGATIVE_WALLET_BALANCE') {
       return fail('لا يمكن خصم مبلغ أكبر من الرصيد الحالي', 400);
+    }
+    if ((error as Error).message === 'REPAYMENT_MUST_SUBTRACT') {
+      return fail('حركة السداد يجب أن تكون خصمًا من الرصيد الحالي');
     }
     return apiError(error);
   }

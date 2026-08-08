@@ -1,15 +1,34 @@
 'use client';
 
-import Link from 'next/link';
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Edit3, Info, Save, Search, UserPlus, X } from 'lucide-react';
+import {
+  Archive,
+  ChevronLeft,
+  ChevronRight,
+  Edit3,
+  Eye,
+  Loader2,
+  Plus,
+  Save,
+  Search,
+  Trash2,
+  UserPlus,
+  X,
+} from 'lucide-react';
 import { toast } from 'sonner';
-import { formatDate } from '@/lib/format';
+import { formatDate, formatDateTime, formatMoney, numberValue } from '@/lib/format';
+import { detailedPaymentLabels } from '@/lib/payment-methods';
+import FastCardEntryModal from '@/components/FastCardEntryModal';
+import CardOperationModal from '@/components/CardOperationModal';
+import CustomerDeliveryModal from '@/components/CustomerDeliveryModal';
+import { cardOperationTypeLabels } from '@/lib/customer-cards';
 
-const categoryLabels: Record<string, string> = {
-  VIP: 'عميل مميز',
-  REGULAR: 'عميل عادي',
+type CurrencyOption = {
+  id: string;
+  code: string;
+  name: string;
+  symbol: string;
 };
 
 type PersonForm = {
@@ -21,6 +40,21 @@ type PersonForm = {
   category: string;
 };
 
+type CardDraft = {
+  bankName?: string;
+  cardLast4?: string;
+  valueUsd?: string;
+  agreedAmount?: string;
+  receivedAmount?: string;
+  settlementAmount?: string;
+  settlementPaymentMethod?: string;
+  status?: string;
+  notes?: string;
+  stageAmount?: string;
+  stageNote?: string;
+  currentStage?: string;
+};
+
 const blankForm: PersonForm = {
   fullName: '',
   phone: '',
@@ -29,6 +63,48 @@ const blankForm: PersonForm = {
   externalId: '',
   category: 'REGULAR',
 };
+
+const stageLabels = [
+  'بطاقة جديدة',
+  'تم سحب الكرت الأول',
+  'تم سحب الكرت الثاني',
+  'تم سحب الكرت الثالث',
+  'تم سحب الكرت الرابع',
+  'تمت تصفية البطاقة',
+  'تم تسليم أو استلام القيمة',
+];
+
+const statusLabels: Record<string, string> = {
+  RECEIVED: 'جديدة',
+  IN_SETTLEMENT: 'قيد السحب',
+  PARTIAL: 'قيد السحب',
+  SETTLED: 'تمت التصفية',
+  COMPLETED: 'تم استلام القيمة',
+  CANCELLED: 'مرفوضة أو متوقفة',
+};
+
+const statusClasses: Record<string, string> = {
+  RECEIVED: 'bg-blue-50 text-blue-700 ring-blue-200 dark:bg-blue-950 dark:text-blue-200 dark:ring-blue-800',
+  IN_SETTLEMENT:
+    'bg-orange-50 text-orange-700 ring-orange-200 dark:bg-orange-950 dark:text-orange-200 dark:ring-orange-800',
+  PARTIAL:
+    'bg-orange-50 text-orange-700 ring-orange-200 dark:bg-orange-950 dark:text-orange-200 dark:ring-orange-800',
+  SETTLED:
+    'bg-emerald-50 text-emerald-700 ring-emerald-200 dark:bg-emerald-950 dark:text-emerald-200 dark:ring-emerald-800',
+  COMPLETED:
+    'bg-violet-50 text-violet-700 ring-violet-200 dark:bg-violet-950 dark:text-violet-200 dark:ring-violet-800',
+  CANCELLED: 'bg-red-50 text-red-700 ring-red-200 dark:bg-red-950 dark:text-red-200 dark:ring-red-800',
+};
+
+const statusOptions = [
+  { value: 'RECEIVED', label: 'جديدة' },
+  { value: 'IN_SETTLEMENT', label: 'قيد السحب' },
+  { value: 'SETTLED', label: 'تمت التصفية' },
+  { value: 'COMPLETED', label: 'تم استلام القيمة' },
+  { value: 'CANCELLED', label: 'مرفوضة أو متوقفة' },
+];
+
+const settlementMethods = ['USD_CASH', 'USD_TRANSFER', 'USD_CARD', 'LYD_CASH', 'LYD_TRANSFER', 'LYD_OFFICE_TRANSFER', 'LYD_CARD'];
 
 function formFromPerson(person: any): PersonForm {
   return {
@@ -41,43 +117,195 @@ function formFromPerson(person: any): PersonForm {
   };
 }
 
-export default function PeopleClient({ initialPeople }: { initialPeople: any[] }) {
+function allCards(person: any) {
+  return (person.cardBatches || []).flatMap((batch: any) =>
+    (batch.cards || []).map((card: any) => ({
+      ...card,
+      batchId: batch.id,
+      batch,
+      person,
+      currency: card.settlementCurrency || batch.currency,
+    })),
+  );
+}
+
+function cardCode(card: any) {
+  return card.publicCode || `#C${String(card.sequence || 0).padStart(4, '0')}`;
+}
+
+function cardOriginal(card: any) {
+  return numberValue(card.valueUsd) > 0 ? numberValue(card.valueUsd) : numberValue(card.agreedAmount);
+}
+
+function cardRemaining(card: any) {
+  if (card.remainingAmount !== undefined && card.remainingAmount !== null) return numberValue(card.remainingAmount);
+  return Math.max(cardOriginal(card) - numberValue(card.receivedAmount), 0);
+}
+
+function personSummary(person: any) {
+  const cards = allCards(person);
+  const active = cards.filter((card: any) => ['RECEIVED', 'IN_SETTLEMENT', 'PARTIAL'].includes(card.status)).length;
+  const completed = cards.filter((card: any) => ['SETTLED', 'COMPLETED'].includes(card.status)).length;
+  const rejected = cards.filter((card: any) => card.status === 'CANCELLED').length;
+  const lastUpdate = [person.updatedAt, ...cards.map((card: any) => card.updatedAt)]
+    .filter(Boolean)
+    .map((value) => new Date(value).getTime())
+    .sort((a, b) => b - a)[0];
+
+  return {
+    cards,
+    totalCards: cards.length,
+    originalTotal: cards.reduce((sum: number, card: any) => sum + cardOriginal(card), 0),
+    agreedTotal: cards.reduce((sum: number, card: any) => sum + numberValue(card.agreedAmount), 0),
+    active,
+    completed,
+    rejected,
+    lastUpdate: lastUpdate ? new Date(lastUpdate) : person.updatedAt || person.createdAt,
+  };
+}
+
+function customerDeliverySummary(person: any, currencies: CurrencyOption[]) {
+  const currencyById = new Map(currencies.map((currency) => [currency.id, currency]));
+  const rows = new Map<string, { currency: CurrencyOption; agreed: number; delivered: number; remaining: number }>();
+
+  for (const card of allCards(person)) {
+    if (card.status === 'CANCELLED') continue;
+    const currency = card.settlementCurrency || card.batch?.currency || card.currency;
+    if (!currency?.id) continue;
+    const current =
+      rows.get(currency.id) ||
+      {
+        currency: currencyById.get(currency.id) || currency,
+        agreed: 0,
+        delivered: 0,
+        remaining: 0,
+      };
+    current.agreed += numberValue(card.agreedAmount);
+    rows.set(currency.id, current);
+  }
+
+  for (const delivery of person.cardDeliveries || []) {
+    const currency = delivery.currency || currencyById.get(delivery.currencyId);
+    if (!currency?.id) continue;
+    const current =
+      rows.get(currency.id) ||
+      {
+        currency,
+        agreed: 0,
+        delivered: 0,
+        remaining: 0,
+      };
+    current.delivered += numberValue(delivery.amount);
+    rows.set(currency.id, current);
+  }
+
+  return Array.from(rows.values()).map((row) => ({ ...row, remaining: Math.max(row.agreed - row.delivered, 0) }));
+}
+
+function defaultCurrencyId(currencies: CurrencyOption[]) {
+  return currencies.find((currency) => currency.code === 'USD')?.id || currencies[0]?.id || '';
+}
+
+function normalizeDraftValue(value: unknown) {
+  return value === null || value === undefined ? '' : String(value);
+}
+
+function cardPayload(card: any, draft: CardDraft) {
+  return {
+    bankName: draft.bankName ?? card.bankName ?? null,
+    cardLast4: draft.cardLast4 ?? card.cardLast4 ?? null,
+    valueUsd: Number(draft.valueUsd ?? numberValue(card.valueUsd)),
+    agreedAmount: Number(draft.agreedAmount ?? numberValue(card.agreedAmount)),
+    receivedAmount: Number(draft.receivedAmount ?? numberValue(card.receivedAmount)),
+    settlementAmount:
+      draft.settlementAmount !== undefined
+        ? Number(draft.settlementAmount || 0)
+        : card.settlementAmount
+          ? numberValue(card.settlementAmount)
+          : null,
+    settlementPaymentMethod: draft.settlementPaymentMethod ?? card.settlementPaymentMethod ?? null,
+    status: draft.status ?? card.status,
+    notes: draft.notes ?? card.notes ?? null,
+  };
+}
+
+export default function PeopleClient({
+  initialPeople,
+  currencies,
+}: {
+  initialPeople: any[];
+  currencies: CurrencyOption[];
+}) {
   const router = useRouter();
   const [items, setItems] = useState<any[]>(initialPeople);
   const [q, setQ] = useState('');
   const [loading, setLoading] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [editingPerson, setEditingPerson] = useState<any | null>(null);
+  const [savingPerson, setSavingPerson] = useState(false);
   const [form, setForm] = useState<PersonForm>(blankForm);
+  const [editingPerson, setEditingPerson] = useState<any | null>(null);
   const [editForm, setEditForm] = useState<PersonForm>(blankForm);
+  const [selectedPersonId, setSelectedPersonId] = useState('');
+  const [drafts, setDrafts] = useState<Record<string, CardDraft>>({});
+  const [savingCards, setSavingCards] = useState<Record<string, boolean>>({});
+  const [selectedCards, setSelectedCards] = useState<Set<string>>(new Set());
+  const [statusFilter, setStatusFilter] = useState('ALL');
+  const [batchForm, setBatchForm] = useState({
+    cardCount: '1',
+    valueUsdPerCard: '',
+    agreedAmountPerCard: '',
+    currencyId: defaultCurrencyId(currencies),
+    commonBankName: '',
+    notes: '',
+  });
+  const [fastEntryOpen, setFastEntryOpen] = useState(false);
+  const [operationModal, setOperationModal] = useState<{ card: any; operation?: any | null; initialType?: string } | null>(null);
+  const [deliveryOpen, setDeliveryOpen] = useState(false);
 
-  async function load(search = q) {
-    setLoading(true);
-    const response = await fetch(`/api/people?q=${encodeURIComponent(search)}`, { cache: 'no-store' });
-    const data = await response.json();
-    setLoading(false);
-    if (!response.ok) return toast.error(data.error || 'تعذر تحميل الزبائن');
-    setItems(Array.isArray(data) ? data : []);
-  }
+  const selectedPerson = useMemo(
+    () => items.find((person) => person.id === selectedPersonId) || null,
+    [items, selectedPersonId],
+  );
+  const selectedPersonCards = selectedPerson ? personSummary(selectedPerson).cards : [];
+  const visibleCards = selectedPersonCards.filter((card: any) => statusFilter === 'ALL' || card.status === statusFilter);
+  const selectedDeliveryRows = selectedPerson ? customerDeliverySummary(selectedPerson, currencies) : [];
 
   useEffect(() => {
     setItems(initialPeople);
   }, [initialPeople]);
 
+  useEffect(() => {
+    const handle = window.setTimeout(() => {
+      load(q);
+    }, 220);
+
+    return () => window.clearTimeout(handle);
+  }, [q]);
+
+  async function load(search = q) {
+    setLoading(true);
+    const response = await fetch(`/api/people?q=${encodeURIComponent(search)}`, { cache: 'no-store' });
+    const data = await response.json().catch(() => []);
+    setLoading(false);
+    if (!response.ok) return toast.error(data.error || 'تعذر تحميل الزبائن');
+    setItems(Array.isArray(data) ? data : []);
+  }
+
   async function add(event: React.FormEvent) {
     event.preventDefault();
+    if (!form.fullName.trim()) return toast.error('أدخل اسم الزبون');
+
     const response = await fetch('/api/people', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(form),
     });
-    const result = await response.json();
+    const result = await response.json().catch(() => ({}));
 
     if (!response.ok) return toast.error(result.error || 'تعذر إضافة الزبون');
 
     toast.success('تمت إضافة الزبون');
     setForm(blankForm);
-    load('');
+    await load('');
     router.refresh();
   }
 
@@ -86,17 +314,11 @@ export default function PeopleClient({ initialPeople }: { initialPeople: any[] }
     setEditForm(formFromPerson(person));
   }
 
-  function closeEdit() {
-    if (saving) return;
-    setEditingPerson(null);
-    setEditForm(blankForm);
-  }
-
   async function saveEdit(event: React.FormEvent) {
     event.preventDefault();
     if (!editingPerson) return;
 
-    setSaving(true);
+    setSavingPerson(true);
     const response = await fetch(`/api/people/${editingPerson.id}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
@@ -109,28 +331,217 @@ export default function PeopleClient({ initialPeople }: { initialPeople: any[] }
         category: editForm.category,
       }),
     });
-    const result = await response.json();
-    setSaving(false);
+    const result = await response.json().catch(() => ({}));
+    setSavingPerson(false);
 
     if (!response.ok) return toast.error(result.error || 'تعذر تعديل الزبون');
 
     setItems((current) => current.map((person) => (person.id === result.id ? result : person)));
     setEditingPerson(null);
-    setEditForm(blankForm);
     toast.success('تم تعديل بيانات الزبون');
+    router.refresh();
+  }
+
+  async function archivePerson(person: any) {
+    if (!window.confirm(`هل تريد أرشفة الزبون ${person.fullName}؟ لن يتم حذف بياناته نهائيًا.`)) return;
+    const response = await fetch(`/api/people/${person.id}`, { method: 'DELETE' });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) return toast.error(result.error || 'تعذر أرشفة الزبون');
+    setItems((current) => current.filter((item) => item.id !== person.id));
+    if (selectedPersonId === person.id) setSelectedPersonId('');
+    toast.success('تمت أرشفة الزبون');
+    router.refresh();
+  }
+
+  function setCardDraft(cardId: string, patch: CardDraft) {
+    setDrafts((current) => ({ ...current, [cardId]: { ...current[cardId], ...patch } }));
+  }
+
+  function replaceCard(updated: any) {
+    const personId = updated.batch?.personId;
+    if (!personId) return load(q);
+
+    setItems((current) =>
+      current.map((person) => {
+        if (person.id !== personId) return person;
+        return {
+          ...person,
+          cardBatches: (person.cardBatches || []).map((batch: any) =>
+            batch.id === updated.batchId || batch.id === updated.batch?.id
+              ? {
+                  ...batch,
+                  cards: (batch.cards || []).map((card: any) => (card.id === updated.id ? { ...card, ...updated } : card)),
+                }
+              : batch,
+          ),
+        };
+      }),
+    );
+  }
+
+  function handleFastEntrySaved(batch: any) {
+    setFastEntryOpen(false);
+    setItems((current) => {
+      const exists = current.some((person) => person.id === batch.personId);
+      if (!exists) {
+        return [{ ...batch.person, cardBatches: [batch], cardDeliveries: [] }, ...current];
+      }
+
+      return current.map((person) =>
+        person.id === batch.personId ? { ...person, cardBatches: [batch, ...(person.cardBatches || [])] } : person,
+      );
+    });
+    setSelectedPersonId(batch.personId);
+    router.refresh();
+  }
+
+  async function deleteCardOperation(card: any, operation: any) {
+    if (!window.confirm('هل تريد حذف هذه العملية منطقيًا وإعادة حساب رصيد البطاقة؟')) return;
+    const response = await fetch(`/api/inventory/received-cards/${card.id}/operations/${operation.id}`, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ reason: 'حذف من واجهة الزبائن والبطاقات' }),
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) return toast.error(result.error || 'تعذر حذف عملية البطاقة');
+    replaceCard(result);
+    toast.success('تم حذف العملية وإعادة حساب الرصيد');
+    router.refresh();
+  }
+
+  async function saveCard(card: any, extra: Record<string, unknown> = {}) {
+    if (savingCards[card.id]) return;
+    setSavingCards((current) => ({ ...current, [card.id]: true }));
+    const draft = drafts[card.id] || {};
+    const response = await fetch(`/api/inventory/received-cards/${card.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...cardPayload(card, draft), ...extra }),
+    });
+    const result = await response.json().catch(() => ({}));
+    setSavingCards((current) => ({ ...current, [card.id]: false }));
+
+    if (!response.ok) return toast.error(result.error || 'تعذر حفظ البطاقة');
+    replaceCard(result);
+    setDrafts((current) => ({ ...current, [card.id]: {} }));
+    if (result.cashboxWarning) toast.warning(result.cashboxWarning);
+    toast.success('تم حفظ البطاقة');
+    router.refresh();
+  }
+
+  async function deleteCard(card: any) {
+    if (!window.confirm(`هل تريد حذف البطاقة ${cardCode(card)}؟ سيتم أرشفتها فقط.`)) return;
+    const response = await fetch(`/api/inventory/received-cards/${card.id}`, { method: 'DELETE' });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) return toast.error(result.error || 'تعذر حذف البطاقة');
+    await load(q);
+    toast.success('تم حذف البطاقة منطقيًا');
+    router.refresh();
+  }
+
+  async function addCards(event: React.FormEvent) {
+    event.preventDefault();
+    if (!selectedPerson) return;
+    if (!batchForm.agreedAmountPerCard) return toast.error('أدخل السعر المتفق عليه');
+
+    const response = await fetch('/api/inventory/received-cards', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        personId: selectedPerson.id,
+        currencyId: batchForm.currencyId || null,
+        cardCount: Number(batchForm.cardCount || 1),
+        valueUsdPerCard: Number(batchForm.valueUsdPerCard || 0),
+        agreedAmountPerCard: Number(batchForm.agreedAmountPerCard),
+        commonBankName: batchForm.commonBankName || undefined,
+        notes: batchForm.notes || undefined,
+      }),
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) return toast.error(result.error || 'تعذر إضافة البطاقات');
+
+    setItems((current) =>
+      current.map((person) =>
+        person.id === selectedPerson.id ? { ...person, cardBatches: [result, ...(person.cardBatches || [])] } : person,
+      ),
+    );
+    setBatchForm({
+      cardCount: '1',
+      valueUsdPerCard: '',
+      agreedAmountPerCard: '',
+      currencyId: defaultCurrencyId(currencies),
+      commonBankName: '',
+      notes: '',
+    });
+    toast.success('تمت إضافة البطاقات وربطها بالزبون');
+    router.refresh();
+  }
+
+  async function handleDeliverySaved() {
+    setDeliveryOpen(false);
+    await load(q);
+    router.refresh();
+  }
+
+  function toggleCard(cardId: string) {
+    setSelectedCards((current) => {
+      const next = new Set(current);
+      if (next.has(cardId)) next.delete(cardId);
+      else next.add(cardId);
+      return next;
+    });
+  }
+
+  async function bulkStageNext() {
+    const ids = Array.from(selectedCards);
+    if (!ids.length) return toast.error('حدد بطاقة واحدة على الأقل');
+    if (!window.confirm(`سيتم نقل ${ids.length} بطاقة إلى المرحلة التالية. هل تريد المتابعة؟`)) return;
+
+    await Promise.all(
+      ids.map((id) =>
+        fetch(`/api/inventory/received-cards/${id}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ stageAction: 'NEXT', stageAmount: 0 }),
+        }),
+      ),
+    );
+    setSelectedCards(new Set());
+    await load(q);
+    toast.success('تم تحديث البطاقات المحددة');
+    router.refresh();
+  }
+
+  async function bulkReject() {
+    const ids = Array.from(selectedCards);
+    if (!ids.length) return toast.error('حدد بطاقة واحدة على الأقل');
+    if (!window.confirm(`سيتم نقل ${ids.length} بطاقة إلى حالة مرفوضة أو متوقفة.`)) return;
+
+    await Promise.all(
+      ids.map((id) =>
+        fetch(`/api/inventory/received-cards/${id}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ status: 'CANCELLED' }),
+        }),
+      ),
+    );
+    setSelectedCards(new Set());
+    await load(q);
+    toast.success('تم تحديث البطاقات المحددة');
     router.refresh();
   }
 
   return (
     <>
-      <form onSubmit={add} className="card mb-6 grid gap-4 p-5 md:grid-cols-2">
+      <form onSubmit={add} className="card mb-5 grid gap-4 p-5 md:grid-cols-2">
         <input
-          placeholder="الاسم الكامل"
+          placeholder="اسم الزبون"
           value={form.fullName}
           onChange={(event) => setForm({ ...form, fullName: event.target.value })}
         />
         <input
-          placeholder="رقم الهاتف"
+          placeholder="رقم الهاتف اختياري"
           value={form.phone}
           onChange={(event) => setForm({ ...form, phone: event.target.value })}
         />
@@ -140,16 +551,9 @@ export default function PeopleClient({ initialPeople }: { initialPeople: any[] }
           onChange={(event) => setForm({ ...form, address: event.target.value })}
         />
         <select value={form.category} onChange={(event) => setForm({ ...form, category: event.target.value })}>
-          <option value="REGULAR">عميل عادي</option>
-          <option value="VIP">عميل مميز</option>
+          <option value="REGULAR">زبون عادي</option>
+          <option value="VIP">زبون مميز</option>
         </select>
-        <textarea
-          className="md:col-span-2"
-          placeholder="معلومات إضافية"
-          value={form.externalId}
-          onChange={(event) => setForm({ ...form, externalId: event.target.value })}
-          rows={2}
-        />
         <textarea
           className="md:col-span-2"
           placeholder="ملاحظات"
@@ -157,85 +561,119 @@ export default function PeopleClient({ initialPeople }: { initialPeople: any[] }
           onChange={(event) => setForm({ ...form, notes: event.target.value })}
           rows={2}
         />
-        <button className="flex items-center justify-center gap-2 rounded-lg bg-indigo-600 py-3 font-bold text-white hover:bg-indigo-500 md:col-span-2">
+        <button className="inline-flex items-center justify-center gap-2 rounded-lg bg-indigo-600 py-3 font-bold text-white hover:bg-indigo-500 md:col-span-2">
           <UserPlus size={18} />
           إضافة زبون
         </button>
       </form>
 
-      <div className="card p-5">
-        <div className="mb-4 grid gap-2 md:grid-cols-[1fr_auto]">
-          <input
-            value={q}
-            onChange={(event) => setQ(event.target.value)}
-            placeholder="بحث بالاسم أو الهاتف أو رقم العميل"
-          />
+      <section className="card p-5">
+        <div className="mb-4 grid gap-2 md:grid-cols-[1fr_auto_auto]">
+          <div className="relative">
+            <Search className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
+            <input
+              className="pr-10"
+              value={q}
+              onChange={(event) => setQ(event.target.value)}
+              placeholder="بحث فوري بالاسم، رقم الزبون، الهاتف أو آخر 4 أرقام من البطاقة"
+            />
+          </div>
           <button
             type="button"
             onClick={() => load()}
-            className="flex items-center justify-center gap-2 rounded-lg bg-slate-900 px-5 py-2.5 font-bold text-white dark:bg-slate-100 dark:text-slate-950"
+            className="inline-flex items-center justify-center gap-2 rounded-lg bg-slate-900 px-5 py-2.5 font-bold text-white dark:bg-slate-100 dark:text-slate-950"
           >
-            <Search size={18} />
+            {loading ? <Loader2 className="animate-spin" size={18} /> : <Search size={18} />}
             بحث
+          </button>
+          <button
+            type="button"
+            onClick={() => setFastEntryOpen(true)}
+            className="inline-flex items-center justify-center gap-2 rounded-lg bg-emerald-600 px-5 py-2.5 font-bold text-white"
+          >
+            <Plus size={18} />
+            إضافة معاملة بطاقات
           </button>
         </div>
 
-        <div className="table-wrap">
+        <div className="table-wrap hidden md:block">
           <table>
             <thead>
               <tr>
-                <th>رقم العميل</th>
+                <th>رقم الزبون</th>
                 <th>الاسم</th>
-                <th>التصنيف</th>
                 <th>الهاتف</th>
-                <th>العنوان</th>
-                <th>معلومات إضافية</th>
-                <th>ملاحظات</th>
-                <th>تاريخ الإضافة</th>
+                <th>البطاقات</th>
+                <th>قيمة البطاقات</th>
+                <th>السعر المتفق عليه</th>
+                <th>الحالات</th>
+                <th>آخر تحديث</th>
                 <th>خيارات</th>
               </tr>
             </thead>
             <tbody>
-              {items.map((person) => (
-                <tr key={person.id}>
-                  <td className="font-bold text-slate-500">{person.customerNo || '—'}</td>
-                  <td>
-                    <Link className="font-bold text-indigo-600 hover:text-indigo-500" href={`/people/${person.id}`}>
-                      {person.fullName}
-                    </Link>
-                  </td>
-                  <td>
-                    <span className="rounded-lg bg-slate-100 px-2 py-1 text-xs font-bold text-slate-700 dark:bg-slate-800 dark:text-slate-200">
-                      {categoryLabels[person.category] || person.category}
-                    </span>
-                  </td>
-                  <td>{person.phone || '—'}</td>
-                  <td>{person.address || '—'}</td>
-                  <td className="max-w-64 truncate">{person.externalId || '—'}</td>
-                  <td className="max-w-64 truncate">{person.notes || '—'}</td>
-                  <td>{formatDate(person.createdAt)}</td>
-                  <td>
-                    <div className="flex flex-wrap gap-2">
-                      <button
-                        type="button"
-                        onClick={() => openEdit(person)}
-                        className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-3 py-2 text-sm font-bold text-white hover:bg-indigo-500"
-                      >
-                        <Edit3 size={16} />
-                        تعديل
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => openEdit(person)}
-                        className="inline-flex items-center gap-2 rounded-lg bg-slate-100 px-3 py-2 text-sm font-bold text-slate-700 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700"
-                      >
-                        <Info size={16} />
-                        معلومات إضافية
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
+              {items.map((person) => {
+                const summary = personSummary(person);
+                return (
+                  <tr
+                    key={person.id}
+                    onClick={() => setSelectedPersonId(person.id)}
+                    className="cursor-pointer"
+                  >
+                    <td className="font-black text-slate-500">{person.customerNo || '—'}</td>
+                    <td className="font-bold">{person.fullName}</td>
+                    <td>{person.phone || '—'}</td>
+                    <td>{summary.totalCards}</td>
+                    <td>{formatMoney(summary.originalTotal, '$')}</td>
+                    <td>{formatMoney(summary.agreedTotal, '$')}</td>
+                    <td>
+                      <div className="flex flex-wrap gap-1 text-xs font-bold">
+                        <span className="rounded-md bg-blue-50 px-2 py-1 text-blue-700">نشطة {summary.active}</span>
+                        <span className="rounded-md bg-emerald-50 px-2 py-1 text-emerald-700">مصفاة {summary.completed}</span>
+                        <span className="rounded-md bg-red-50 px-2 py-1 text-red-700">مرفوضة {summary.rejected}</span>
+                      </div>
+                    </td>
+                    <td>{formatDateTime(summary.lastUpdate)}</td>
+                    <td>
+                      <div className="flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            setSelectedPersonId(person.id);
+                          }}
+                          className="inline-flex items-center gap-1 rounded-lg bg-indigo-600 px-3 py-2 text-sm font-bold text-white"
+                        >
+                          <Eye size={16} />
+                          عرض البطاقات
+                        </button>
+                        <button
+                          type="button"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            openEdit(person);
+                          }}
+                          className="rounded-lg bg-slate-100 p-2 text-slate-700 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-100"
+                          aria-label="تعديل الزبون"
+                        >
+                          <Edit3 size={16} />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            archivePerson(person);
+                          }}
+                          className="rounded-lg bg-red-50 p-2 text-red-700 hover:bg-red-100 dark:bg-red-950 dark:text-red-200"
+                          aria-label="حذف الزبون"
+                        >
+                          <Trash2 size={16} />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
               {!items.length ? (
                 <tr>
                   <td colSpan={9} className="text-center text-slate-500">
@@ -246,7 +684,413 @@ export default function PeopleClient({ initialPeople }: { initialPeople: any[] }
             </tbody>
           </table>
         </div>
-      </div>
+
+        <div className="grid gap-3 md:hidden">
+          {items.map((person) => {
+            const summary = personSummary(person);
+            return (
+              <button
+                key={person.id}
+                type="button"
+                onClick={() => setSelectedPersonId(person.id)}
+                className="rounded-lg border border-slate-200 p-4 text-right dark:border-slate-800"
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <div className="font-black">{person.fullName}</div>
+                    <div className="mt-1 text-sm text-slate-500">{person.customerNo || '—'} · {person.phone || 'لا يوجد هاتف'}</div>
+                  </div>
+                  <span className="rounded-md bg-indigo-50 px-2 py-1 text-xs font-bold text-indigo-700">
+                    {summary.totalCards} بطاقة
+                  </span>
+                </div>
+                <div className="mt-3 grid grid-cols-2 gap-2 text-sm">
+                  <span>القيمة: {formatMoney(summary.originalTotal, '$')}</span>
+                  <span>المتفق عليه: {formatMoney(summary.agreedTotal, '$')}</span>
+                </div>
+              </button>
+            );
+          })}
+        </div>
+      </section>
+
+      {selectedPerson ? (
+        <div className="fixed inset-0 z-50">
+          <button
+            type="button"
+            aria-label="إغلاق تفاصيل الزبون"
+            className="absolute inset-0 bg-slate-950/45"
+            onClick={() => setSelectedPersonId('')}
+          />
+          <aside className="absolute inset-y-0 left-0 flex w-full max-w-5xl animate-[drawer-in_220ms_ease-out] flex-col overflow-y-auto border-r border-slate-200 bg-white p-5 shadow-2xl dark:border-slate-800 dark:bg-slate-950 md:w-[86vw]">
+            <div className="mb-5 flex items-start justify-between gap-4">
+              <div>
+                <div className="text-sm font-bold text-indigo-600">{selectedPerson.customerNo || 'زبون بدون رقم'}</div>
+                <h2 className="mt-1 text-2xl font-black">{selectedPerson.fullName}</h2>
+                <p className="mt-1 text-sm text-slate-500">{selectedPerson.phone || 'لا يوجد رقم هاتف'}</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSelectedPersonId('')}
+                className="rounded-lg p-2 text-slate-500 hover:bg-slate-100 hover:text-slate-900 dark:hover:bg-slate-800 dark:hover:text-slate-100"
+                aria-label="إغلاق"
+              >
+                <X size={22} />
+              </button>
+            </div>
+
+            <div className="mb-4 flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => setFastEntryOpen(true)}
+                className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2.5 text-sm font-bold text-white"
+              >
+                <Plus size={16} />
+                إضافة معاملة بطاقات
+              </button>
+              <button
+                type="button"
+                onClick={() => setDeliveryOpen(true)}
+                className="inline-flex items-center gap-2 rounded-lg bg-slate-900 px-4 py-2.5 text-sm font-bold text-white dark:bg-slate-100 dark:text-slate-950"
+              >
+                <Save size={16} />
+                تسجيل تسليم مبلغ
+              </button>
+            </div>
+
+            <section className="mb-4 grid gap-3 md:grid-cols-3">
+              {selectedDeliveryRows.map((row) => (
+                <div key={row.currency.id} className="rounded-lg border border-slate-200 p-3 dark:border-slate-800">
+                  <div className="text-xs font-bold text-slate-500">{row.currency.name}</div>
+                  <div className="mt-2 grid gap-1 text-sm">
+                    <span>المتفق: <b>{formatMoney(row.agreed, row.currency)}</b></span>
+                    <span>المسلّم: <b>{formatMoney(row.delivered, row.currency)}</b></span>
+                    <span>المتبقي للتسليم: <b>{formatMoney(row.remaining, row.currency)}</b></span>
+                  </div>
+                </div>
+              ))}
+              {!selectedDeliveryRows.length ? (
+                <div className="rounded-lg border border-dashed border-slate-300 p-3 text-sm text-slate-500 dark:border-slate-700">
+                  لا توجد مبالغ تسليم مرتبطة ببطاقات هذا الزبون.
+                </div>
+              ) : null}
+            </section>
+
+            <form onSubmit={addCards} className="card grid gap-3 p-4 md:grid-cols-6">
+              <input
+                type="number"
+                min="1"
+                placeholder="عدد البطاقات"
+                value={batchForm.cardCount}
+                onChange={(event) => setBatchForm({ ...batchForm, cardCount: event.target.value })}
+              />
+              <input
+                type="number"
+                min="0"
+                step="0.000001"
+                placeholder="القيمة الأصلية"
+                value={batchForm.valueUsdPerCard}
+                onChange={(event) => setBatchForm({ ...batchForm, valueUsdPerCard: event.target.value })}
+              />
+              <input
+                type="number"
+                min="0"
+                step="0.000001"
+                placeholder="السعر المتفق عليه"
+                value={batchForm.agreedAmountPerCard}
+                onChange={(event) => setBatchForm({ ...batchForm, agreedAmountPerCard: event.target.value })}
+              />
+              <select value={batchForm.currencyId} onChange={(event) => setBatchForm({ ...batchForm, currencyId: event.target.value })}>
+                {currencies.map((currency) => (
+                  <option key={currency.id} value={currency.id}>
+                    {currency.name}
+                  </option>
+                ))}
+              </select>
+              <input
+                placeholder="المصرف"
+                value={batchForm.commonBankName}
+                onChange={(event) => setBatchForm({ ...batchForm, commonBankName: event.target.value })}
+              />
+              <button className="inline-flex items-center justify-center gap-2 rounded-lg bg-indigo-600 px-4 py-2.5 font-bold text-white">
+                <Plus size={18} />
+                إضافة
+              </button>
+              <input
+                className="md:col-span-6"
+                placeholder="ملاحظات الدفعة"
+                value={batchForm.notes}
+                onChange={(event) => setBatchForm({ ...batchForm, notes: event.target.value })}
+              />
+            </form>
+
+            <div className="my-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+              <select className="md:max-w-xs" value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>
+                <option value="ALL">كل الحالات</option>
+                {statusOptions.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={bulkStageNext}
+                  className="inline-flex items-center gap-2 rounded-lg bg-slate-900 px-3 py-2 text-sm font-bold text-white dark:bg-slate-100 dark:text-slate-950"
+                >
+                  <Archive size={16} />
+                  تحديث المحدد
+                </button>
+                <button
+                  type="button"
+                  onClick={bulkReject}
+                  className="inline-flex items-center gap-2 rounded-lg bg-red-50 px-3 py-2 text-sm font-bold text-red-700 dark:bg-red-950 dark:text-red-200"
+                >
+                  <Trash2 size={16} />
+                  رفض المحدد
+                </button>
+              </div>
+            </div>
+
+            <div className="grid gap-4">
+              {visibleCards.map((card: any) => {
+                const draft = drafts[card.id] || {};
+                const currentStage = Math.max(0, Math.min(Number(draft.currentStage ?? card.currentStage ?? 0), 6));
+                const currency = card.currency || card.batch?.currency || '$';
+                return (
+                  <article key={card.id} className="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
+                    <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                      <label className="flex items-center gap-3 text-sm font-bold">
+                        <input type="checkbox" checked={selectedCards.has(card.id)} onChange={() => toggleCard(card.id)} />
+                        <span className="text-lg font-black">{cardCode(card)}</span>
+                      </label>
+                      <span className={`inline-flex w-fit rounded-full px-3 py-1 text-xs font-black ring-1 ${statusClasses[card.status] || statusClasses.RECEIVED}`}>
+                        {statusLabels[card.status] || card.status}
+                      </span>
+                    </div>
+
+                    <div className="mt-4 grid gap-2 md:grid-cols-7">
+                      {stageLabels.map((label, index) => (
+                        <div key={label} className="min-w-0">
+                          <div
+                            className={`h-2 rounded-full ${index <= currentStage ? 'bg-indigo-600 dark:bg-indigo-400' : 'bg-slate-200 dark:bg-slate-800'}`}
+                          />
+                          <div className="mt-1 truncate text-[11px] font-bold text-slate-500" title={label}>
+                            {label}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+
+                    <div className="mt-4 grid gap-3 md:grid-cols-4">
+                      <input
+                        placeholder="المصرف"
+                        value={draft.bankName ?? card.bankName ?? ''}
+                        onChange={(event) => setCardDraft(card.id, { bankName: event.target.value })}
+                      />
+                      <input
+                        inputMode="numeric"
+                        maxLength={4}
+                        placeholder="آخر 4 أرقام"
+                        value={draft.cardLast4 ?? card.cardLast4 ?? ''}
+                        onChange={(event) =>
+                          setCardDraft(card.id, { cardLast4: event.target.value.replace(/\D/g, '').slice(0, 4) })
+                        }
+                      />
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.000001"
+                        placeholder="القيمة الأصلية"
+                        value={draft.valueUsd ?? normalizeDraftValue(card.valueUsd)}
+                        onChange={(event) => setCardDraft(card.id, { valueUsd: event.target.value })}
+                      />
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.000001"
+                        placeholder="السعر المتفق عليه"
+                        value={draft.agreedAmount ?? normalizeDraftValue(card.agreedAmount)}
+                        onChange={(event) => setCardDraft(card.id, { agreedAmount: event.target.value })}
+                      />
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.000001"
+                        placeholder="إجمالي المسحوب"
+                        value={draft.receivedAmount ?? normalizeDraftValue(card.receivedAmount)}
+                        onChange={(event) => setCardDraft(card.id, { receivedAmount: event.target.value })}
+                      />
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.000001"
+                        placeholder="مبلغ التسليم/الاستلام"
+                        value={draft.settlementAmount ?? normalizeDraftValue(card.settlementAmount)}
+                        onChange={(event) => setCardDraft(card.id, { settlementAmount: event.target.value })}
+                      />
+                      <select
+                        value={draft.settlementPaymentMethod ?? card.settlementPaymentMethod ?? 'USD_CASH'}
+                        onChange={(event) => setCardDraft(card.id, { settlementPaymentMethod: event.target.value })}
+                      >
+                        {settlementMethods.map((method) => (
+                          <option key={method} value={method}>
+                            {detailedPaymentLabels[method as keyof typeof detailedPaymentLabels] || method}
+                          </option>
+                        ))}
+                      </select>
+                      <select
+                        value={draft.status ?? card.status}
+                        onChange={(event) => setCardDraft(card.id, { status: event.target.value })}
+                      >
+                        {statusOptions.map((option) => (
+                          <option key={option.value} value={option.value}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </select>
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.000001"
+                        placeholder="مبلغ السحب لهذه المرحلة"
+                        value={draft.stageAmount ?? ''}
+                        onChange={(event) => setCardDraft(card.id, { stageAmount: event.target.value })}
+                      />
+                      <input
+                        className="md:col-span-2"
+                        placeholder="ملاحظات المرحلة"
+                        value={draft.stageNote ?? ''}
+                        onChange={(event) => setCardDraft(card.id, { stageNote: event.target.value })}
+                      />
+                      <input
+                        className="md:col-span-1"
+                        placeholder="ملاحظات البطاقة"
+                        value={draft.notes ?? card.notes ?? ''}
+                        onChange={(event) => setCardDraft(card.id, { notes: event.target.value })}
+                      />
+                    </div>
+
+                    <div className="mt-3 grid gap-2 text-sm md:grid-cols-6">
+                      <span>المتبقي: <b>{formatMoney(cardRemaining({ ...card, ...draft }), currency)}</b></span>
+                      <span>المسحوب: <b>{formatMoney(numberValue(card.totalDeducted ?? card.receivedAmount), currency)}</b></span>
+                      <span>النسبة: <b>{Math.round(numberValue(card.progressPercent || 0))}%</b></span>
+                      <span>الإضافة: {formatDate(card.createdAt)}</span>
+                      <span>آخر تحديث: {formatDateTime(card.updatedAt)}</span>
+                      <span>آخر مرحلة: {card.stageLogs?.[0] ? formatDateTime(card.stageLogs[0].createdAt) : '—'}</span>
+                    </div>
+
+                    <div className="mt-4 flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setOperationModal({ card })}
+                        disabled={card.status === 'CANCELLED'}
+                        className="inline-flex items-center gap-2 rounded-lg bg-slate-900 px-3 py-2 text-sm font-bold text-white disabled:cursor-not-allowed disabled:opacity-50 dark:bg-slate-100 dark:text-slate-950"
+                      >
+                        <Plus size={16} />
+                        إضافة عملية
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setOperationModal({ card, initialType: 'REJECT' })}
+                        disabled={card.status === 'CANCELLED'}
+                        className="inline-flex items-center gap-2 rounded-lg bg-red-50 px-3 py-2 text-sm font-bold text-red-700 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-red-950 dark:text-red-200"
+                      >
+                        <Trash2 size={16} />
+                        رفض
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => saveCard(card, { stageAction: 'PREVIOUS', stageAmount: 0 })}
+                        disabled={savingCards[card.id] || currentStage === 0}
+                        className="inline-flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-sm font-bold disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-700"
+                      >
+                        <ChevronRight size={16} />
+                        المرحلة السابقة
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          saveCard(card, {
+                            stageAction: 'NEXT',
+                            stageAmount: Number(draft.stageAmount || 0),
+                            stageNote: draft.stageNote || null,
+                          })
+                        }
+                        disabled={savingCards[card.id] || currentStage === 6}
+                        className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-3 py-2 text-sm font-bold text-white disabled:cursor-not-allowed disabled:bg-indigo-400"
+                      >
+                        <ChevronLeft size={16} />
+                        المرحلة التالية
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => saveCard(card)}
+                        disabled={savingCards[card.id]}
+                        className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-3 py-2 text-sm font-bold text-white disabled:cursor-not-allowed disabled:bg-emerald-400"
+                      >
+                        {savingCards[card.id] ? <Loader2 className="animate-spin" size={16} /> : <Save size={16} />}
+                        حفظ البطاقة
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => deleteCard(card)}
+                        className="inline-flex items-center gap-2 rounded-lg bg-red-50 px-3 py-2 text-sm font-bold text-red-700 dark:bg-red-950 dark:text-red-200"
+                      >
+                        <Trash2 size={16} />
+                        حذف
+                      </button>
+                    </div>
+
+                    <div className="mt-4 rounded-lg bg-slate-50 p-3 dark:bg-slate-950">
+                      <div className="mb-2 text-sm font-black">سجل عمليات البطاقة</div>
+                      <div className="grid gap-2">
+                        {(card.operations || []).slice(0, 8).map((operation: any) => (
+                          <div key={operation.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-slate-200 bg-white p-2 text-sm dark:border-slate-800 dark:bg-slate-900">
+                            <div>
+                              <b>{cardOperationTypeLabels[operation.operationType as keyof typeof cardOperationTypeLabels] || operation.operationType}</b>
+                              <span className="mx-2 text-slate-400">|</span>
+                              {formatMoney(operation.amount, currency)}
+                              <span className="mx-2 text-slate-400">|</span>
+                              {formatDateTime(operation.occurredAt)}
+                              {operation.note || operation.reason ? <span className="ms-2 text-slate-500">{operation.note || operation.reason}</span> : null}
+                            </div>
+                            <div className="flex gap-2">
+                              <button
+                                type="button"
+                                onClick={() => setOperationModal({ card, operation })}
+                                className="rounded-lg bg-slate-100 p-2 text-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                                aria-label="تعديل عملية البطاقة"
+                              >
+                                <Edit3 size={15} />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => deleteCardOperation(card, operation)}
+                                className="rounded-lg bg-red-50 p-2 text-red-700 dark:bg-red-950 dark:text-red-200"
+                                aria-label="حذف عملية البطاقة"
+                              >
+                                <Trash2 size={15} />
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+                        {!card.operations?.length ? <div className="text-sm text-slate-500">لا توجد عمليات بعد.</div> : null}
+                      </div>
+                    </div>
+                  </article>
+                );
+              })}
+              {!visibleCards.length ? (
+                <div className="rounded-lg border border-dashed border-slate-300 p-8 text-center text-slate-500 dark:border-slate-700">
+                  لا توجد بطاقات بهذه الحالة.
+                </div>
+              ) : null}
+            </div>
+          </aside>
+        </div>
+      ) : null}
 
       {editingPerson ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4">
@@ -261,8 +1105,8 @@ export default function PeopleClient({ initialPeople }: { initialPeople: any[] }
               </div>
               <button
                 type="button"
-                onClick={closeEdit}
-                disabled={saving}
+                onClick={() => setEditingPerson(null)}
+                disabled={savingPerson}
                 className="rounded-lg p-2 text-slate-500 hover:bg-slate-100 hover:text-slate-900 disabled:cursor-not-allowed dark:hover:bg-slate-800 dark:hover:text-slate-100"
                 aria-label="إغلاق تعديل الزبون"
               >
@@ -271,35 +1115,13 @@ export default function PeopleClient({ initialPeople }: { initialPeople: any[] }
             </div>
 
             <div className="grid gap-4 md:grid-cols-2">
-              <input
-                value={editForm.fullName}
-                onChange={(event) => setEditForm({ ...editForm, fullName: event.target.value })}
-                placeholder="الاسم"
-              />
-              <input
-                value={editForm.phone}
-                onChange={(event) => setEditForm({ ...editForm, phone: event.target.value })}
-                placeholder="رقم الهاتف"
-              />
-              <input
-                value={editForm.address}
-                onChange={(event) => setEditForm({ ...editForm, address: event.target.value })}
-                placeholder="العنوان"
-              />
-              <select
-                value={editForm.category}
-                onChange={(event) => setEditForm({ ...editForm, category: event.target.value })}
-              >
-                <option value="REGULAR">عميل عادي</option>
-                <option value="VIP">عميل مميز</option>
+              <input value={editForm.fullName} onChange={(event) => setEditForm({ ...editForm, fullName: event.target.value })} placeholder="الاسم" />
+              <input value={editForm.phone} onChange={(event) => setEditForm({ ...editForm, phone: event.target.value })} placeholder="رقم الهاتف" />
+              <input value={editForm.address} onChange={(event) => setEditForm({ ...editForm, address: event.target.value })} placeholder="العنوان" />
+              <select value={editForm.category} onChange={(event) => setEditForm({ ...editForm, category: event.target.value })}>
+                <option value="REGULAR">زبون عادي</option>
+                <option value="VIP">زبون مميز</option>
               </select>
-              <textarea
-                className="md:col-span-2"
-                value={editForm.externalId}
-                onChange={(event) => setEditForm({ ...editForm, externalId: event.target.value })}
-                placeholder="معلومات إضافية"
-                rows={3}
-              />
               <textarea
                 className="md:col-span-2"
                 value={editForm.notes}
@@ -312,22 +1134,56 @@ export default function PeopleClient({ initialPeople }: { initialPeople: any[] }
             <div className="mt-5 grid gap-3 sm:grid-cols-2">
               <button
                 type="button"
-                onClick={closeEdit}
-                disabled={saving}
+                onClick={() => setEditingPerson(null)}
+                disabled={savingPerson}
                 className="rounded-lg border border-slate-200 px-4 py-3 font-bold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
               >
                 إلغاء
               </button>
               <button
-                disabled={saving}
+                disabled={savingPerson}
                 className="flex items-center justify-center gap-2 rounded-lg bg-indigo-600 px-4 py-3 font-bold text-white hover:bg-indigo-500 disabled:cursor-not-allowed disabled:bg-indigo-400"
               >
                 <Save size={18} />
-                {saving ? 'جار الحفظ...' : 'حفظ التعديل'}
+                {savingPerson ? 'جار الحفظ...' : 'حفظ التعديل'}
               </button>
             </div>
           </form>
         </div>
+      ) : null}
+
+      {fastEntryOpen ? (
+        <FastCardEntryModal
+          people={items}
+          selectedPerson={selectedPerson}
+          currencies={currencies}
+          onClose={() => setFastEntryOpen(false)}
+          onSaved={handleFastEntrySaved}
+        />
+      ) : null}
+
+      {operationModal ? (
+        <CardOperationModal
+          card={operationModal.card}
+          operation={operationModal.operation}
+          initialType={operationModal.initialType}
+          onClose={() => setOperationModal(null)}
+          onSaved={(card) => {
+            replaceCard(card);
+            setOperationModal(null);
+            router.refresh();
+          }}
+        />
+      ) : null}
+
+      {deliveryOpen && selectedPerson ? (
+        <CustomerDeliveryModal
+          person={selectedPerson}
+          rows={selectedDeliveryRows}
+          currencies={currencies}
+          onClose={() => setDeliveryOpen(false)}
+          onSaved={handleDeliverySaved}
+        />
       ) : null}
     </>
   );

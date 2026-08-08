@@ -105,6 +105,20 @@ enum CustomerWalletSettlementDirection {
   SUBTRACT
 }
 
+enum CustomerCardOperationType {
+  GIFT_CARD
+  INVOICE
+  FINAL_SETTLEMENT
+  REJECT
+  REACTIVATE
+  ADJUSTMENT
+}
+
+enum CustomerCardEntryStatus {
+  COMPLETED
+  CANCELLED
+}
+
 model SystemSetting {
   id        String   @id @default(cuid())
   key       String   @unique
@@ -146,6 +160,9 @@ model Person {
   sheinSales   SheinCard[]            @relation("SheinCardBuyer")
   sheinCardSales SheinCardSale[]
   cardBatches  ReceivedCardBatch[]
+  cardEntryTransactions CustomerCardEntryTransaction[]
+  cardDeliveries CustomerCardDelivery[]
+  accountRepayments CustomerAccountRepayment[]
   cashboxMovements CashboxMovement[]   @relation("CashboxMovementPerson")
   walletSettlements CustomerWalletSettlement[]
   transactionExecutionItems TransactionExecutionItem[] @relation("TransactionExecutionItemCustomer")
@@ -171,6 +188,9 @@ model Currency {
   movements        TransactionMovement[]
   cashboxMovements CashboxMovement[]
   receivedBatches  ReceivedCardBatch[]
+  cardEntryTransactions CustomerCardEntryTransaction[]
+  customerCardDeliveries CustomerCardDelivery[]
+  accountRepayments CustomerAccountRepayment[]
   receivedCardSettlements ReceivedCustomerCard[] @relation("ReceivedCardSettlementCurrency")
   sheinCardSales   SheinCard[]            @relation("SheinCardSaleCurrency")
   sheinSalesReports SheinCardSale[]
@@ -387,18 +407,29 @@ model CustomerWalletSettlement {
   username      String?
   occurredAt    DateTime                          @default(now())
   createdAt     DateTime                          @default(now())
+  updatedAt     DateTime                          @default(now()) @updatedAt
+  deletedAt     DateTime?
+  deletedBy     String?
+  deleteReason  String?
+  movementKind  String                            @default("ADJUSTMENT")
+  linkedSettlementId String?
+  settlementMethod String?
   person        Person                            @relation(fields: [personId], references: [id])
   currency      Currency                          @relation(fields: [currencyId], references: [id])
   user          User?                             @relation(fields: [userId], references: [id], onDelete: SetNull)
+  accountRepayment CustomerAccountRepayment?
 
   @@index([personId])
   @@index([currencyId])
   @@index([paymentMethod])
   @@index([accountType])
+  @@index([movementKind])
+  @@index([linkedSettlementId])
   @@index([occurredAt])
   @@index([createdAt])
   @@index([userId])
   @@index([username])
+  @@index([deletedAt])
 }
 
 model TransactionExecutionItem {
@@ -536,17 +567,24 @@ model ReceivedCardBatch {
   id                  String                 @id @default(cuid())
   personId            String
   currencyId          String?
+  entryTransactionId  String?                @unique
   receivedAt          DateTime               @default(now())
   cardCount           Int
   agreedAmountPerCard Decimal                @db.Decimal(20, 6)
+  totalOriginalAmount Decimal                @default(0) @db.Decimal(20, 6)
+  totalAgreedAmount   Decimal                @default(0) @db.Decimal(20, 6)
   notes               String?
+  createdByUserId     String?
+  createdByUsername   String?
   createdAt           DateTime               @default(now())
   updatedAt           DateTime               @updatedAt
   person              Person                 @relation(fields: [personId], references: [id])
   currency            Currency?              @relation(fields: [currencyId], references: [id])
+  entryTransaction    CustomerCardEntryTransaction? @relation(fields: [entryTransactionId], references: [id], onDelete: SetNull)
   cards               ReceivedCustomerCard[]
 
   @@index([personId])
+  @@index([entryTransactionId])
   @@index([receivedAt])
   @@index([createdAt])
 }
@@ -555,6 +593,7 @@ model ReceivedCustomerCard {
   id                   String             @id @default(cuid())
   batchId              String
   sequence             Int
+  publicCode           String?            @unique
   bankName             String?
   cardLast4            String?
   valueUsd             Decimal            @default(0) @db.Decimal(20, 6)
@@ -569,18 +608,192 @@ model ReceivedCustomerCard {
   settlementCashboxMovementId String?
   secureInternalNote   String?
   notes                String?
+  totalDeducted        Decimal            @default(0) @db.Decimal(20, 6)
+  remainingAmount      Decimal            @default(0) @db.Decimal(20, 6)
+  progressPercent      Decimal            @default(0) @db.Decimal(20, 6)
+  currentStage         Int                @default(0)
+  rejectedAt           DateTime?
+  rejectReason         String?
+  archivedAt           DateTime?
+  deletedAt            DateTime?
   createdAt            DateTime           @default(now())
   updatedAt            DateTime           @updatedAt
   batch                ReceivedCardBatch  @relation(fields: [batchId], references: [id])
   settlementCurrency   Currency?          @relation("ReceivedCardSettlementCurrency", fields: [settlementCurrencyId], references: [id])
+  stageLogs            ReceivedCardStageLog[]
+  operations           ReceivedCardOperation[]
 
   @@unique([batchId, sequence])
+  @@index([publicCode])
   @@index([status])
   @@index([cardLast4])
+  @@index([remainingAmount])
+  @@index([rejectedAt])
+  @@index([currentStage])
+  @@index([deletedAt])
   @@index([createdAt])
   @@index([batchId])
   @@index([settlementCurrencyId])
   @@index([settlementPaymentMethod])
+}
+
+model ReceivedCardStageLog {
+  id        String               @id @default(cuid())
+  cardId    String
+  stage     Int
+  direction String
+  amount    Decimal              @default(0) @db.Decimal(20, 6)
+  note      String?
+  userId    String?
+  username  String?
+  createdAt DateTime             @default(now())
+  card      ReceivedCustomerCard @relation(fields: [cardId], references: [id], onDelete: Cascade)
+
+  @@index([cardId])
+  @@index([stage])
+  @@index([createdAt])
+}
+
+model CustomerCardEntryTransaction {
+  id                  String                  @id @default(cuid())
+  personId            String
+  currencyId          String?
+  status              CustomerCardEntryStatus @default(COMPLETED)
+  cardCount           Int
+  totalOriginalAmount Decimal                 @default(0) @db.Decimal(20, 6)
+  totalAgreedAmount   Decimal                 @default(0) @db.Decimal(20, 6)
+  duplicateWarnings   Json?
+  notes               String?
+  userId              String?
+  username            String?
+  occurredAt          DateTime                @default(now())
+  createdAt           DateTime                @default(now())
+  updatedAt           DateTime                @updatedAt
+  person              Person                  @relation(fields: [personId], references: [id])
+  currency            Currency?               @relation(fields: [currencyId], references: [id])
+  batch               ReceivedCardBatch?
+
+  @@index([personId])
+  @@index([currencyId])
+  @@index([status])
+  @@index([occurredAt])
+  @@index([createdAt])
+  @@index([userId])
+  @@index([username])
+}
+
+model CardDiscountCategory {
+  id              String   @id @default(cuid())
+  code            String   @unique
+  name            String
+  faceValue       Decimal  @db.Decimal(20, 6)
+  deductionAmount Decimal  @db.Decimal(20, 6)
+  isDefault       Boolean  @default(false)
+  isActive        Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([isActive])
+  @@index([isDefault])
+  @@index([createdAt])
+}
+
+model ReceivedCardOperation {
+  id              String                    @id @default(cuid())
+  cardId          String
+  operationType   CustomerCardOperationType
+  categoryCode    String?
+  categoryFaceValue Decimal?                @db.Decimal(20, 6)
+  quantity        Int                       @default(1)
+  amount          Decimal                   @default(0) @db.Decimal(20, 6)
+  balanceBefore   Decimal                   @default(0) @db.Decimal(20, 6)
+  balanceAfter    Decimal                   @default(0) @db.Decimal(20, 6)
+  progressBefore  Decimal                   @default(0) @db.Decimal(20, 6)
+  progressAfter   Decimal                   @default(0) @db.Decimal(20, 6)
+  note            String?
+  reason          String?
+  userId          String?
+  username        String?
+  occurredAt      DateTime                  @default(now())
+  createdAt       DateTime                  @default(now())
+  updatedAt       DateTime                  @updatedAt
+  deletedAt       DateTime?
+  deletedBy       String?
+  deleteReason    String?
+  card            ReceivedCustomerCard      @relation(fields: [cardId], references: [id], onDelete: Cascade)
+
+  @@index([cardId])
+  @@index([operationType])
+  @@index([occurredAt])
+  @@index([createdAt])
+  @@index([deletedAt])
+  @@index([userId])
+  @@index([username])
+}
+
+model CustomerCardDelivery {
+  id            String   @id @default(cuid())
+  personId      String
+  currencyId    String
+  paymentMethod String?
+  amount        Decimal  @db.Decimal(20, 6)
+  balanceBefore Decimal  @db.Decimal(20, 6)
+  balanceAfter  Decimal  @db.Decimal(20, 6)
+  reason        String   @default("CUSTOMER_CARD_DELIVERY")
+  note          String?
+  userId        String?
+  username      String?
+  occurredAt    DateTime @default(now())
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  deletedAt     DateTime?
+  deletedBy     String?
+  deleteReason  String?
+  person        Person   @relation(fields: [personId], references: [id])
+  currency      Currency @relation(fields: [currencyId], references: [id])
+
+  @@index([personId])
+  @@index([currencyId])
+  @@index([paymentMethod])
+  @@index([occurredAt])
+  @@index([createdAt])
+  @@index([deletedAt])
+  @@index([userId])
+  @@index([username])
+}
+
+model CustomerAccountRepayment {
+  id            String                    @id @default(cuid())
+  settlementId  String                    @unique
+  personId      String
+  currencyId    String
+  paymentMethod String
+  accountType   CustomerWalletAccountType
+  amount        Decimal                   @db.Decimal(20, 6)
+  balanceBefore Decimal                   @db.Decimal(20, 6)
+  balanceAfter  Decimal                   @db.Decimal(20, 6)
+  reason        String
+  note          String?
+  userId        String?
+  username      String?
+  occurredAt    DateTime                  @default(now())
+  createdAt     DateTime                  @default(now())
+  deletedAt     DateTime?
+  deletedBy     String?
+  deleteReason  String?
+  person        Person                    @relation(fields: [personId], references: [id])
+  currency      Currency                  @relation(fields: [currencyId], references: [id])
+  settlement    CustomerWalletSettlement  @relation(fields: [settlementId], references: [id], onDelete: Cascade)
+
+  @@index([personId])
+  @@index([currencyId])
+  @@index([paymentMethod])
+  @@index([accountType])
+  @@index([occurredAt])
+  @@index([createdAt])
+  @@index([deletedAt])
+  @@index([userId])
+  @@index([username])
 }
 
 model CurrencyConversion {
