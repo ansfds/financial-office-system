@@ -12,6 +12,7 @@
     "db:seed": "tsx prisma/seed.ts",
     "seed:users": "tsx scripts/seed-users.ts",
     "backup": "tsx scripts/backup-system-data.ts",
+    "reset:admin-password": "tsx scripts/reset-admin-password.ts",
     "db:backfill:customers": "node tools/backfill-customer-numbers.cjs",
     "typecheck": "tsc --noEmit",
     "test": "vitest run"

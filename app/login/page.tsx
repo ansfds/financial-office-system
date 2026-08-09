@@ -7,6 +7,20 @@ import { ALLOWED_USERNAMES, type AllowedUsername } from '@/lib/users';
 
 const logoUrl = 'https://i.postimg.cc/k4nQr4gx/680242520-122094061526346951-872670812110961262-n.jpg';
 
+function loginFallbackMessage(status: number) {
+  if (status === 401) return 'اسم المستخدم أو كلمة المرور غير صحيحة.';
+  if (status === 429) return 'تم إيقاف المحاولات مؤقتًا. حاول لاحقًا.';
+  if (status >= 500) return 'حدث خطأ في الخادم أثناء تسجيل الدخول. حاول مرة أخرى.';
+  return 'تعذر تسجيل الدخول. تحقق من البيانات وحاول مرة أخرى.';
+}
+
+async function responseErrorMessage(response: Response) {
+  const payload = await response.json().catch(() => null);
+  return typeof payload?.error === 'string' && payload.error.trim()
+    ? payload.error
+    : loginFallbackMessage(response.status);
+}
+
 export default function Login() {
   const router = useRouter();
   const [username, setUsername] = useState<AllowedUsername>('Mohammed');
@@ -54,13 +68,23 @@ export default function Login() {
       const response = await fetch('/api/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        cache: 'no-store',
+        credentials: 'same-origin',
         body: JSON.stringify({ username, password }),
       });
 
-      const payload = await response.json().catch(() => ({}));
-
       if (!response.ok) {
-        setError(payload.error || 'تعذر تسجيل الدخول. تحقق من اسم المستخدم وكلمة المرور.');
+        setError(await responseErrorMessage(response));
+        return;
+      }
+
+      const session = await fetch('/api/auth/session', {
+        cache: 'no-store',
+        credentials: 'same-origin',
+      });
+
+      if (!session.ok) {
+        setError('تم قبول بيانات الدخول لكن تعذر إنشاء جلسة صالحة. حدّث الصفحة وحاول مرة أخرى.');
         return;
       }
 

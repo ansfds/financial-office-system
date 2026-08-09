@@ -7,16 +7,31 @@ export const COOKIE = 'fos_session';
 const ACTIVITY_TOUCH_INTERVAL_MS = 60_000;
 
 function sessionSecret() {
-  return process.env.SESSION_SECRET || '';
+  return process.env.SESSION_SECRET?.trim() || '';
 }
 
-const sign = (payload: string) =>
-  createHmac('sha256', sessionSecret()).update(payload).digest('hex');
+function requireSessionSecret() {
+  const secret = sessionSecret();
+  if (!secret) throw new Error('SESSION_SECRET_MISSING');
+  return secret;
+}
+
+const sign = (payload: string, secret = sessionSecret()) =>
+  secret ? createHmac('sha256', secret).update(payload).digest('hex') : '';
+
+function positiveMinutesFromEnv(name: string, fallback: number) {
+  const raw = process.env[name];
+  if (!raw) return fallback;
+
+  const value = Number(raw);
+  return Number.isFinite(value) && value > 0 ? value : fallback;
+}
 
 export const pack = (id: string, expiresAt: Date) => {
+  const secret = requireSessionSecret();
   const expires = expiresAt.getTime();
   const payload = `${id}.${expires}`;
-  return `${payload}.${sign(payload)}`;
+  return `${payload}.${sign(payload, secret)}`;
 };
 
 export function unpack(value?: string) {
@@ -41,8 +56,8 @@ export function unpack(value?: string) {
   }
 }
 
-const sessionMinutes = () => Number(process.env.SESSION_DURATION_MINUTES || 60);
-const inactivityMinutes = () => Number(process.env.INACTIVITY_LOCK_MINUTES || 15);
+const sessionMinutes = () => positiveMinutesFromEnv('SESSION_DURATION_MINUTES', 60);
+const inactivityMinutes = () => positiveMinutesFromEnv('INACTIVITY_LOCK_MINUTES', 15);
 
 async function clearSessionCookie() {
   try {
@@ -61,6 +76,7 @@ export async function clientMeta() {
 }
 
 export async function createSession(user: { id: string; username: string }) {
+  requireSessionSecret();
   const id = randomUUID();
   const meta = await clientMeta();
   const expiresAt = new Date(Date.now() + sessionMinutes() * 60_000);
