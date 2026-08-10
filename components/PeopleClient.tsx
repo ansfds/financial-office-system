@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
+import type { CSSProperties } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   Archive,
@@ -162,6 +163,7 @@ function cardProgressClass(card: any, draft: CardDraft = {}) {
   const status = draft.status ?? card.status;
   const percent = cardProgressPercent(card, draft);
 
+  if (status === 'CANCELLED') return 'bg-red-500';
   if (['SETTLED', 'COMPLETED'].includes(status) && percent >= 100) return 'bg-emerald-500';
   if (percent <= 0) return 'bg-blue-500';
   return 'bg-orange-500';
@@ -280,6 +282,7 @@ export default function PeopleClient({
   const [selectedCards, setSelectedCards] = useState<Set<string>>(new Set());
   const [expandedCardIds, setExpandedCardIds] = useState<Set<string>>(new Set());
   const [statusFilter, setStatusFilter] = useState('ALL');
+  const [mobileAddOpen, setMobileAddOpen] = useState(false);
   const [batchForm, setBatchForm] = useState({
     cardCount: '1',
     valueUsdPerCard: '',
@@ -336,6 +339,7 @@ export default function PeopleClient({
 
     toast.success('تمت إضافة الزبون');
     setForm(blankForm);
+    setMobileAddOpen(false);
     await load('');
     router.refresh();
   }
@@ -576,7 +580,7 @@ export default function PeopleClient({
 
   return (
     <>
-      <form onSubmit={add} className="card mb-5 grid gap-4 p-5 md:grid-cols-2">
+      <form onSubmit={add} className={`card mb-5 gap-4 p-4 md:grid md:grid-cols-2 md:p-5 ${mobileAddOpen ? 'grid sheet-panel' : 'hidden'}`}>
         <input
           placeholder="اسم الزبون"
           value={form.fullName}
@@ -609,8 +613,8 @@ export default function PeopleClient({
         </button>
       </form>
 
-      <section className="card p-5">
-        <div className="mb-4 grid gap-2 md:grid-cols-[1fr_auto_auto]">
+      <section className="card p-3 md:p-5">
+        <div className="sticky top-2 z-20 mb-4 grid gap-2 rounded-lg bg-white/92 p-2 shadow-sm backdrop-blur dark:bg-[#0d1d33]/92 md:static md:grid-cols-[1fr_auto_auto] md:bg-transparent md:p-0 md:shadow-none md:backdrop-blur-0">
           <div className="relative">
             <Search className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
             <input
@@ -727,45 +731,99 @@ export default function PeopleClient({
           </table>
         </div>
 
-        <div className="grid gap-3 md:hidden">
-          {items.map((person) => {
+        <div className="stagger-list grid gap-3 md:hidden">
+          {items.map((person, index) => {
             const summary = personSummary(person);
+            const deliveryRows = customerDeliverySummary(person, currencies);
+            const delivered = deliveryRows.reduce((sum, row) => sum + row.delivered, 0);
+            const remaining = deliveryRows.reduce((sum, row) => sum + row.remaining, 0);
             return (
-              <button
+              <article
                 key={person.id}
-                type="button"
-                onClick={() => setSelectedPersonId(person.id)}
-                className="rounded-lg border border-slate-200 p-4 text-right dark:border-slate-800"
+                style={{ '--stagger': index } as CSSProperties}
+                className="rounded-lg border border-slate-200 bg-white p-4 text-right shadow-sm dark:border-slate-800 dark:bg-slate-900"
               >
                 <div className="flex items-start justify-between gap-3">
-                  <div>
+                  <div className="min-w-0">
+                    <div className="text-xs font-black text-indigo-600">{person.customerNo || '—'}</div>
                     <div className="font-black">{person.fullName}</div>
-                    <div className="mt-1 text-sm text-slate-500">{person.customerNo || '—'} · {person.phone || 'لا يوجد هاتف'}</div>
+                    <div className="mt-1 truncate text-xs text-slate-500">{person.phone || 'لا يوجد هاتف'}</div>
                   </div>
-                  <span className="rounded-md bg-indigo-50 px-2 py-1 text-xs font-bold text-indigo-700">
+                  <span className="shrink-0 rounded-md bg-indigo-50 px-2 py-1 text-xs font-bold text-indigo-700 dark:bg-indigo-950 dark:text-indigo-200">
                     {summary.totalCards} بطاقة
                   </span>
                 </div>
-                <div className="mt-3 grid grid-cols-2 gap-2 text-sm">
-                  <span>القيمة: {formatMoney(summary.originalTotal, '$')}</span>
-                  <span>المتفق عليه: {formatMoney(summary.agreedTotal, '$')}</span>
+                <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
+                  <span className="rounded-lg bg-slate-50 p-2 dark:bg-slate-950">المتفق: <b className="num">{formatMoney(summary.agreedTotal, '$')}</b></span>
+                  <span className="rounded-lg bg-slate-50 p-2 dark:bg-slate-950">المسلّم: <b className="num">{formatMoney(delivered, '$')}</b></span>
+                  <span className="rounded-lg bg-slate-50 p-2 dark:bg-slate-950">المتبقي: <b className="num">{formatMoney(remaining, '$')}</b></span>
+                  <span className="rounded-lg bg-slate-50 p-2 dark:bg-slate-950">آخر تحديث: <b className="num">{formatDate(summary.lastUpdate)}</b></span>
                 </div>
-              </button>
+                <div className="mt-3 flex flex-wrap gap-1 text-xs font-bold">
+                  <span className="rounded-md bg-blue-50 px-2 py-1 text-blue-700 dark:bg-blue-950 dark:text-blue-200">نشطة {summary.active}</span>
+                  <span className="rounded-md bg-emerald-50 px-2 py-1 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-200">مكتملة {summary.completed}</span>
+                </div>
+                <div className="mt-3 grid grid-cols-[1fr_auto_auto] gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setSelectedPersonId(person.id)}
+                    className="inline-flex items-center justify-center gap-2 rounded-lg bg-indigo-600 px-3 py-2 text-sm font-bold text-white"
+                  >
+                    <Eye size={16} />
+                    عرض البطاقات
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => openEdit(person)}
+                    className="rounded-lg bg-slate-100 p-2 text-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                    aria-label="تعديل الزبون"
+                  >
+                    <Edit3 size={16} />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => archivePerson(person)}
+                    className="rounded-lg bg-red-50 p-2 text-red-700 dark:bg-red-950 dark:text-red-200"
+                    aria-label="حذف الزبون"
+                  >
+                    <Trash2 size={16} />
+                  </button>
+                </div>
+              </article>
             );
           })}
         </div>
       </section>
+
+      <div className="fixed bottom-[calc(4.8rem+env(safe-area-inset-bottom))] left-3 z-20 flex flex-col gap-2 md:hidden">
+        <button
+          type="button"
+          onClick={() => setFastEntryOpen(true)}
+          className="inline-flex items-center justify-center gap-2 rounded-full bg-emerald-600 px-4 py-3 text-sm font-black text-white shadow-lg"
+        >
+          <Plus size={18} />
+          بطاقات
+        </button>
+        <button
+          type="button"
+          onClick={() => setMobileAddOpen((value) => !value)}
+          className="inline-flex items-center justify-center gap-2 rounded-full bg-indigo-600 px-4 py-3 text-sm font-black text-white shadow-lg"
+        >
+          <UserPlus size={18} />
+          زبون
+        </button>
+      </div>
 
       {selectedPerson ? (
         <div className="fixed inset-0 z-50">
           <button
             type="button"
             aria-label="إغلاق تفاصيل الزبون"
-            className="absolute inset-0 bg-slate-950/45"
+            className="sheet-backdrop absolute inset-0 bg-slate-950/45 backdrop-blur-sm"
             onClick={() => setSelectedPersonId('')}
           />
-          <aside className="absolute inset-y-0 left-0 flex w-full max-w-5xl animate-[drawer-in_220ms_ease-out] flex-col overflow-y-auto border-r border-slate-200 bg-white p-5 shadow-2xl dark:border-slate-800 dark:bg-slate-950 md:w-[86vw]">
-            <div className="mb-5 flex items-start justify-between gap-4">
+          <aside className="sheet-panel absolute inset-x-0 bottom-0 flex h-[96dvh] w-full flex-col overflow-y-auto rounded-t-lg border-t border-slate-200 bg-white p-4 shadow-2xl dark:border-slate-800 dark:bg-slate-950 md:inset-y-0 md:left-0 md:right-auto md:h-auto md:max-w-5xl md:rounded-none md:border-r md:border-t-0 md:p-5 md:w-[86vw]">
+            <div className="sticky top-0 z-10 -mx-4 -mt-4 mb-4 flex items-start justify-between gap-4 border-b border-slate-100 bg-white/95 p-4 backdrop-blur dark:border-slate-800 dark:bg-slate-950/95 md:static md:m-0 md:mb-5 md:border-0 md:bg-transparent md:p-0">
               <div>
                 <div className="text-sm font-bold text-indigo-600">{selectedPerson.customerNo || 'زبون بدون رقم'}</div>
                 <h2 className="mt-1 text-2xl font-black">{selectedPerson.fullName}</h2>
@@ -818,7 +876,7 @@ export default function PeopleClient({
               ) : null}
             </section>
 
-            <form onSubmit={addCards} className="card grid gap-3 p-4 md:grid-cols-6">
+            <form onSubmit={addCards} className="card hidden gap-3 p-4 md:grid md:grid-cols-6">
               <input
                 type="number"
                 min="1"
@@ -895,8 +953,8 @@ export default function PeopleClient({
               </div>
             </div>
 
-            <div className="grid gap-4">
-              {visibleCards.map((card: any) => {
+            <div className="stagger-list grid gap-4 safe-bottom">
+              {visibleCards.map((card: any, index: number) => {
                 const draft = drafts[card.id] || {};
                 const expanded = expandedCardIds.has(card.id);
                 const currentStage = Math.max(0, Math.min(Number(draft.currentStage ?? card.currentStage ?? 0), 6));
@@ -906,7 +964,11 @@ export default function PeopleClient({
                 const deductedAmount = Math.min(cardDeducted(card, draft), original);
                 const progress = cardProgressPercent(card, draft);
                 return (
-                  <article key={card.id} className="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
+                  <article
+                    key={card.id}
+                    style={{ '--stagger': index } as CSSProperties}
+                    className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900"
+                  >
                     <div className="grid gap-4">
                       <div className="grid gap-3 md:grid-cols-[1fr_auto] md:items-start">
                         <div className="min-w-0">
@@ -937,9 +999,9 @@ export default function PeopleClient({
                       </div>
 
                       <div className="grid gap-2">
-                        <div className="relative h-8 overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800">
+                        <div className="relative h-9 overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800">
                           <div
-                            className={`absolute inset-y-0 right-0 rounded-full transition-all duration-200 ${cardProgressClass(card, draft)}`}
+                            className={`absolute inset-y-0 right-0 rounded-full transition-all duration-300 ${cardProgressClass(card, draft)}`}
                             style={{ width: `${progress}%` }}
                           />
                           <div className="absolute inset-0 flex items-center justify-center text-sm font-black text-slate-900 mix-blend-multiply dark:text-white dark:mix-blend-normal">

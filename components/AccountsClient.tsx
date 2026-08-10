@@ -1,6 +1,7 @@
 'use client';
 
 import { useMemo, useState } from 'react';
+import type { CSSProperties } from 'react';
 import { useRouter } from 'next/navigation';
 import { Edit3, Eye, Loader2, Plus, Search, Trash2, X } from 'lucide-react';
 import { toast } from 'sonner';
@@ -315,7 +316,7 @@ export default function AccountsClient({
 
   return (
     <>
-      <div className="mb-5 grid gap-3 md:grid-cols-[1fr_auto]">
+      <div className="sticky top-2 z-20 mb-5 grid gap-3 rounded-lg bg-white/92 p-2 shadow-sm backdrop-blur dark:bg-[#0d1d33]/92 md:static md:grid-cols-[1fr_auto] md:bg-transparent md:p-0 md:shadow-none md:backdrop-blur-0">
         <div className="relative">
           <Search className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
           <input
@@ -335,7 +336,7 @@ export default function AccountsClient({
         </button>
       </div>
 
-      <section className="grid gap-4 md:grid-cols-3">
+      <section className="grid grid-cols-3 gap-2 md:gap-4">
         <Summary title="إجمالي الحسابات" value={rows.length} />
         <Summary title="حسابات لنا" value={rows.filter((row) => row.net > 0).length} tone="green" />
         <Summary title="حسابات علينا" value={rows.filter((row) => row.net < 0).length} tone="red" />
@@ -386,7 +387,7 @@ export default function AccountsClient({
                       className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-3 py-2 text-sm font-bold text-white"
                     >
                       <Plus size={16} />
-                      حركة
+                      إضافة
                     </button>
                     <button
                       type="button"
@@ -394,7 +395,7 @@ export default function AccountsClient({
                       className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-3 py-2 text-sm font-bold text-white"
                     >
                       <Plus size={16} />
-                      تم سداد
+                      تم السداد
                     </button>
                   </div>
                 </td>
@@ -411,13 +412,17 @@ export default function AccountsClient({
         </table>
       </div>
 
-      <div className="mt-5 grid gap-3 md:hidden">
-        {filteredRows.map((row) => (
-          <article key={`${row.personId}-${row.currency.id}-${row.paymentMethod}`} className="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
+      <div className="stagger-list mt-5 grid gap-3 md:hidden">
+        {filteredRows.map((row, index) => (
+          <article
+            key={`${row.personId}-${row.currency.id}-${row.paymentMethod}`}
+            style={{ '--stagger': index } as CSSProperties}
+            className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900"
+          >
             <div className="flex items-start justify-between gap-3">
-              <div>
+              <div className="min-w-0">
                 <div className="text-xs font-bold text-slate-500">{row.customerNo || '—'}</div>
-                <h2 className="mt-1 font-black">{row.fullName}</h2>
+                <h2 className="mt-1 truncate font-black">{row.fullName}</h2>
                 <div className="mt-1 text-xs text-slate-500">{row.paymentLabel} · {row.currency.name}</div>
               </div>
               <span className={row.net > 0 ? 'text-sm font-black text-emerald-600' : row.net < 0 ? 'text-sm font-black text-red-600' : 'text-sm font-bold text-slate-500'}>
@@ -436,22 +441,22 @@ export default function AccountsClient({
             </div>
             <div className="mt-3 text-sm font-bold">{netLabel(row)}</div>
             <div className="mt-1 text-xs text-slate-500">آخر حركة: {formatDateTime(row.lastMovement)}</div>
-            <div className="mt-4 grid grid-cols-3 gap-2">
-              <button
-                type="button"
-                onClick={() => setSelectedRow(row)}
-                className="inline-flex items-center justify-center gap-2 rounded-lg bg-slate-100 px-3 py-2 text-sm font-bold text-slate-700 dark:bg-slate-800 dark:text-slate-100"
-              >
-                <Eye size={16} />
-                التفاصيل
-              </button>
+            <button
+              type="button"
+              onClick={() => setSelectedRow(row)}
+              className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-lg bg-indigo-600 px-3 py-2 text-sm font-bold text-white"
+            >
+              <Eye size={16} />
+              عرض الحساب
+            </button>
+            <div className="mt-2 grid grid-cols-2 gap-2">
               <button
                 type="button"
                 onClick={() => openAdd(row)}
                 className="inline-flex items-center justify-center gap-2 rounded-lg bg-indigo-600 px-3 py-2 text-sm font-bold text-white"
               >
                 <Plus size={16} />
-                حركة
+                إضافة
               </button>
               <button
                 type="button"
@@ -459,7 +464,7 @@ export default function AccountsClient({
                 className="inline-flex items-center justify-center gap-2 rounded-lg bg-emerald-600 px-3 py-2 text-sm font-bold text-white"
               >
                 <Plus size={16} />
-                تم سداد
+                تم السداد
               </button>
             </div>
           </article>
@@ -491,9 +496,9 @@ export default function AccountsClient({
 
       {selectedRow ? (
         <div className="fixed inset-0 z-50">
-          <button className="absolute inset-0 bg-slate-950/45" aria-label="إغلاق التفاصيل" onClick={() => setSelectedRow(null)} />
-          <aside className="absolute inset-y-0 left-0 w-full max-w-4xl animate-[drawer-in_220ms_ease-out] overflow-y-auto border-r border-slate-200 bg-white p-5 shadow-2xl dark:border-slate-800 dark:bg-slate-950 md:w-[78vw]">
-            <div className="mb-5 flex items-start justify-between gap-4">
+          <button className="sheet-backdrop absolute inset-0 bg-slate-950/45 backdrop-blur-sm" aria-label="إغلاق التفاصيل" onClick={() => setSelectedRow(null)} />
+          <aside className="sheet-panel absolute inset-x-0 bottom-0 h-[96dvh] w-full overflow-y-auto rounded-t-lg border-t border-slate-200 bg-white p-4 shadow-2xl dark:border-slate-800 dark:bg-slate-950 md:inset-y-0 md:left-0 md:right-auto md:h-auto md:max-w-4xl md:rounded-none md:border-r md:border-t-0 md:p-5 md:w-[78vw]">
+            <div className="sticky top-0 z-10 -mx-4 -mt-4 mb-4 flex items-start justify-between gap-4 border-b border-slate-100 bg-white/95 p-4 backdrop-blur dark:border-slate-800 dark:bg-slate-950/95 md:static md:m-0 md:mb-5 md:border-0 md:bg-transparent md:p-0">
               <div>
                 <div className="text-sm font-bold text-indigo-600">{selectedRow.customerNo || '—'}</div>
                 <h2 className="text-2xl font-black">{selectedRow.fullName}</h2>
@@ -509,7 +514,7 @@ export default function AccountsClient({
               </button>
             </div>
 
-            <div className="mb-5 grid gap-3 md:grid-cols-2">
+            <div className="mb-5 grid gap-3 md:grid-cols-3">
               <AccountPanel
                 title="لنا"
                 amount={selectedRow.ourAmount}
@@ -528,9 +533,58 @@ export default function AccountsClient({
                 actionLabel="إضافة"
                 onAction={() => openCreditAdd(selectedRow)}
               />
+              <NetPanel row={selectedRow} />
             </div>
 
-            <div className="table-wrap">
+            <div className="stagger-list grid gap-3 md:hidden">
+              {selectedSettlements.map((settlement, index) => (
+                <article
+                  key={settlement.id}
+                  style={{ '--stagger': index } as CSSProperties}
+                  className="relative overflow-hidden rounded-lg border border-slate-200 bg-slate-50 p-3 pr-5 text-sm dark:border-slate-800 dark:bg-slate-900"
+                >
+                  <span className={`absolute right-0 top-0 h-full w-1.5 ${settlement.accountType === 'DEBT' ? 'bg-emerald-500' : 'bg-red-500'}`} />
+                  <div className="flex items-start justify-between gap-3">
+                    <div className={settlement.accountType === 'DEBT' ? 'font-black text-emerald-600' : 'font-black text-red-600'}>
+                      {settlement.accountType === 'DEBT' ? 'لنا' : 'علينا'} · {walletSettlementDirectionLabels[settlement.direction]}
+                    </div>
+                    <div className="num text-xs text-slate-500">{formatDateTime(settlement.occurredAt)}</div>
+                  </div>
+                  <div className="mt-3 grid grid-cols-3 gap-2 text-xs">
+                    <span className="rounded-lg bg-white p-2 dark:bg-slate-950">قبل <b className="num block">{formatMoney(settlement.balanceBefore, settlement.currency)}</b></span>
+                    <span className="rounded-lg bg-white p-2 dark:bg-slate-950">القيمة <b className="num block">{formatMoney(settlement.amount, settlement.currency)}</b></span>
+                    <span className="rounded-lg bg-white p-2 dark:bg-slate-950">بعد <b className="num block">{formatMoney(settlement.balanceAfter, settlement.currency)}</b></span>
+                  </div>
+                  <div className="mt-2 text-xs text-slate-500">{movementEffectLabel(settlement)} · {settlement.username || 'system'}</div>
+                  <div className="mt-2">{settlement.note || settlement.reason}</div>
+                  <div className="mt-3 flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() => openEdit(settlement)}
+                      className="inline-flex items-center gap-2 rounded-lg bg-slate-100 px-3 py-2 text-xs font-bold text-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                    >
+                      <Edit3 size={15} />
+                      تعديل
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => deleteSettlement(settlement)}
+                      className="inline-flex items-center gap-2 rounded-lg bg-red-50 px-3 py-2 text-xs font-bold text-red-700 dark:bg-red-950 dark:text-red-200"
+                    >
+                      <Trash2 size={15} />
+                      حذف
+                    </button>
+                  </div>
+                </article>
+              ))}
+              {!selectedSettlements.length ? (
+                <div className="rounded-lg border border-dashed border-slate-300 p-5 text-center text-sm text-slate-500 dark:border-slate-700">
+                  لا توجد حركات مالية لهذا الحساب.
+                </div>
+              ) : null}
+            </div>
+
+            <div className="table-wrap hidden md:block">
               <table>
                 <thead>
                   <tr>
@@ -604,11 +658,31 @@ export default function AccountsClient({
 
 function Summary({ title, value, tone }: { title: string; value: React.ReactNode; tone?: 'green' | 'red' }) {
   return (
-    <div className="card p-5">
-      <div className="text-sm text-slate-500">{title}</div>
-      <div className={`mt-2 text-2xl font-black ${tone === 'green' ? 'text-emerald-600' : tone === 'red' ? 'text-red-600' : ''}`}>
+    <div className="card p-3 md:p-5">
+      <div className="text-xs text-slate-500 md:text-sm">{title}</div>
+      <div className={`mt-2 text-xl font-black md:text-2xl ${tone === 'green' ? 'text-emerald-600' : tone === 'red' ? 'text-red-600' : ''}`}>
         {value}
       </div>
+    </div>
+  );
+}
+
+function NetPanel({ row }: { row: AccountRow }) {
+  const positive = row.net >= 0;
+  return (
+    <div className="card p-5">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <div className="text-sm text-slate-500">صافي الحساب</div>
+          <div className={`num mt-2 text-2xl font-black ${positive ? 'text-emerald-600' : 'text-red-600'}`}>
+            {formatMoney(Math.abs(row.net), row.currency)}
+          </div>
+        </div>
+        <span className="rounded-md bg-slate-100 px-2 py-1 text-xs font-bold text-slate-600 dark:bg-slate-800 dark:text-slate-200">
+          {positive ? 'لنا' : 'علينا'}
+        </span>
+      </div>
+      <div className="mt-3 text-sm text-slate-500">{netLabel(row)}</div>
     </div>
   );
 }
@@ -683,16 +757,16 @@ function MovementModal({
   const options = paymentOptions(currencies, form.currencyId);
 
   return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-950/60 p-4">
-      <form onSubmit={onSubmit} className="w-full max-w-2xl rounded-lg border border-slate-200 bg-white p-5 shadow-xl dark:border-slate-800 dark:bg-slate-900">
-        <div className="mb-5 flex items-start justify-between gap-4">
+    <div className="fixed inset-0 z-[60] flex items-end justify-center bg-slate-950/60 p-0 backdrop-blur-sm md:items-center md:p-4">
+      <form onSubmit={onSubmit} className="sheet-panel flex max-h-[96dvh] w-full max-w-2xl flex-col overflow-hidden rounded-t-lg border border-slate-200 bg-white shadow-xl dark:border-slate-800 dark:bg-slate-900 md:rounded-lg">
+        <div className="flex items-start justify-between gap-4 border-b border-slate-200 p-4 dark:border-slate-800">
           <h2 className="text-lg font-black">{title}</h2>
           <button type="button" onClick={onClose} disabled={saving} className="rounded-lg p-2 text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800" aria-label="إغلاق">
             <X size={20} />
           </button>
         </div>
 
-        <div className="grid gap-4 md:grid-cols-2">
+        <div className="grid gap-4 overflow-y-auto p-4 md:grid-cols-2">
           <select value={form.personId} onChange={(event) => onChange({ ...form, personId: event.target.value })}>
             {people.map((person) => (
               <option key={person.id} value={person.id}>
@@ -744,18 +818,28 @@ function MovementModal({
             placeholder="ملاحظة"
             rows={3}
           />
-          <select
-            className="md:col-span-2"
-            value={form.effectMode}
-            onChange={(event) => onChange({ ...form, effectMode: event.target.value as MovementForm['effectMode'] })}
-          >
-            <option value="OFFSET">خصم القيمة من الإجمالي</option>
-            <option value="NORMAL">إضافة عادية</option>
-          </select>
-        </div>
+          <div className="md:col-span-2">
+            <div className="mb-2 text-xs font-bold text-slate-500">طريقة التأثير</div>
+            <div className="grid grid-cols-2 gap-2">
+              {(['OFFSET', 'NORMAL'] as const).map((mode) => (
+                <button
+                  key={mode}
+                  type="button"
+                  onClick={() => onChange({ ...form, effectMode: mode })}
+                  className={`rounded-lg border px-3 py-3 text-sm font-black transition ${
+                    form.effectMode === mode
+                      ? 'border-blue-500 bg-blue-50 text-blue-700 dark:border-blue-400 dark:bg-blue-950 dark:text-blue-200'
+                      : 'border-slate-200 text-slate-600 dark:border-slate-700 dark:text-slate-300'
+                  }`}
+                >
+                  {mode === 'OFFSET' ? 'خصم القيمة من الإجمالي' : 'إضافة عادية'}
+                </button>
+              ))}
+            </div>
+          </div>
 
-        {preview ? (
-          <div className="mt-5 rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm dark:border-slate-800 dark:bg-slate-950">
+          {preview ? (
+          <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm dark:border-slate-800 dark:bg-slate-950 md:col-span-2">
             <div className="mb-3 font-black">معاينة الأرصدة قبل الحفظ</div>
             <div className="grid gap-2 sm:grid-cols-2">
               <span>لنا قبل العملية: <b>{formatMoney(preview.ourAmount, currencies.find((currency) => currency.id === form.currencyId))}</b></span>
@@ -767,9 +851,10 @@ function MovementModal({
               {!preview.valid ? <span className="font-bold text-red-600 sm:col-span-2">{preview.message}</span> : null}
             </div>
           </div>
-        ) : null}
+          ) : null}
+        </div>
 
-        <div className="mt-5 grid gap-3 sm:grid-cols-2">
+        <div className="grid gap-3 border-t border-slate-200 p-4 dark:border-slate-800 sm:grid-cols-2">
           <button
             type="button"
             onClick={onClose}

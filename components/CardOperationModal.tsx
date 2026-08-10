@@ -40,6 +40,8 @@ export default function CardOperationModal({ card, operation, initialType, onClo
   });
 
   const remaining = currentRemaining(card);
+  const baseAmount = numberValue(card.valueUsd) > 0 ? numberValue(card.valueUsd) : numberValue(card.agreedAmount);
+  const currentDeducted = Math.max(numberValue(card.totalDeducted ?? card.receivedAmount), 0);
   const projectedAmount = useMemo(() => {
     if (form.operationType === 'GIFT_CARD') {
       const category = defaultCardDiscountCategories.find((item) => item.code === form.categoryCode);
@@ -49,6 +51,12 @@ export default function CardOperationModal({ card, operation, initialType, onClo
     if (form.operationType === 'INVOICE') return Number(form.amount || 0);
     return 0;
   }, [form, remaining]);
+  const projectedRemaining = Math.max(remaining - projectedAmount, 0);
+  const currentPercent = baseAmount > 0 ? Math.min(Math.max((currentDeducted / baseAmount) * 100, 0), 100) : 0;
+  const nextPercent =
+    baseAmount > 0 && ['GIFT_CARD', 'INVOICE', 'FINAL_SETTLEMENT'].includes(form.operationType)
+      ? Math.min(Math.max(((currentDeducted + projectedAmount) / baseAmount) * 100, 0), 100)
+      : currentPercent;
 
   async function submit(event: React.FormEvent) {
     event.preventDefault();
@@ -90,9 +98,9 @@ export default function CardOperationModal({ card, operation, initialType, onClo
   }
 
   return (
-    <div className="fixed inset-0 z-[80] flex items-center justify-center bg-slate-950/60 p-4">
-      <form onSubmit={submit} className="w-full max-w-xl rounded-lg border border-slate-200 bg-white p-5 shadow-xl dark:border-slate-800 dark:bg-slate-950">
-        <div className="mb-5 flex items-start justify-between gap-4">
+    <div className="fixed inset-0 z-[80] flex items-end justify-center bg-slate-950/60 p-0 backdrop-blur-sm md:items-center md:p-4">
+      <form onSubmit={submit} className="sheet-panel flex max-h-[96dvh] w-full max-w-xl flex-col overflow-hidden rounded-t-lg border border-slate-200 bg-white shadow-xl dark:border-slate-800 dark:bg-slate-950 md:rounded-lg">
+        <div className="flex items-start justify-between gap-4 border-b border-slate-200 p-4 dark:border-slate-800">
           <div>
             <h2 className="text-lg font-black">{operation ? 'تعديل عملية بطاقة' : 'إضافة عملية بطاقة'}</h2>
             <p className="mt-1 text-sm text-slate-500">المتبقي الحالي: {formatMoney(remaining, card.currency || card.batch?.currency || '$')}</p>
@@ -102,14 +110,25 @@ export default function CardOperationModal({ card, operation, initialType, onClo
           </button>
         </div>
 
-        <div className="grid gap-4 md:grid-cols-2">
-          <select value={form.operationType} onChange={(event) => setForm({ ...form, operationType: event.target.value })}>
+        <div className="overflow-y-auto p-4">
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
             {operationTypes.map((type) => (
-              <option key={type.value} value={type.value}>
+              <button
+                type="button"
+                key={type.value}
+                onClick={() => setForm({ ...form, operationType: type.value })}
+                className={`rounded-lg border px-3 py-2 text-sm font-black ${
+                  form.operationType === type.value
+                    ? 'border-indigo-600 bg-indigo-50 text-indigo-700 dark:border-blue-400 dark:bg-blue-950 dark:text-blue-200'
+                    : 'border-slate-200 bg-white text-slate-600 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-200'
+                }`}
+              >
                 {type.label}
-              </option>
+              </button>
             ))}
-          </select>
+        </div>
+
+        <div className="mt-4 grid gap-4 md:grid-cols-2">
 
           {form.operationType === 'GIFT_CARD' ? (
             <>
@@ -144,12 +163,22 @@ export default function CardOperationModal({ card, operation, initialType, onClo
         </div>
 
         {['GIFT_CARD', 'INVOICE', 'FINAL_SETTLEMENT'].includes(form.operationType) ? (
-          <div className="mt-4 rounded-lg bg-slate-50 p-3 text-sm text-slate-600 dark:bg-slate-900 dark:text-slate-300">
-            قيمة العملية المتوقعة: <b>{formatMoney(projectedAmount, card.currency || card.batch?.currency || '$')}</b>
+          <div className="mt-4 rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-600 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300">
+            <div className="mb-3 font-black text-slate-900 dark:text-white">معاينة العملية</div>
+            <div className="grid gap-2 sm:grid-cols-2">
+              <span>قيمة العملية: <b className="num">{formatMoney(projectedAmount, card.currency || card.batch?.currency || '$')}</b></span>
+              <span>المتبقي بعدها: <b className="num">{formatMoney(projectedRemaining, card.currency || card.batch?.currency || '$')}</b></span>
+              <span>النسبة الحالية: <b className="num">{currentPercent.toFixed(currentPercent % 1 ? 1 : 0)}%</b></span>
+              <span>النسبة الجديدة: <b className="num">{nextPercent.toFixed(nextPercent % 1 ? 1 : 0)}%</b></span>
+            </div>
+            <div className="mt-3 h-3 overflow-hidden rounded-full bg-slate-200 dark:bg-slate-800">
+              <div className="h-full rounded-full bg-orange-500 transition-all duration-300" style={{ width: `${nextPercent}%` }} />
+            </div>
           </div>
         ) : null}
+        </div>
 
-        <div className="mt-5 grid gap-3 sm:grid-cols-2">
+        <div className="grid gap-3 border-t border-slate-200 p-4 dark:border-slate-800 sm:grid-cols-2">
           <button type="button" onClick={onClose} disabled={saving} className="rounded-lg border border-slate-200 px-4 py-3 font-bold dark:border-slate-700">
             إلغاء
           </button>

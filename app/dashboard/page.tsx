@@ -107,7 +107,7 @@ export default async function Dashboard() {
 
   return (
     <Page title="الصفحة الرئيسية">
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="stagger-list grid grid-cols-2 gap-3 md:gap-4 xl:grid-cols-4">
         <Stat title="إجمالي الزبائن" value={formatNumber(customers)} href="/people" />
         <Stat title="إجمالي البطاقات" value={formatNumber(totalCards)} href="/people" />
         <Stat title="البطاقات الجديدة" value={formatNumber(newCards)} href="/people" />
@@ -118,9 +118,9 @@ export default async function Dashboard() {
         <Stat title="آخر تحديث" value={formatNumber(recentCards.length + recentSettlements.length)} href="/audit" />
       </div>
 
-      <section className="mt-6 card p-5">
+      <section className="mt-5 card p-4 md:mt-6 md:p-5">
         <h2 className="mb-4 font-black">مجاميع البطاقات حسب العملة</h2>
-        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+        <div className="stagger-list grid gap-3 md:grid-cols-2 xl:grid-cols-3">
           {cardCurrencyTotals.map((row) => (
             <div key={row.currency.id} className="rounded-lg border border-slate-200 p-3 dark:border-slate-800">
               <div className="font-black">{row.currency.name}</div>
@@ -139,9 +139,9 @@ export default async function Dashboard() {
       </section>
 
       <div className="mt-6 grid gap-5 xl:grid-cols-2">
-        <section className="card p-5">
+        <section className="card p-4 md:p-5">
           <h2 className="mb-4 font-black">آخر البطاقات المعدلة</h2>
-          <div className="space-y-3">
+          <div className="stagger-list space-y-3">
             {recentCards.map((card) => {
               const currency = card.settlementCurrency || card.batch.currency;
               return (
@@ -165,9 +165,9 @@ export default async function Dashboard() {
           </div>
         </section>
 
-        <section className="card p-5">
+        <section className="card p-4 md:p-5">
           <h2 className="mb-4 font-black">آخر عمليات البطاقات</h2>
-          <div className="space-y-3">
+          <div className="stagger-list space-y-3">
             {recentCardOperations.map((operation) => {
               const currency = operation.card.settlementCurrency || operation.card.batch.currency;
               return (
@@ -187,9 +187,9 @@ export default async function Dashboard() {
           </div>
         </section>
 
-        <section className="card p-5">
+        <section className="card p-4 md:p-5">
           <h2 className="mb-4 font-black">آخر الحركات المالية</h2>
-          <div className="space-y-3">
+          <div className="stagger-list space-y-3">
             {recentSettlements.map((settlement) => {
               const isOur = settlement.accountType === 'DEBT';
               return (
@@ -217,9 +217,9 @@ export default async function Dashboard() {
 
 function Stat({ title, value, href, tone }: { title: string; value: ReactNode; href?: string; tone?: 'green' | 'red' }) {
   const content = (
-    <div className="card h-full p-5 hover:-translate-y-0.5 hover:shadow-lg">
-      <div className="text-sm text-slate-500">{title}</div>
-      <div className={`mt-2 text-2xl font-black ${tone === 'green' ? 'text-emerald-600' : tone === 'red' ? 'text-red-600' : ''}`}>
+    <div className="card h-full p-3 hover:-translate-y-0.5 hover:shadow-lg md:p-5">
+      <div className="text-xs text-slate-500 md:text-sm">{title}</div>
+      <div className={`num mt-2 text-2xl font-black md:text-3xl ${tone === 'green' ? 'text-emerald-600' : tone === 'red' ? 'text-red-600' : ''}`}>
         {value}
       </div>
     </div>

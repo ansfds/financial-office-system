@@ -1,20 +1,20 @@
 export default function RouteLoading() {
   return (
-    <main className="min-h-screen p-4 pt-16 lg:mr-72 lg:p-8">
-      <div className="mb-6 h-8 w-56 animate-pulse rounded-lg bg-slate-200 dark:bg-slate-800" />
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+    <main className="min-h-screen px-3 pb-[calc(5.75rem+env(safe-area-inset-bottom))] pt-4 sm:px-4 lg:mr-72 lg:p-8">
+      <div className="skeleton mb-4 h-7 w-44 md:mb-6 md:h-8 md:w-56" />
+      <div className="grid grid-cols-2 gap-3 md:gap-4 xl:grid-cols-4">
         {Array.from({ length: 4 }).map((_, index) => (
-          <div key={index} className="card p-5">
-            <div className="h-4 w-24 animate-pulse rounded bg-slate-200 dark:bg-slate-800" />
-            <div className="mt-4 h-8 w-32 animate-pulse rounded bg-slate-200 dark:bg-slate-800" />
+          <div key={index} className="card p-3 md:p-5">
+            <div className="skeleton h-4 w-20" />
+            <div className="skeleton mt-4 h-8 w-24" />
           </div>
         ))}
       </div>
-      <div className="card mt-6 p-5">
-        <div className="mb-4 h-5 w-40 animate-pulse rounded bg-slate-200 dark:bg-slate-800" />
+      <div className="card mt-5 p-4 md:mt-6 md:p-5">
+        <div className="skeleton mb-4 h-5 w-40" />
         <div className="space-y-3">
           {Array.from({ length: 6 }).map((_, index) => (
-            <div key={index} className="h-10 animate-pulse rounded bg-slate-100 dark:bg-slate-800" />
+            <div key={index} className="skeleton h-14" />
           ))}
         </div>
       </div>
