@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildWalletSnapshot,
+  previewWalletOperation,
   recalculateSettlementBalances,
   walletAccountAmount,
 } from '@/lib/customer-wallet';
@@ -117,5 +118,61 @@ describe('customer wallet helpers', () => {
         { id: 'repayment-2', direction: 'SUBTRACT', amount: 130 },
       ]),
     ).toThrow('NEGATIVE_WALLET_BALANCE');
+  });
+
+  it('previews offset addition by netting لنا وعلينا for the same currency', () => {
+    const preview = previewWalletOperation({
+      debtBefore: 10_000,
+      creditBefore: 0,
+      amount: 5_000,
+      accountType: 'CREDIT',
+      direction: 'ADD',
+      effectMode: 'OFFSET',
+    });
+
+    expect(preview.debtAfter.toString()).toBe('5000');
+    expect(preview.creditAfter.toString()).toBe('0');
+  });
+
+  it('previews normal addition without netting the two sides', () => {
+    const preview = previewWalletOperation({
+      debtBefore: 10_000,
+      creditBefore: 0,
+      amount: 5_000,
+      accountType: 'CREDIT',
+      direction: 'ADD',
+      effectMode: 'NORMAL',
+    });
+
+    expect(preview.debtAfter.toString()).toBe('10000');
+    expect(preview.creditAfter.toString()).toBe('5000');
+  });
+
+  it('moves the remaining net to علينا when offset credit exceeds لنا', () => {
+    const preview = previewWalletOperation({
+      debtBefore: 3_000,
+      creditBefore: 0,
+      amount: 5_000,
+      accountType: 'CREDIT',
+      direction: 'ADD',
+      effectMode: 'OFFSET',
+    });
+
+    expect(preview.debtAfter.toString()).toBe('0');
+    expect(preview.creditAfter.toString()).toBe('2000');
+  });
+
+  it('previews partial repayment before optional offset', () => {
+    const preview = previewWalletOperation({
+      debtBefore: 10_000,
+      creditBefore: 1_500,
+      amount: 2_000,
+      accountType: 'DEBT',
+      direction: 'SUBTRACT',
+      effectMode: 'OFFSET',
+    });
+
+    expect(preview.debtAfter.toString()).toBe('6500');
+    expect(preview.creditAfter.toString()).toBe('0');
   });
 });

@@ -4,8 +4,10 @@ import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   Archive,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
+  ChevronUp,
   Edit3,
   Eye,
   Loader2,
@@ -64,23 +66,13 @@ const blankForm: PersonForm = {
   category: 'REGULAR',
 };
 
-const stageLabels = [
-  'بطاقة جديدة',
-  'تم سحب الكرت الأول',
-  'تم سحب الكرت الثاني',
-  'تم سحب الكرت الثالث',
-  'تم سحب الكرت الرابع',
-  'تمت تصفية البطاقة',
-  'تم تسليم أو استلام القيمة',
-];
-
 const statusLabels: Record<string, string> = {
-  RECEIVED: 'جديدة',
-  IN_SETTLEMENT: 'قيد السحب',
-  PARTIAL: 'قيد السحب',
-  SETTLED: 'تمت التصفية',
-  COMPLETED: 'تم استلام القيمة',
-  CANCELLED: 'مرفوضة أو متوقفة',
+  RECEIVED: 'نشطة',
+  IN_SETTLEMENT: 'نشطة',
+  PARTIAL: 'نشطة',
+  SETTLED: 'مصفاة',
+  COMPLETED: 'مصفاة',
+  CANCELLED: 'مرفوضة',
 };
 
 const statusClasses: Record<string, string> = {
@@ -140,6 +132,43 @@ function cardOriginal(card: any) {
 function cardRemaining(card: any) {
   if (card.remainingAmount !== undefined && card.remainingAmount !== null) return numberValue(card.remainingAmount);
   return Math.max(cardOriginal(card) - numberValue(card.receivedAmount), 0);
+}
+
+function cardDraftRemaining(card: any, draft: CardDraft = {}) {
+  const original = cardOriginal({ ...card, ...draft });
+  if (draft.receivedAmount !== undefined) return Math.max(original - numberValue(draft.receivedAmount), 0);
+  return cardRemaining(card);
+}
+
+function cardDeducted(card: any, draft: CardDraft = {}) {
+  if (draft.receivedAmount !== undefined) return Math.max(numberValue(draft.receivedAmount), 0);
+  return Math.max(numberValue(card.totalDeducted ?? card.receivedAmount), 0);
+}
+
+function cardProgressPercent(card: any, draft: CardDraft = {}) {
+  const original = cardOriginal({ ...card, ...draft });
+  if (original <= 0) return 0;
+
+  const status = draft.status ?? card.status;
+  const deducted = ['SETTLED', 'COMPLETED'].includes(status) && cardDraftRemaining(card, draft) <= 0
+    ? original
+    : cardDeducted(card, draft);
+
+  return Math.min(Math.max((deducted / original) * 100, 0), 100);
+}
+
+function cardProgressClass(card: any, draft: CardDraft = {}) {
+  const status = draft.status ?? card.status;
+  const percent = cardProgressPercent(card, draft);
+
+  if (['SETTLED', 'COMPLETED'].includes(status) && percent >= 100) return 'bg-emerald-500';
+  if (percent <= 0) return 'bg-blue-500';
+  return 'bg-orange-500';
+}
+
+function cardProgressLabel(card: any, draft: CardDraft = {}) {
+  const percent = cardProgressPercent(card, draft);
+  return `${percent % 1 === 0 ? Math.round(percent) : percent.toFixed(1)}%`;
 }
 
 function personSummary(person: any) {
@@ -248,6 +277,7 @@ export default function PeopleClient({
   const [drafts, setDrafts] = useState<Record<string, CardDraft>>({});
   const [savingCards, setSavingCards] = useState<Record<string, boolean>>({});
   const [selectedCards, setSelectedCards] = useState<Set<string>>(new Set());
+  const [expandedCardIds, setExpandedCardIds] = useState<Set<string>>(new Set());
   const [statusFilter, setStatusFilter] = useState('ALL');
   const [batchForm, setBatchForm] = useState({
     cardCount: '1',
@@ -485,6 +515,15 @@ export default function PeopleClient({
 
   function toggleCard(cardId: string) {
     setSelectedCards((current) => {
+      const next = new Set(current);
+      if (next.has(cardId)) next.delete(cardId);
+      else next.add(cardId);
+      return next;
+    });
+  }
+
+  function toggleCardDetails(cardId: string) {
+    setExpandedCardIds((current) => {
       const next = new Set(current);
       if (next.has(cardId)) next.delete(cardId);
       else next.add(cardId);
@@ -856,141 +895,181 @@ export default function PeopleClient({
             <div className="grid gap-4">
               {visibleCards.map((card: any) => {
                 const draft = drafts[card.id] || {};
+                const expanded = expandedCardIds.has(card.id);
                 const currentStage = Math.max(0, Math.min(Number(draft.currentStage ?? card.currentStage ?? 0), 6));
                 const currency = card.currency || card.batch?.currency || '$';
+                const original = cardOriginal({ ...card, ...draft });
+                const remainingAmount = cardDraftRemaining(card, draft);
+                const deductedAmount = Math.min(cardDeducted(card, draft), original);
+                const progress = cardProgressPercent(card, draft);
                 return (
                   <article key={card.id} className="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
-                    <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-                      <label className="flex items-center gap-3 text-sm font-bold">
-                        <input type="checkbox" checked={selectedCards.has(card.id)} onChange={() => toggleCard(card.id)} />
-                        <span className="text-lg font-black">{cardCode(card)}</span>
-                      </label>
-                      <span className={`inline-flex w-fit rounded-full px-3 py-1 text-xs font-black ring-1 ${statusClasses[card.status] || statusClasses.RECEIVED}`}>
-                        {statusLabels[card.status] || card.status}
-                      </span>
-                    </div>
-
-                    <div className="mt-4 grid gap-2 md:grid-cols-7">
-                      {stageLabels.map((label, index) => (
-                        <div key={label} className="min-w-0">
-                          <div
-                            className={`h-2 rounded-full ${index <= currentStage ? 'bg-indigo-600 dark:bg-indigo-400' : 'bg-slate-200 dark:bg-slate-800'}`}
-                          />
-                          <div className="mt-1 truncate text-[11px] font-bold text-slate-500" title={label}>
-                            {label}
+                    <div className="grid gap-4">
+                      <div className="grid gap-3 md:grid-cols-[1fr_auto] md:items-start">
+                        <div className="min-w-0">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="text-lg font-black">{cardCode(card)}</span>
+                            <span className="rounded-md bg-slate-100 px-2 py-1 text-xs font-bold text-slate-600 dark:bg-slate-800 dark:text-slate-200">
+                              آخر 4 أرقام: {draft.cardLast4 ?? card.cardLast4 ?? '—'}
+                            </span>
+                          </div>
+                          <div className="mt-3 grid gap-2 text-sm sm:grid-cols-2 lg:grid-cols-4">
+                            <span className="rounded-lg bg-slate-50 p-3 dark:bg-slate-950">
+                              الأصل: <b>{formatMoney(original, currency)}</b>
+                            </span>
+                            <span className="rounded-lg bg-slate-50 p-3 dark:bg-slate-950">
+                              المتبقي: <b>{formatMoney(remainingAmount, currency)}</b>
+                            </span>
+                            <span className="rounded-lg bg-slate-50 p-3 dark:bg-slate-950">
+                              المسحوب: <b>{formatMoney(deductedAmount, currency)}</b>
+                            </span>
+                            <span className="rounded-lg bg-slate-50 p-3 dark:bg-slate-950">
+                              النسبة: <b>{cardProgressLabel(card, draft)}</b>
+                            </span>
                           </div>
                         </div>
-                      ))}
+                        <span className={`inline-flex w-fit rounded-full px-3 py-1 text-xs font-black ring-1 ${statusClasses[draft.status ?? card.status] || statusClasses.RECEIVED}`}>
+                          {statusLabels[draft.status ?? card.status] || draft.status || card.status}
+                        </span>
+                      </div>
+
+                      <div className="grid gap-2">
+                        <div className="relative h-8 overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800">
+                          <div
+                            className={`absolute inset-y-0 right-0 rounded-full transition-all duration-200 ${cardProgressClass(card, draft)}`}
+                            style={{ width: `${progress}%` }}
+                          />
+                          <div className="absolute inset-0 flex items-center justify-center text-sm font-black text-slate-900 mix-blend-multiply dark:text-white dark:mix-blend-normal">
+                            {cardProgressLabel(card, draft)}
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="grid gap-2 sm:grid-cols-[1fr_auto]">
+                        <button
+                          type="button"
+                          onClick={() => setOperationModal({ card })}
+                          disabled={card.status === 'CANCELLED'}
+                          className="inline-flex items-center justify-center gap-2 rounded-lg bg-slate-900 px-3 py-2.5 text-sm font-bold text-white disabled:cursor-not-allowed disabled:opacity-50 dark:bg-slate-100 dark:text-slate-950"
+                        >
+                          <Plus size={16} />
+                          إضافة عملية
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => toggleCardDetails(card.id)}
+                          className="inline-flex items-center justify-center rounded-lg border border-slate-200 px-3 py-2.5 text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
+                          aria-label={expanded ? 'إخفاء تفاصيل البطاقة' : 'عرض تفاصيل البطاقة'}
+                        >
+                          {expanded ? <ChevronUp size={20} /> : <ChevronDown size={20} />}
+                        </button>
+                      </div>
                     </div>
 
-                    <div className="mt-4 grid gap-3 md:grid-cols-4">
-                      <input
-                        placeholder="المصرف"
-                        value={draft.bankName ?? card.bankName ?? ''}
-                        onChange={(event) => setCardDraft(card.id, { bankName: event.target.value })}
-                      />
-                      <input
-                        inputMode="numeric"
-                        maxLength={4}
-                        placeholder="آخر 4 أرقام"
-                        value={draft.cardLast4 ?? card.cardLast4 ?? ''}
-                        onChange={(event) =>
-                          setCardDraft(card.id, { cardLast4: event.target.value.replace(/\D/g, '').slice(0, 4) })
-                        }
-                      />
-                      <input
-                        type="number"
-                        min="0"
-                        step="0.000001"
-                        placeholder="القيمة الأصلية"
-                        value={draft.valueUsd ?? normalizeDraftValue(card.valueUsd)}
-                        onChange={(event) => setCardDraft(card.id, { valueUsd: event.target.value })}
-                      />
-                      <input
-                        type="number"
-                        min="0"
-                        step="0.000001"
-                        placeholder="السعر المتفق عليه"
-                        value={draft.agreedAmount ?? normalizeDraftValue(card.agreedAmount)}
-                        onChange={(event) => setCardDraft(card.id, { agreedAmount: event.target.value })}
-                      />
-                      <input
-                        type="number"
-                        min="0"
-                        step="0.000001"
-                        placeholder="إجمالي المسحوب"
-                        value={draft.receivedAmount ?? normalizeDraftValue(card.receivedAmount)}
-                        onChange={(event) => setCardDraft(card.id, { receivedAmount: event.target.value })}
-                      />
-                      <input
-                        type="number"
-                        min="0"
-                        step="0.000001"
-                        placeholder="مبلغ التسليم/الاستلام"
-                        value={draft.settlementAmount ?? normalizeDraftValue(card.settlementAmount)}
-                        onChange={(event) => setCardDraft(card.id, { settlementAmount: event.target.value })}
-                      />
-                      <select
-                        value={draft.settlementPaymentMethod ?? card.settlementPaymentMethod ?? 'USD_CASH'}
-                        onChange={(event) => setCardDraft(card.id, { settlementPaymentMethod: event.target.value })}
-                      >
-                        {settlementMethods.map((method) => (
-                          <option key={method} value={method}>
-                            {detailedPaymentLabels[method as keyof typeof detailedPaymentLabels] || method}
-                          </option>
-                        ))}
-                      </select>
-                      <select
-                        value={draft.status ?? card.status}
-                        onChange={(event) => setCardDraft(card.id, { status: event.target.value })}
-                      >
-                        {statusOptions.map((option) => (
-                          <option key={option.value} value={option.value}>
-                            {option.label}
-                          </option>
-                        ))}
-                      </select>
-                      <input
-                        type="number"
-                        min="0"
-                        step="0.000001"
-                        placeholder="مبلغ السحب لهذه المرحلة"
-                        value={draft.stageAmount ?? ''}
-                        onChange={(event) => setCardDraft(card.id, { stageAmount: event.target.value })}
-                      />
-                      <input
-                        className="md:col-span-2"
-                        placeholder="ملاحظات المرحلة"
-                        value={draft.stageNote ?? ''}
-                        onChange={(event) => setCardDraft(card.id, { stageNote: event.target.value })}
-                      />
-                      <input
-                        className="md:col-span-1"
-                        placeholder="ملاحظات البطاقة"
-                        value={draft.notes ?? card.notes ?? ''}
-                        onChange={(event) => setCardDraft(card.id, { notes: event.target.value })}
-                      />
-                    </div>
+                    <div className={`grid overflow-hidden transition-all duration-200 ease-out ${expanded ? 'mt-4 grid-rows-[1fr] opacity-100' : 'grid-rows-[0fr] opacity-0'}`}>
+                      <div className="min-h-0 overflow-hidden border-t border-slate-200 pt-4 dark:border-slate-800">
+                        <div className="mb-4 flex flex-wrap items-center gap-3">
+                          <label className="inline-flex items-center gap-2 text-sm font-bold">
+                            <input type="checkbox" checked={selectedCards.has(card.id)} onChange={() => toggleCard(card.id)} />
+                            تحديد البطاقة
+                          </label>
+                          <span className="text-sm text-slate-500">الإضافة: {formatDate(card.createdAt)}</span>
+                          <span className="text-sm text-slate-500">آخر تحديث: {formatDateTime(card.updatedAt)}</span>
+                          <span className="text-sm text-slate-500">
+                            آخر عملية: {card.stageLogs?.[0] ? formatDateTime(card.stageLogs[0].createdAt) : '—'}
+                          </span>
+                        </div>
 
-                    <div className="mt-3 grid gap-2 text-sm md:grid-cols-6">
-                      <span>المتبقي: <b>{formatMoney(cardRemaining({ ...card, ...draft }), currency)}</b></span>
-                      <span>المسحوب: <b>{formatMoney(numberValue(card.totalDeducted ?? card.receivedAmount), currency)}</b></span>
-                      <span>النسبة: <b>{Math.round(numberValue(card.progressPercent || 0))}%</b></span>
-                      <span>الإضافة: {formatDate(card.createdAt)}</span>
-                      <span>آخر تحديث: {formatDateTime(card.updatedAt)}</span>
-                      <span>آخر مرحلة: {card.stageLogs?.[0] ? formatDateTime(card.stageLogs[0].createdAt) : '—'}</span>
-                    </div>
+                        <div className="grid gap-3 md:grid-cols-4">
+                          <input
+                            placeholder="المصرف"
+                            value={draft.bankName ?? card.bankName ?? ''}
+                            onChange={(event) => setCardDraft(card.id, { bankName: event.target.value })}
+                          />
+                          <input
+                            inputMode="numeric"
+                            maxLength={4}
+                            placeholder="آخر 4 أرقام"
+                            value={draft.cardLast4 ?? card.cardLast4 ?? ''}
+                            onChange={(event) =>
+                              setCardDraft(card.id, { cardLast4: event.target.value.replace(/\D/g, '').slice(0, 4) })
+                            }
+                          />
+                          <input
+                            type="number"
+                            min="0"
+                            step="0.000001"
+                            placeholder="القيمة الأصلية"
+                            value={draft.valueUsd ?? normalizeDraftValue(card.valueUsd)}
+                            onChange={(event) => setCardDraft(card.id, { valueUsd: event.target.value })}
+                          />
+                          <input
+                            type="number"
+                            min="0"
+                            step="0.000001"
+                            placeholder="السعر المتفق عليه"
+                            value={draft.agreedAmount ?? normalizeDraftValue(card.agreedAmount)}
+                            onChange={(event) => setCardDraft(card.id, { agreedAmount: event.target.value })}
+                          />
+                          <input
+                            type="number"
+                            min="0"
+                            step="0.000001"
+                            placeholder="إجمالي المسحوب"
+                            value={draft.receivedAmount ?? normalizeDraftValue(card.receivedAmount)}
+                            onChange={(event) => setCardDraft(card.id, { receivedAmount: event.target.value })}
+                          />
+                          <input
+                            type="number"
+                            min="0"
+                            step="0.000001"
+                            placeholder="مبلغ التسليم/الاستلام"
+                            value={draft.settlementAmount ?? normalizeDraftValue(card.settlementAmount)}
+                            onChange={(event) => setCardDraft(card.id, { settlementAmount: event.target.value })}
+                          />
+                          <select
+                            value={draft.settlementPaymentMethod ?? card.settlementPaymentMethod ?? 'USD_CASH'}
+                            onChange={(event) => setCardDraft(card.id, { settlementPaymentMethod: event.target.value })}
+                          >
+                            {settlementMethods.map((method) => (
+                              <option key={method} value={method}>
+                                {detailedPaymentLabels[method as keyof typeof detailedPaymentLabels] || method}
+                              </option>
+                            ))}
+                          </select>
+                          <select
+                            value={draft.status ?? card.status}
+                            onChange={(event) => setCardDraft(card.id, { status: event.target.value })}
+                          >
+                            {statusOptions.map((option) => (
+                              <option key={option.value} value={option.value}>
+                                {option.label}
+                              </option>
+                            ))}
+                          </select>
+                          <input
+                            type="number"
+                            min="0"
+                            step="0.000001"
+                            placeholder="مبلغ السحب لهذه المرحلة"
+                            value={draft.stageAmount ?? ''}
+                            onChange={(event) => setCardDraft(card.id, { stageAmount: event.target.value })}
+                          />
+                          <input
+                            className="md:col-span-2"
+                            placeholder="ملاحظات المرحلة"
+                            value={draft.stageNote ?? ''}
+                            onChange={(event) => setCardDraft(card.id, { stageNote: event.target.value })}
+                          />
+                          <input
+                            className="md:col-span-1"
+                            placeholder="ملاحظات البطاقة"
+                            value={draft.notes ?? card.notes ?? ''}
+                            onChange={(event) => setCardDraft(card.id, { notes: event.target.value })}
+                          />
+                        </div>
 
-                    <div className="mt-4 flex flex-wrap gap-2">
-                      <button
-                        type="button"
-                        onClick={() => setOperationModal({ card })}
-                        disabled={card.status === 'CANCELLED'}
-                        className="inline-flex items-center gap-2 rounded-lg bg-slate-900 px-3 py-2 text-sm font-bold text-white disabled:cursor-not-allowed disabled:opacity-50 dark:bg-slate-100 dark:text-slate-950"
-                      >
-                        <Plus size={16} />
-                        إضافة عملية
-                      </button>
+                        <div className="mt-4 flex flex-wrap gap-2">
                       <button
                         type="button"
                         onClick={() => setOperationModal({ card, initialType: 'REJECT' })}
@@ -1041,42 +1120,44 @@ export default function PeopleClient({
                         <Trash2 size={16} />
                         حذف
                       </button>
-                    </div>
+                        </div>
 
-                    <div className="mt-4 rounded-lg bg-slate-50 p-3 dark:bg-slate-950">
-                      <div className="mb-2 text-sm font-black">سجل عمليات البطاقة</div>
-                      <div className="grid gap-2">
-                        {(card.operations || []).slice(0, 8).map((operation: any) => (
-                          <div key={operation.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-slate-200 bg-white p-2 text-sm dark:border-slate-800 dark:bg-slate-900">
-                            <div>
-                              <b>{cardOperationTypeLabels[operation.operationType as keyof typeof cardOperationTypeLabels] || operation.operationType}</b>
-                              <span className="mx-2 text-slate-400">|</span>
-                              {formatMoney(operation.amount, currency)}
-                              <span className="mx-2 text-slate-400">|</span>
-                              {formatDateTime(operation.occurredAt)}
-                              {operation.note || operation.reason ? <span className="ms-2 text-slate-500">{operation.note || operation.reason}</span> : null}
-                            </div>
-                            <div className="flex gap-2">
-                              <button
-                                type="button"
-                                onClick={() => setOperationModal({ card, operation })}
-                                className="rounded-lg bg-slate-100 p-2 text-slate-700 dark:bg-slate-800 dark:text-slate-100"
-                                aria-label="تعديل عملية البطاقة"
-                              >
-                                <Edit3 size={15} />
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => deleteCardOperation(card, operation)}
-                                className="rounded-lg bg-red-50 p-2 text-red-700 dark:bg-red-950 dark:text-red-200"
-                                aria-label="حذف عملية البطاقة"
-                              >
-                                <Trash2 size={15} />
-                              </button>
-                            </div>
+                        <div className="mt-4 rounded-lg bg-slate-50 p-3 dark:bg-slate-950">
+                          <div className="mb-2 text-sm font-black">سجل عمليات البطاقة</div>
+                          <div className="grid gap-2">
+                            {(card.operations || []).slice(0, 8).map((operation: any) => (
+                              <div key={operation.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-slate-200 bg-white p-2 text-sm dark:border-slate-800 dark:bg-slate-900">
+                                <div>
+                                  <b>{cardOperationTypeLabels[operation.operationType as keyof typeof cardOperationTypeLabels] || operation.operationType}</b>
+                                  <span className="mx-2 text-slate-400">|</span>
+                                  {formatMoney(operation.amount, currency)}
+                                  <span className="mx-2 text-slate-400">|</span>
+                                  {formatDateTime(operation.occurredAt)}
+                                  {operation.note || operation.reason ? <span className="ms-2 text-slate-500">{operation.note || operation.reason}</span> : null}
+                                </div>
+                                <div className="flex gap-2">
+                                  <button
+                                    type="button"
+                                    onClick={() => setOperationModal({ card, operation })}
+                                    className="rounded-lg bg-slate-100 p-2 text-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                                    aria-label="تعديل عملية البطاقة"
+                                  >
+                                    <Edit3 size={15} />
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => deleteCardOperation(card, operation)}
+                                    className="rounded-lg bg-red-50 p-2 text-red-700 dark:bg-red-950 dark:text-red-200"
+                                    aria-label="حذف عملية البطاقة"
+                                  >
+                                    <Trash2 size={15} />
+                                  </button>
+                                </div>
+                              </div>
+                            ))}
+                            {!card.operations?.length ? <div className="text-sm text-slate-500">لا توجد عمليات بعد.</div> : null}
                           </div>
-                        ))}
-                        {!card.operations?.length ? <div className="text-sm text-slate-500">لا توجد عمليات بعد.</div> : null}
+                        </div>
                       </div>
                     </div>
                   </article>

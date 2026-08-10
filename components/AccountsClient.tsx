@@ -63,6 +63,7 @@ type MovementForm = {
   note: string;
   movementKind: string;
   settlementMethod: string;
+  effectMode: 'OFFSET' | 'NORMAL';
 };
 
 const emptyForm: MovementForm = {
@@ -76,6 +77,7 @@ const emptyForm: MovementForm = {
   note: '',
   movementKind: 'ADJUSTMENT',
   settlementMethod: '',
+  effectMode: 'OFFSET',
 };
 
 function netLabel(row: AccountRow) {
@@ -84,9 +86,55 @@ function netLabel(row: AccountRow) {
   return 'الحساب مصفّى';
 }
 
+function movementEffectLabel(settlement: Pick<Settlement, 'movementKind' | 'settlementMethod'>) {
+  if (settlement.movementKind === 'AUTO_OFFSET' || settlement.settlementMethod === 'OFFSET') return 'خصم من الإجمالي';
+  return 'إضافة عادية';
+}
+
 function paymentOptions(currencies: CurrencyOption[], currencyId: string) {
   const currency = currencies.find((item) => item.id === currencyId);
   return walletBuckets.filter((bucket) => bucket.currencyCode === currency?.code);
+}
+
+function accountTotals(rows: AccountRow[], form: MovementForm) {
+  return rows
+    .filter((row) => row.personId === form.personId && row.currency.id === form.currencyId)
+    .reduce(
+      (total, row) => ({
+        ourAmount: total.ourAmount + row.ourAmount,
+        theirAmount: total.theirAmount + row.theirAmount,
+      }),
+      { ourAmount: 0, theirAmount: 0 },
+    );
+}
+
+function previewMovement(rows: AccountRow[], form: MovementForm) {
+  const totals = accountTotals(rows, form);
+  const amount = Number(form.amount || 0);
+  let ourAfter = totals.ourAmount;
+  let theirAfter = totals.theirAmount;
+
+  if (amount <= 0) {
+    return { valid: false, message: 'أدخل قيمة أكبر من الصفر', amount, ...totals, ourAfter, theirAfter };
+  }
+
+  if (form.accountType === 'DEBT') {
+    ourAfter = form.direction === 'ADD' ? ourAfter + amount : ourAfter - amount;
+  } else {
+    theirAfter = form.direction === 'ADD' ? theirAfter + amount : theirAfter - amount;
+  }
+
+  if (ourAfter < 0 || theirAfter < 0) {
+    return { valid: false, message: 'لا يمكن أن يصبح الرصيد بالسالب', amount, ...totals, ourAfter: totals.ourAmount, theirAfter: totals.theirAmount };
+  }
+
+  if (form.effectMode === 'OFFSET') {
+    const net = ourAfter - theirAfter;
+    ourAfter = net > 0 ? net : 0;
+    theirAfter = net < 0 ? Math.abs(net) : 0;
+  }
+
+  return { valid: true, message: '', amount, ...totals, ourAfter, theirAfter };
 }
 
 export default function AccountsClient({
@@ -163,6 +211,23 @@ export default function AccountsClient({
       note: '',
       movementKind: 'REPAYMENT',
       settlementMethod: row.paymentLabel,
+      effectMode: 'OFFSET',
+    });
+    setOpenForm(true);
+  }
+
+  function openCreditAdd(row: AccountRow) {
+    setForm({
+      ...emptyForm,
+      personId: row.personId,
+      accountType: 'CREDIT',
+      direction: 'ADD',
+      currencyId: row.currency.id,
+      paymentMethod: row.paymentMethod,
+      reason: '',
+      movementKind: 'ADJUSTMENT',
+      settlementMethod: row.paymentLabel,
+      effectMode: 'OFFSET',
     });
     setOpenForm(true);
   }
@@ -176,6 +241,11 @@ export default function AccountsClient({
     event.preventDefault();
     if (!form.personId || !form.currencyId || !form.paymentMethod || !form.amount || !form.reason.trim()) {
       toast.error('أكمل بيانات الحركة المالية');
+      return;
+    }
+    const preview = previewMovement(rows, form);
+    if (!preview.valid) {
+      toast.error(preview.message || 'احسب المعاينة بشكل صحيح قبل الحفظ');
       return;
     }
 
@@ -205,8 +275,9 @@ export default function AccountsClient({
       amount: String(settlement.amount),
       reason: settlement.reason,
       note: settlement.note || '',
-      movementKind: settlement.movementKind || 'ADJUSTMENT',
+      movementKind: settlement.movementKind === 'REPAYMENT' ? 'REPAYMENT' : 'ADJUSTMENT',
       settlementMethod: settlement.settlementMethod || '',
+      effectMode: settlement.settlementMethod === 'OFFSET' ? 'OFFSET' : 'NORMAL',
     });
   }
 
@@ -406,6 +477,7 @@ export default function AccountsClient({
           form={form}
           people={people}
           currencies={currencies}
+          preview={editing ? null : previewMovement(rows, form)}
           saving={saving}
           onClose={() => {
             setOpenForm(false);
@@ -437,29 +509,25 @@ export default function AccountsClient({
               </button>
             </div>
 
-            <div className="mb-5 grid gap-3 md:grid-cols-3">
-              <Summary title="لنا" value={formatMoney(selectedRow.ourAmount, selectedRow.currency)} tone="green" />
-              <Summary title="علينا" value={formatMoney(selectedRow.theirAmount, selectedRow.currency)} tone="red" />
-              <Summary title="الصافي" value={netLabel(selectedRow)} />
-            </div>
-
-            <div className="mb-4 flex flex-wrap gap-2">
-              <button
-                type="button"
-                onClick={() => openRepayment(selectedRow)}
-                className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2.5 text-sm font-bold text-white"
-              >
-                <Plus size={16} />
-                تم سداد
-              </button>
-              <button
-                type="button"
-                onClick={() => openAdd(selectedRow)}
-                className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-bold text-white"
-              >
-                <Plus size={16} />
-                حركة جديدة
-              </button>
+            <div className="mb-5 grid gap-3 md:grid-cols-2">
+              <AccountPanel
+                title="لنا"
+                amount={selectedRow.ourAmount}
+                currency={selectedRow.currency}
+                status={selectedRow.ourAmount > 0 ? 'نشط' : 'مصفّى'}
+                tone="green"
+                actionLabel="تم السداد"
+                onAction={() => openRepayment(selectedRow)}
+              />
+              <AccountPanel
+                title="علينا"
+                amount={selectedRow.theirAmount}
+                currency={selectedRow.currency}
+                status={selectedRow.theirAmount > 0 ? 'نشط' : 'مصفّى'}
+                tone="red"
+                actionLabel="إضافة"
+                onAction={() => openCreditAdd(selectedRow)}
+              />
             </div>
 
             <div className="table-wrap">
@@ -470,6 +538,7 @@ export default function AccountsClient({
                     <th>المستخدم</th>
                     <th>الحساب</th>
                     <th>العملية</th>
+                    <th>طريقة التأثير</th>
                     <th>المبلغ</th>
                     <th>قبل</th>
                     <th>بعد</th>
@@ -489,6 +558,7 @@ export default function AccountsClient({
                         {walletSettlementDirectionLabels[settlement.direction]}
                         {settlement.movementKind === 'REPAYMENT' ? <span className="ms-2 rounded-md bg-emerald-50 px-2 py-1 text-xs font-bold text-emerald-700">تم سداد</span> : null}
                       </td>
+                      <td>{movementEffectLabel(settlement)}</td>
                       <td>{formatMoney(settlement.amount, settlement.currency)}</td>
                       <td>{formatMoney(settlement.balanceBefore, settlement.currency)}</td>
                       <td>{formatMoney(settlement.balanceAfter, settlement.currency)}</td>
@@ -517,7 +587,7 @@ export default function AccountsClient({
                   ))}
                   {!selectedSettlements.length ? (
                     <tr>
-                      <td colSpan={9} className="text-center text-slate-500">
+                      <td colSpan={10} className="text-center text-slate-500">
                         لا توجد حركات مالية لهذا الحساب.
                       </td>
                     </tr>
@@ -543,11 +613,56 @@ function Summary({ title, value, tone }: { title: string; value: React.ReactNode
   );
 }
 
+function AccountPanel({
+  title,
+  amount,
+  currency,
+  status,
+  tone,
+  actionLabel,
+  onAction,
+}: {
+  title: string;
+  amount: number;
+  currency: CurrencyOption;
+  status: string;
+  tone: 'green' | 'red';
+  actionLabel: string;
+  onAction: () => void;
+}) {
+  const color = tone === 'green' ? 'text-emerald-600' : 'text-red-600';
+  const buttonColor = tone === 'green' ? 'bg-emerald-600 hover:bg-emerald-500' : 'bg-indigo-600 hover:bg-indigo-500';
+
+  return (
+    <div className="card p-5">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <div className="text-sm text-slate-500">{title}</div>
+          <div className={`mt-2 text-2xl font-black ${color}`}>{formatMoney(amount, currency)}</div>
+        </div>
+        <span className="rounded-md bg-slate-100 px-2 py-1 text-xs font-bold text-slate-600 dark:bg-slate-800 dark:text-slate-200">
+          {status}
+        </span>
+      </div>
+      <div className="mt-3 text-sm text-slate-500">العملة: {currency.name}</div>
+      <button
+        type="button"
+        onClick={onAction}
+        className={`mt-4 inline-flex w-full items-center justify-center gap-2 rounded-lg px-4 py-3 font-bold text-white ${buttonColor}`}
+      >
+        <Plus size={16} />
+        {actionLabel}
+      </button>
+    </div>
+  );
+}
+
 function MovementModal({
   title,
   form,
   people,
   currencies,
+  preview,
   saving,
   onClose,
   onSubmit,
@@ -558,6 +673,7 @@ function MovementModal({
   form: MovementForm;
   people: Array<{ id: string; customerNo?: string | null; fullName: string }>;
   currencies: CurrencyOption[];
+  preview: ReturnType<typeof previewMovement> | null;
   saving: boolean;
   onClose: () => void;
   onSubmit: (event: React.FormEvent) => void;
@@ -628,7 +744,30 @@ function MovementModal({
             placeholder="ملاحظة"
             rows={3}
           />
+          <select
+            className="md:col-span-2"
+            value={form.effectMode}
+            onChange={(event) => onChange({ ...form, effectMode: event.target.value as MovementForm['effectMode'] })}
+          >
+            <option value="OFFSET">خصم القيمة من الإجمالي</option>
+            <option value="NORMAL">إضافة عادية</option>
+          </select>
         </div>
+
+        {preview ? (
+          <div className="mt-5 rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm dark:border-slate-800 dark:bg-slate-950">
+            <div className="mb-3 font-black">معاينة الأرصدة قبل الحفظ</div>
+            <div className="grid gap-2 sm:grid-cols-2">
+              <span>لنا قبل العملية: <b>{formatMoney(preview.ourAmount, currencies.find((currency) => currency.id === form.currencyId))}</b></span>
+              <span>علينا قبل العملية: <b>{formatMoney(preview.theirAmount, currencies.find((currency) => currency.id === form.currencyId))}</b></span>
+              <span>قيمة العملية: <b>{formatMoney(preview.amount, currencies.find((currency) => currency.id === form.currencyId))}</b></span>
+              <span>طريقة التأثير: <b>{form.effectMode === 'OFFSET' ? 'خصم من الإجمالي' : 'إضافة عادية'}</b></span>
+              <span>لنا بعد العملية: <b>{formatMoney(preview.ourAfter, currencies.find((currency) => currency.id === form.currencyId))}</b></span>
+              <span>علينا بعد العملية: <b>{formatMoney(preview.theirAfter, currencies.find((currency) => currency.id === form.currencyId))}</b></span>
+              {!preview.valid ? <span className="font-bold text-red-600 sm:col-span-2">{preview.message}</span> : null}
+            </div>
+          </div>
+        ) : null}
 
         <div className="mt-5 grid gap-3 sm:grid-cols-2">
           <button
@@ -640,7 +779,7 @@ function MovementModal({
             إلغاء
           </button>
           <button
-            disabled={saving}
+            disabled={saving || Boolean(preview && !preview.valid)}
             className="flex items-center justify-center gap-2 rounded-lg bg-indigo-600 px-4 py-3 font-bold text-white hover:bg-indigo-500 disabled:cursor-not-allowed disabled:bg-indigo-400"
           >
             {saving ? <Loader2 className="animate-spin" size={18} /> : <Plus size={18} />}

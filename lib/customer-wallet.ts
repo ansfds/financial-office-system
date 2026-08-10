@@ -69,6 +69,10 @@ export type WalletEffect = {
   transactionNumber?: string | null;
 };
 
+export type WalletEffectMode = 'NORMAL' | 'OFFSET';
+export type WalletAccountType = 'CREDIT' | 'DEBT';
+export type WalletSettlementDirection = 'ADD' | 'SUBTRACT';
+
 export type WalletSnapshotRow = {
   paymentMethod: string;
   label: string;
@@ -117,6 +121,67 @@ function bucketKey(currencyId: string, paymentMethod: string) {
 
 function decimalAbs(value: Prisma.Decimal) {
   return value.lt(0) ? value.mul(-1) : value;
+}
+
+function walletPreviewSide(
+  value: Prisma.Decimal,
+  direction: WalletSettlementDirection,
+  amount: Prisma.Decimal,
+) {
+  return direction === 'ADD' ? value.add(amount) : value.sub(amount);
+}
+
+export function settleWalletSides(debt: unknown, credit: unknown) {
+  const net = D(debt || 0).sub(D(credit || 0));
+
+  if (net.gt(0)) {
+    return { debt: net, credit: D(0), status: 'DEBT' as const };
+  }
+
+  if (net.lt(0)) {
+    return { debt: D(0), credit: decimalAbs(net), status: 'CREDIT' as const };
+  }
+
+  return { debt: D(0), credit: D(0), status: 'SETTLED' as const };
+}
+
+export function previewWalletOperation(input: {
+  debtBefore: unknown;
+  creditBefore: unknown;
+  amount: unknown;
+  accountType: WalletAccountType;
+  direction: WalletSettlementDirection;
+  effectMode?: WalletEffectMode;
+}) {
+  const amount = D(input.amount || 0);
+  if (amount.lte(0)) throw new Error('INVALID_WALLET_AMOUNT');
+
+  const debtBefore = D(input.debtBefore || 0);
+  const creditBefore = D(input.creditBefore || 0);
+  let debtAfter = debtBefore;
+  let creditAfter = creditBefore;
+
+  if (input.accountType === 'DEBT') {
+    debtAfter = walletPreviewSide(debtAfter, input.direction, amount);
+  } else {
+    creditAfter = walletPreviewSide(creditAfter, input.direction, amount);
+  }
+
+  if (debtAfter.lt(0) || creditAfter.lt(0)) throw new Error('NEGATIVE_WALLET_BALANCE');
+
+  if (input.effectMode === 'OFFSET') {
+    const settled = settleWalletSides(debtAfter, creditAfter);
+    debtAfter = settled.debt;
+    creditAfter = settled.credit;
+  }
+
+  return {
+    debtBefore,
+    creditBefore,
+    amount,
+    debtAfter,
+    creditAfter,
+  };
 }
 
 export function normalizeWalletPaymentMethod(method: string | null | undefined, currencyCode?: string | null) {

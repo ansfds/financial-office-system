@@ -51,6 +51,7 @@ describe('customer card helpers', () => {
   });
 
   it('calculates progress and balance status from deducted amounts', () => {
+    expect(cardProgressPercent(2000, 476).toString()).toBe('23.8');
     expect(cardProgressPercent(500, 250).toString()).toBe('50');
     expect(cardProgressPercent(500, 900).toString()).toBe('100');
     expect(cardStatusForBalance(500, 0)).toBe('RECEIVED');
