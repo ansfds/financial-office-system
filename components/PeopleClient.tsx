@@ -25,6 +25,7 @@ import FastCardEntryModal from '@/components/FastCardEntryModal';
 import CardOperationModal from '@/components/CardOperationModal';
 import CustomerDeliveryModal from '@/components/CustomerDeliveryModal';
 import { cardOperationTypeLabels } from '@/lib/customer-cards';
+import { compareCardsBySequence, sortByCustomerCode } from '@/lib/customer-code-sort';
 
 type CurrencyOption = {
   id: string;
@@ -118,7 +119,7 @@ function allCards(person: any) {
       person,
       currency: card.settlementCurrency || batch.currency,
     })),
-  );
+  ).sort(compareCardsBySequence);
 }
 
 function cardCode(card: any) {
@@ -266,7 +267,7 @@ export default function PeopleClient({
   currencies: CurrencyOption[];
 }) {
   const router = useRouter();
-  const [items, setItems] = useState<any[]>(initialPeople);
+  const [items, setItems] = useState<any[]>(() => sortByCustomerCode(initialPeople));
   const [q, setQ] = useState('');
   const [loading, setLoading] = useState(false);
   const [savingPerson, setSavingPerson] = useState(false);
@@ -300,7 +301,7 @@ export default function PeopleClient({
   const selectedDeliveryRows = selectedPerson ? customerDeliverySummary(selectedPerson, currencies) : [];
 
   useEffect(() => {
-    setItems(initialPeople);
+    setItems(sortByCustomerCode(initialPeople));
   }, [initialPeople]);
 
   useEffect(() => {
@@ -317,7 +318,7 @@ export default function PeopleClient({
     const data = await response.json().catch(() => []);
     setLoading(false);
     if (!response.ok) return toast.error(data.error || 'تعذر تحميل الزبائن');
-    setItems(Array.isArray(data) ? data : []);
+    setItems(sortByCustomerCode(Array.isArray(data) ? data : []));
   }
 
   async function add(event: React.FormEvent) {
@@ -366,7 +367,7 @@ export default function PeopleClient({
 
     if (!response.ok) return toast.error(result.error || 'تعذر تعديل الزبون');
 
-    setItems((current) => current.map((person) => (person.id === result.id ? result : person)));
+    setItems((current) => sortByCustomerCode(current.map((person) => (person.id === result.id ? result : person))));
     setEditingPerson(null);
     toast.success('تم تعديل بيانات الزبون');
     router.refresh();
@@ -414,11 +415,13 @@ export default function PeopleClient({
     setItems((current) => {
       const exists = current.some((person) => person.id === batch.personId);
       if (!exists) {
-        return [{ ...batch.person, cardBatches: [batch], cardDeliveries: [] }, ...current];
+        return sortByCustomerCode([{ ...batch.person, cardBatches: [batch], cardDeliveries: [] }, ...current]);
       }
 
-      return current.map((person) =>
-        person.id === batch.personId ? { ...person, cardBatches: [batch, ...(person.cardBatches || [])] } : person,
+      return sortByCustomerCode(
+        current.map((person) =>
+          person.id === batch.personId ? { ...person, cardBatches: [batch, ...(person.cardBatches || [])] } : person,
+        ),
       );
     });
     setSelectedPersonId(batch.personId);

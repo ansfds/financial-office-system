@@ -1,5 +1,6 @@
 import Page from '@/components/Page';
 import PeopleClient from '@/components/PeopleClient';
+import { sortByCustomerCode } from '@/lib/customer-code-sort';
 import { db } from '@/lib/db';
 
 export const dynamic = 'force-dynamic';
@@ -32,7 +33,7 @@ export default async function PeoplePage() {
           orderBy: { occurredAt: 'desc' },
         },
       },
-      orderBy: { createdAt: 'desc' },
+      orderBy: [{ customerNo: 'asc' }, { createdAt: 'asc' }, { id: 'asc' }],
       take: 100,
     }),
     db.currency.findMany({ where: { isActive: true, code: { in: ['USD', 'LYD', 'USDT'] } }, orderBy: { code: 'asc' } }),
@@ -40,7 +41,7 @@ export default async function PeoplePage() {
 
   return (
     <Page title="الزبائن والبطاقات">
-      <PeopleClient initialPeople={JSON.parse(JSON.stringify(people))} currencies={JSON.parse(JSON.stringify(currencies))} />
+      <PeopleClient initialPeople={JSON.parse(JSON.stringify(sortByCustomerCode(people)))} currencies={JSON.parse(JSON.stringify(currencies))} />
     </Page>
   );
 }

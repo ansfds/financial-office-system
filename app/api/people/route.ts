@@ -1,5 +1,6 @@
 import { db } from '@/lib/db';
 import { audit, requireSession } from '@/lib/auth';
+import { sortByCustomerCode } from '@/lib/customer-code-sort';
 import { apiError, fail, ok } from '@/lib/http';
 import { revalidateFinancePaths } from '@/lib/revalidate';
 import { Prisma } from '@prisma/client';
@@ -71,12 +72,12 @@ export async function GET(request: Request) {
           orderBy: { occurredAt: 'desc' },
         },
       },
-      orderBy: { createdAt: 'desc' },
+      orderBy: [{ customerNo: 'asc' }, { createdAt: 'asc' }, { id: 'asc' }],
       skip: (page - 1) * pageSize,
       take: pageSize,
     });
 
-    return ok(people);
+    return ok(sortByCustomerCode(people));
   } catch (error) {
     return apiError(error);
   }
