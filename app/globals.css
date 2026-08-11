@@ -95,6 +95,25 @@ tbody tr {
   animation: sheet-up 230ms cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
+.mobile-modal-viewport {
+  height: 100vh;
+  max-height: 100vh;
+}
+
+@supports (height: 100svh) {
+  .mobile-modal-viewport {
+    height: 100svh;
+    max-height: 100svh;
+  }
+}
+
+@supports (height: 100dvh) {
+  .mobile-modal-viewport {
+    height: 100dvh;
+    max-height: 100dvh;
+  }
+}
+
 .drawer-panel {
   will-change: transform, opacity;
 }

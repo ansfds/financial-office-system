@@ -1,8 +1,9 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties } from 'react';
-import { useRouter } from 'next/navigation';
+import { createPortal } from 'react-dom';
+import { usePathname, useRouter } from 'next/navigation';
 import {
   Archive,
   ChevronDown,
@@ -269,6 +270,7 @@ export default function PeopleClient({
   currencies: CurrencyOption[];
 }) {
   const router = useRouter();
+  const pathname = usePathname();
   const [items, setItems] = useState<any[]>(() => sortByCustomerCode(initialPeople));
   const [q, setQ] = useState('');
   const [loading, setLoading] = useState(false);
@@ -294,6 +296,9 @@ export default function PeopleClient({
   const [fastEntryOpen, setFastEntryOpen] = useState(false);
   const [operationModal, setOperationModal] = useState<{ card: any; operation?: any | null; initialType?: string } | null>(null);
   const [deliveryOpen, setDeliveryOpen] = useState(false);
+  const [portalReady, setPortalReady] = useState(false);
+  const cardsDrawerHistoryOpen = useRef(false);
+  const selectedPersonIdRef = useRef('');
 
   const selectedPerson = useMemo(
     () => items.find((person) => person.id === selectedPersonId) || null,
@@ -303,9 +308,81 @@ export default function PeopleClient({
   const visibleCards = selectedPersonCards.filter((card: any) => statusFilter === 'ALL' || card.status === statusFilter);
   const selectedDeliveryRows = selectedPerson ? customerDeliverySummary(selectedPerson, currencies) : [];
 
+  const closeCustomerCardsDrawer = useCallback(() => {
+    setSelectedPersonId('');
+    setDeliveryOpen(false);
+    setExpandedCardIds(new Set());
+    setSelectedCards(new Set());
+
+    if (
+      typeof window !== 'undefined' &&
+      cardsDrawerHistoryOpen.current &&
+      window.history.state?.customerCardsDrawer === true
+    ) {
+      cardsDrawerHistoryOpen.current = false;
+      window.history.back();
+    }
+  }, []);
+
+  const openCustomerCardsDrawer = useCallback((personId: string) => {
+    if (!personId) return;
+    setStatusFilter('ALL');
+    setSelectedPersonId(personId);
+  }, []);
+
   useEffect(() => {
     setItems(sortByCustomerCode(initialPeople));
   }, [initialPeople]);
+
+  useEffect(() => {
+    setPortalReady(true);
+  }, []);
+
+  useEffect(() => {
+    selectedPersonIdRef.current = selectedPersonId;
+  }, [selectedPersonId]);
+
+  useEffect(() => {
+    if (!selectedPersonIdRef.current) return;
+    setSelectedPersonId('');
+    setDeliveryOpen(false);
+    cardsDrawerHistoryOpen.current = false;
+  }, [pathname]);
+
+  useEffect(() => {
+    if (!selectedPerson) return;
+
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+
+    if (!cardsDrawerHistoryOpen.current) {
+      window.history.pushState({ ...(window.history.state || {}), customerCardsDrawer: true }, '', window.location.href);
+      cardsDrawerHistoryOpen.current = true;
+    }
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key !== 'Escape') return;
+      event.preventDefault();
+      closeCustomerCardsDrawer();
+    }
+
+    function handlePopState() {
+      cardsDrawerHistoryOpen.current = false;
+      setSelectedPersonId('');
+      setDeliveryOpen(false);
+      setExpandedCardIds(new Set());
+      setSelectedCards(new Set());
+    }
+
+    document.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('popstate', handlePopState);
+
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      document.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('popstate', handlePopState);
+    };
+  }, [selectedPerson, closeCustomerCardsDrawer]);
 
   useEffect(() => {
     const handle = window.setTimeout(() => {
@@ -383,7 +460,7 @@ export default function PeopleClient({
     const result = await response.json().catch(() => ({}));
     if (!response.ok) return toast.error(result.error || 'تعذر أرشفة الزبون');
     setItems((current) => current.filter((item) => item.id !== person.id));
-    if (selectedPersonId === person.id) setSelectedPersonId('');
+    if (selectedPersonId === person.id) closeCustomerCardsDrawer();
     toast.success('تمت أرشفة الزبون');
     router.refresh();
   }
@@ -428,7 +505,7 @@ export default function PeopleClient({
         ),
       );
     });
-    setSelectedPersonId(batch.personId);
+    openCustomerCardsDrawer(batch.personId);
     router.refresh();
   }
 
@@ -663,7 +740,7 @@ export default function PeopleClient({
                 return (
                   <tr
                     key={person.id}
-                    onClick={() => setSelectedPersonId(person.id)}
+                    onClick={() => openCustomerCardsDrawer(person.id)}
                     className="cursor-pointer"
                   >
                     <td className="font-black text-slate-500">{person.customerNo || '—'}</td>
@@ -686,7 +763,7 @@ export default function PeopleClient({
                           type="button"
                           onClick={(event) => {
                             event.stopPropagation();
-                            setSelectedPersonId(person.id);
+                            openCustomerCardsDrawer(person.id);
                           }}
                           className="inline-flex items-center gap-1 rounded-lg bg-indigo-600 px-3 py-2 text-sm font-bold text-white"
                         >
@@ -766,7 +843,7 @@ export default function PeopleClient({
                 <div className="mt-3 grid grid-cols-[1fr_auto_auto] gap-2">
                   <button
                     type="button"
-                    onClick={() => setSelectedPersonId(person.id)}
+                    onClick={() => openCustomerCardsDrawer(person.id)}
                     className="inline-flex items-center justify-center gap-2 rounded-lg bg-indigo-600 px-3 py-2 text-sm font-bold text-white"
                   >
                     <Eye size={16} />
@@ -814,25 +891,32 @@ export default function PeopleClient({
         </button>
       </div>
 
-      {selectedPerson ? (
-        <div className="fixed inset-0 z-50">
+      {portalReady && selectedPerson ? createPortal((
+        <div className="fixed inset-0 z-[80]" data-customer-cards-drawer="root">
           <button
             type="button"
             aria-label="إغلاق تفاصيل الزبون"
-            className="sheet-backdrop absolute inset-0 bg-slate-950/45 backdrop-blur-sm"
-            onClick={() => setSelectedPersonId('')}
+            className="sheet-backdrop absolute inset-0 z-0 bg-slate-950/45 backdrop-blur-sm"
+            onClick={closeCustomerCardsDrawer}
           />
-          <aside className="sheet-panel absolute inset-x-0 bottom-0 flex h-[96dvh] w-full flex-col overflow-y-auto rounded-t-lg border-t border-slate-200 bg-white p-4 shadow-2xl dark:border-slate-800 dark:bg-slate-950 md:inset-y-0 md:left-0 md:right-auto md:h-auto md:max-w-5xl md:rounded-none md:border-r md:border-t-0 md:p-5 md:w-[86vw]">
-            <div className="sticky top-0 z-10 -mx-4 -mt-4 mb-4 flex items-start justify-between gap-4 border-b border-slate-100 bg-white/95 p-4 backdrop-blur dark:border-slate-800 dark:bg-slate-950/95 md:static md:m-0 md:mb-5 md:border-0 md:bg-transparent md:p-0">
+          <aside
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="customer-cards-drawer-title"
+            data-customer-cards-drawer="panel"
+            className="sheet-panel mobile-modal-viewport absolute inset-0 z-10 flex w-full flex-col overflow-y-auto overscroll-contain rounded-none border-t border-slate-200 bg-white p-4 pb-[calc(1rem+env(safe-area-inset-bottom))] shadow-2xl dark:border-slate-800 dark:bg-slate-950 md:inset-y-0 md:left-0 md:right-auto md:max-w-5xl md:border-r md:border-t-0 md:p-5 md:w-[86vw]"
+          >
+            <div className="sticky top-0 z-20 -mx-4 -mt-4 mb-4 flex items-start justify-between gap-4 border-b border-slate-100 bg-white/95 p-4 backdrop-blur dark:border-slate-800 dark:bg-slate-950/95 md:static md:m-0 md:mb-5 md:border-0 md:bg-transparent md:p-0">
               <div>
                 <div className="text-sm font-bold text-indigo-600">{selectedPerson.customerNo || 'زبون بدون رقم'}</div>
-                <h2 className="mt-1 text-2xl font-black">{selectedPerson.fullName}</h2>
+                <h2 id="customer-cards-drawer-title" className="mt-1 text-2xl font-black">{selectedPerson.fullName}</h2>
                 <p className="mt-1 text-sm text-slate-500">{selectedPerson.phone || 'لا يوجد رقم هاتف'}</p>
+                <p className="mt-1 text-sm font-bold text-slate-600 dark:text-slate-300">عدد البطاقات: {selectedPersonCards.length}</p>
               </div>
               <button
                 type="button"
-                onClick={() => setSelectedPersonId('')}
-                className="rounded-lg p-2 text-slate-500 hover:bg-slate-100 hover:text-slate-900 dark:hover:bg-slate-800 dark:hover:text-slate-100"
+                onClick={closeCustomerCardsDrawer}
+                className="inline-flex min-h-11 w-11 shrink-0 items-center justify-center rounded-lg p-2 text-slate-500 hover:bg-slate-100 hover:text-slate-900 dark:hover:bg-slate-800 dark:hover:text-slate-100"
                 aria-label="إغلاق"
               >
                 <X size={22} />
@@ -1236,7 +1320,7 @@ export default function PeopleClient({
             </div>
           </aside>
         </div>
-      ) : null}
+      ), document.body) : null}
 
       {editingPerson ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4">
