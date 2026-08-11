@@ -2,7 +2,8 @@
 
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import type { CSSProperties } from 'react';
+import type { CSSProperties, PointerEvent } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   LayoutDashboard,
   LogOut,
@@ -13,8 +14,8 @@ import {
   Wallet,
   X,
 } from 'lucide-react';
-import { useEffect, useState } from 'react';
 import ThemeSwitcher from './ThemeSwitcher';
+import { reduceMobileDrawerState, shouldCloseMobileDrawerFromDrag } from '@/lib/mobile-nav-drawer';
 
 const logoUrl = 'https://i.postimg.cc/k4nQr4gx/680242520-122094061526346951-872670812110961262-n.jpg';
 
@@ -31,18 +32,62 @@ const primaryItems = items.slice(0, 3);
 export default function Shell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
-  const [open, setOpen] = useState(false);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const dragStart = useRef<{ x: number; y: number } | null>(null);
+
+  const closeMobileMenu = useCallback(() => {
+    setMobileMenuOpen((open) => reduceMobileDrawerState(open, { type: 'close' }));
+  }, []);
+
+  const openMobileMenu = useCallback(() => {
+    setMobileMenuOpen((open) => reduceMobileDrawerState(open, { type: 'open' }));
+  }, []);
 
   useEffect(() => {
-    if (!open) return;
-    const previous = document.body.style.overflow;
+    setMobileMenuOpen((open) => reduceMobileDrawerState(open, { type: 'route-change' }));
+  }, [pathname]);
+
+  useEffect(() => {
+    if (!mobileMenuOpen) return;
+
+    const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
+
     return () => {
-      document.body.style.overflow = previous;
+      document.body.style.overflow = previousOverflow;
     };
-  }, [open]);
+  }, [mobileMenuOpen]);
+
+  useEffect(() => {
+    if (!mobileMenuOpen) return;
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key !== 'Escape') return;
+      event.preventDefault();
+      setMobileMenuOpen((open) => reduceMobileDrawerState(open, { type: 'escape' }));
+    }
+
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [mobileMenuOpen]);
+
+  function handleDrawerPointerDown(event: PointerEvent<HTMLElement>) {
+    if (window.matchMedia('(min-width: 1024px)').matches) return;
+    dragStart.current = { x: event.clientX, y: event.clientY };
+  }
+
+  function handleDrawerPointerEnd(event: PointerEvent<HTMLElement>) {
+    const start = dragStart.current;
+    dragStart.current = null;
+    if (!start) return;
+
+    const deltaX = event.clientX - start.x;
+    const deltaY = Math.abs(event.clientY - start.y);
+    if (shouldCloseMobileDrawerFromDrag(deltaX, deltaY)) closeMobileMenu();
+  }
 
   async function logout() {
+    closeMobileMenu();
     await fetch('/api/auth/logout', { method: 'POST', cache: 'no-store' }).catch(() => null);
     router.replace('/login');
     router.refresh();
@@ -50,28 +95,44 @@ export default function Shell({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="min-h-screen">
-      {open ? (
-        <button
-          type="button"
-          aria-label="إغلاق القائمة"
-          className="sheet-backdrop fixed inset-0 z-30 bg-slate-950/45 backdrop-blur-sm lg:hidden"
-          onClick={() => setOpen(false)}
-        />
-      ) : null}
+      <button
+        type="button"
+        aria-label="إغلاق القائمة"
+        aria-hidden={!mobileMenuOpen}
+        tabIndex={mobileMenuOpen ? 0 : -1}
+        className={`fixed inset-0 z-40 bg-slate-950/45 backdrop-blur-sm transition-opacity duration-200 ease-out lg:hidden ${
+          mobileMenuOpen ? 'pointer-events-auto opacity-100' : 'pointer-events-none opacity-0'
+        }`}
+        onClick={(event) => {
+          event.stopPropagation();
+          closeMobileMenu();
+        }}
+      />
 
       <aside
-        className={`fixed inset-y-0 right-0 z-40 flex w-[min(20rem,calc(100vw-1rem))] flex-col border-l border-slate-200 bg-white/95 p-4 shadow-xl backdrop-blur dark:border-slate-800 dark:bg-slate-950/95 ${
-          open ? 'translate-x-0' : 'translate-x-full'
-        } drawer-panel transition-transform lg:w-72 lg:translate-x-0`}
+        id="mobile-navigation-drawer"
+        data-mobile-menu-open={mobileMenuOpen ? 'true' : 'false'}
+        onPointerDown={handleDrawerPointerDown}
+        onPointerUp={handleDrawerPointerEnd}
+        onPointerCancel={() => {
+          dragStart.current = null;
+        }}
+        className={`drawer-panel fixed inset-y-0 right-0 z-50 flex w-[min(20rem,calc(100vw-1rem))] touch-pan-y flex-col border-l border-slate-200 bg-white/95 p-4 pb-[calc(1rem+env(safe-area-inset-bottom))] shadow-xl backdrop-blur transition-[transform,opacity] duration-200 ease-out dark:border-slate-800 dark:bg-slate-950/95 ${
+          mobileMenuOpen ? 'pointer-events-auto translate-x-0 opacity-100' : 'pointer-events-none translate-x-full opacity-0'
+        } lg:pointer-events-auto lg:w-72 lg:translate-x-0 lg:opacity-100 lg:transition-none`}
       >
         <button
           type="button"
-          onClick={() => setOpen(false)}
-          className="mb-3 inline-flex w-11 items-center justify-center rounded-lg bg-slate-100 text-slate-600 dark:bg-slate-900 dark:text-slate-200 lg:hidden"
+          onClick={(event) => {
+            event.stopPropagation();
+            closeMobileMenu();
+          }}
+          className="relative z-10 mb-3 inline-flex min-h-11 w-11 items-center justify-center rounded-lg bg-slate-100 text-slate-600 dark:bg-slate-900 dark:text-slate-200 lg:hidden"
           aria-label="إغلاق القائمة"
         >
           <X size={20} />
         </button>
+
         <div className="mb-5 rounded-lg border border-slate-200 bg-slate-50 p-3 dark:border-slate-800 dark:bg-slate-900">
           <div className="flex items-center gap-3">
             <img src={logoUrl} alt="شعار شركة الوسيط العالمي" className="h-12 w-12 rounded-lg object-cover" />
@@ -87,14 +148,14 @@ export default function Shell({ children }: { children: React.ReactNode }) {
         <ThemeSwitcher />
 
         <nav className="stagger-list mt-5 flex-1 space-y-1 overflow-y-auto pb-4">
-          {items.map(([href, label, Icon]) => {
+          {items.map(([href, label, Icon], index) => {
             const active = href === '/dashboard' ? pathname === href : pathname.startsWith(href);
             return (
               <Link
                 key={href}
                 href={href}
-                onClick={() => setOpen(false)}
-                style={{ '--stagger': items.findIndex((item) => item[0] === href) } as CSSProperties}
+                onClick={closeMobileMenu}
+                style={{ '--stagger': index } as CSSProperties}
                 className={`flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-bold ${
                   active
                     ? 'bg-indigo-50 text-indigo-700 dark:bg-indigo-950 dark:text-indigo-200'
@@ -126,6 +187,7 @@ export default function Shell({ children }: { children: React.ReactNode }) {
               <Link
                 key={href}
                 href={href}
+                onClick={closeMobileMenu}
                 className={`flex min-h-[48px] flex-col items-center justify-center gap-1 rounded-lg px-1 text-[11px] font-black ${
                   active
                     ? 'bg-indigo-50 text-indigo-700 dark:bg-blue-950 dark:text-blue-200'
@@ -139,7 +201,12 @@ export default function Shell({ children }: { children: React.ReactNode }) {
           })}
           <button
             type="button"
-            onClick={() => setOpen(true)}
+            aria-expanded={mobileMenuOpen}
+            aria-controls="mobile-navigation-drawer"
+            onClick={(event) => {
+              event.stopPropagation();
+              openMobileMenu();
+            }}
             className={`flex min-h-[48px] flex-col items-center justify-center gap-1 rounded-lg px-1 text-[11px] font-black ${
               ['/audit', '/settings'].some((href) => pathname.startsWith(href))
                 ? 'bg-indigo-50 text-indigo-700 dark:bg-blue-950 dark:text-blue-200'
