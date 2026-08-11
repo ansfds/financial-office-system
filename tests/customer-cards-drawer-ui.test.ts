@@ -9,37 +9,40 @@ function readProjectFile(file: string) {
 describe('customer cards mobile drawer UI contract', () => {
   it('renders the customer cards drawer through a body portal above its overlay', () => {
     const peopleClient = readProjectFile('components/PeopleClient.tsx');
+    const modalLayer = readProjectFile('components/ModalLayer.tsx');
 
-    expect(peopleClient).toContain('createPortal((');
-    expect(peopleClient).toContain('document.body');
-    expect(peopleClient).toContain('data-customer-cards-drawer="root"');
+    expect(modalLayer).toContain('createPortal(');
+    expect(modalLayer).toContain('document.body');
+    expect(peopleClient).toContain('<ModalLayer');
+    expect(peopleClient).toContain('name="customer-cards"');
+    expect(peopleClient).toContain("'data-customer-cards-drawer': 'root'");
     expect(peopleClient).toContain('data-customer-cards-drawer="panel"');
-    expect(peopleClient).toContain('z-[80]');
-    expect(peopleClient).toContain('z-0 bg-slate-950/45');
-    expect(peopleClient).toContain('absolute inset-0 z-10');
+    expect(peopleClient).toContain('ModalBackdrop');
+    expect(peopleClient).toContain('modal-panel modal-panel--drawer');
   });
 
   it('keeps the drawer viewport safe for mobile webviews and bottom safe areas', () => {
     const peopleClient = readProjectFile('components/PeopleClient.tsx');
     const css = readProjectFile('app/globals.css');
 
-    expect(peopleClient).toContain('mobile-modal-viewport');
-    expect(peopleClient).toContain('overflow-y-auto overscroll-contain');
-    expect(peopleClient).toContain('pb-[calc(1rem+env(safe-area-inset-bottom))]');
-    expect(css).toContain('.mobile-modal-viewport');
+    expect(peopleClient).toContain('data-modal-scroll-body');
+    expect(peopleClient).toContain('modal-body');
+    expect(css).toContain('.modal-layer-root');
+    expect(css).toContain('env(safe-area-inset-bottom)');
     expect(css).toContain('100svh');
     expect(css).toContain('100dvh');
   });
 
   it('cleans up drawer state, scroll lock, Escape, and browser back handling', () => {
     const peopleClient = readProjectFile('components/PeopleClient.tsx');
+    const modalLayer = readProjectFile('components/ModalLayer.tsx');
 
-    expect(peopleClient).toContain("document.body.style.overflow = 'hidden'");
-    expect(peopleClient).toContain('document.body.style.overflow = previousOverflow');
-    expect(peopleClient).toContain("event.key !== 'Escape'");
-    expect(peopleClient).toContain('window.history.pushState');
-    expect(peopleClient).toContain('window.history.back');
-    expect(peopleClient).toContain("window.addEventListener('popstate'");
+    expect(modalLayer).toContain("document.body.style.overflow = 'hidden'");
+    expect(modalLayer).toContain('document.body.style.overflow = snapshot.overflow');
+    expect(modalLayer).toContain("event.key !== 'Escape'");
+    expect(modalLayer).toContain('window.history.pushState');
+    expect(modalLayer).toContain('window.history.back');
+    expect(modalLayer).toContain("window.addEventListener('popstate'");
     expect(peopleClient).toContain('setDeliveryOpen(false)');
     expect(peopleClient).toContain('setExpandedCardIds(new Set())');
   });

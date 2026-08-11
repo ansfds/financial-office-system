@@ -177,21 +177,17 @@ async function main() {
       httpOnly: true,
     });
 
-    const scenarios = [
-      { name: 'desktop-dashboard-light', route: '/dashboard', width: 1440, height: 900, mobile: false, theme: 'light' },
-      { name: 'desktop-people-dark', route: '/people', width: 1440, height: 900, mobile: false, theme: 'dark' },
-      { name: 'mobile-accounts-light', route: '/accounts', width: 390, height: 844, mobile: true, theme: 'light' },
-      { name: 'mobile-settings-dark', route: '/settings', width: 390, height: 844, mobile: true, theme: 'dark' },
-    ];
-
-    const results = [];
-    for (const scenario of scenarios) {
+    async function setViewport(scenario) {
       await cdp.send('Emulation.setDeviceMetricsOverride', {
         width: scenario.width,
         height: scenario.height,
         deviceScaleFactor: 1,
         mobile: scenario.mobile,
       });
+    }
+
+    async function navigateAndTheme(scenario) {
+      await setViewport(scenario);
       const loaded = cdp.once('Page.loadEventFired');
       await cdp.send('Page.navigate', { url: `${BASE_URL}${scenario.route}` });
       await loaded;
@@ -202,6 +198,119 @@ async function main() {
             : "localStorage.setItem('fos-theme','light'); document.documentElement.classList.remove('dark','theme-bright');",
       });
       await new Promise((resolve) => setTimeout(resolve, 450));
+    }
+
+    async function evaluate(expression) {
+      const result = await cdp.send('Runtime.evaluate', {
+        expression,
+        returnByValue: true,
+        awaitPromise: true,
+      });
+      if (result.exceptionDetails) {
+        throw new Error(result.exceptionDetails.text || 'Runtime evaluation failed');
+      }
+      return result.result.value;
+    }
+
+    async function assertDialogScenario(scenario) {
+      await navigateAndTheme(scenario);
+      const positions = ['top', 'middle', 'bottom'];
+
+      for (const position of positions) {
+        await evaluate(`
+          (() => {
+            const y = '${position}' === 'top'
+              ? 0
+              : '${position}' === 'middle'
+                ? Math.max(0, (document.documentElement.scrollHeight - window.innerHeight) / 2)
+                : Math.max(0, document.documentElement.scrollHeight - window.innerHeight);
+            window.scrollTo(0, y);
+            window.__dialogSmokeScrollY = window.scrollY;
+          })()
+        `);
+        await new Promise((resolve) => setTimeout(resolve, 120));
+        await evaluate(scenario.openExpression);
+        await new Promise((resolve) => setTimeout(resolve, 280));
+
+        const audit = await evaluate(`
+          (() => {
+            const root = document.querySelector('[data-modal-layer="root"][data-modal-name="${scenario.modalName}"]');
+            const panel = root?.querySelector('.modal-panel');
+            const backdrop = root?.querySelector('.modal-backdrop');
+            if (!root || !panel || !backdrop) return { ok: false, reason: 'missing modal layer, panel, or backdrop' };
+            const rect = panel.getBoundingClientRect();
+            const viewport = window.visualViewport || { offsetTop: 0, height: window.innerHeight };
+            const panelZ = Number.parseInt(getComputedStyle(panel).zIndex || '0', 10);
+            const backdropZ = Number.parseInt(getComputedStyle(backdrop).zIndex || '0', 10);
+            const bodyStyle = getComputedStyle(document.body);
+            return {
+              ok:
+                rect.top >= viewport.offsetTop - 1 &&
+                rect.bottom <= viewport.offsetTop + viewport.height + 2 &&
+                panelZ > backdropZ &&
+                bodyStyle.position === 'fixed' &&
+                bodyStyle.overflow === 'hidden' &&
+                document.documentElement.scrollWidth <= window.innerWidth + 2,
+              rectTop: rect.top,
+              rectBottom: rect.bottom,
+              viewportTop: viewport.offsetTop,
+              viewportBottom: viewport.offsetTop + viewport.height,
+              panelZ,
+              backdropZ,
+              bodyPosition: bodyStyle.position,
+              bodyOverflow: bodyStyle.overflow,
+              horizontalOverflow: document.documentElement.scrollWidth - window.innerWidth,
+            };
+          })()
+        `);
+        assert(audit.ok, `${scenario.name}-${position} dialog audit failed: ${JSON.stringify(audit)}`);
+
+        const screenshot = await cdp.send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false });
+        const file = path.join(OUTPUT_DIR, `${scenario.name}-${position}.png`);
+        const buffer = Buffer.from(screenshot.data, 'base64');
+        assert(buffer.length > 10_000, `${scenario.name}-${position} screenshot is unexpectedly small`);
+        await writeFile(file, buffer);
+
+        await evaluate(`
+          (() => {
+            const root = document.querySelector('[data-modal-layer="root"][data-modal-name="${scenario.modalName}"]');
+            const closeButton = root?.querySelector('button[aria-label*="إغلاق"]') || root?.querySelector('.modal-backdrop');
+            if (!closeButton) throw new Error('close button not found');
+            closeButton.click();
+          })()
+        `);
+        await new Promise((resolve) => setTimeout(resolve, 320));
+        const cleanup = await evaluate(`
+          (() => ({
+            roots: document.querySelectorAll('[data-modal-layer="root"]').length,
+            bodyPosition: document.body.style.position,
+            bodyOverflow: document.body.style.overflow,
+            scrollDelta: Math.abs(window.scrollY - (window.__dialogSmokeScrollY || 0)),
+            horizontalOverflow: document.documentElement.scrollWidth - window.innerWidth,
+          }))()
+        `);
+        assert(
+          cleanup.roots === 0 &&
+            cleanup.bodyPosition !== 'fixed' &&
+            cleanup.bodyOverflow !== 'hidden' &&
+            cleanup.scrollDelta <= 2 &&
+            cleanup.horizontalOverflow <= 2,
+          `${scenario.name}-${position} cleanup failed: ${JSON.stringify(cleanup)}`,
+        );
+        results.push({ ...scenario, position, file, bytes: buffer.length, audit });
+      }
+    }
+
+    const scenarios = [
+      { name: 'desktop-dashboard-light', route: '/dashboard', width: 1440, height: 900, mobile: false, theme: 'light' },
+      { name: 'desktop-people-dark', route: '/people', width: 1440, height: 900, mobile: false, theme: 'dark' },
+      { name: 'mobile-accounts-light', route: '/accounts', width: 390, height: 844, mobile: true, theme: 'light' },
+      { name: 'mobile-settings-dark', route: '/settings', width: 390, height: 844, mobile: true, theme: 'dark' },
+    ];
+
+    const results = [];
+    for (const scenario of scenarios) {
+      await navigateAndTheme(scenario);
       const text = await cdp.send('Runtime.evaluate', {
         expression: 'document.body.innerText',
         returnByValue: true,
@@ -213,6 +322,64 @@ async function main() {
       assert(buffer.length > 10_000, `${scenario.name} screenshot is unexpectedly small`);
       await writeFile(file, buffer);
       results.push({ ...scenario, file, bytes: buffer.length });
+    }
+
+    const dialogScenarios = [
+      {
+        name: 'mobile-accounts-add-dialog',
+        route: '/accounts',
+        modalName: 'wallet-movement',
+        width: 390,
+        height: 844,
+        mobile: true,
+        theme: 'light',
+        openExpression: `
+          (() => {
+            const button = [...document.querySelectorAll('button')].find((item) => item.textContent?.includes('إضافة حركة'));
+            if (!button) throw new Error('accounts add button not found');
+            button.click();
+          })()
+        `,
+      },
+      {
+        name: 'mobile-people-fast-card-dialog',
+        route: '/people',
+        modalName: 'fast-card-entry',
+        width: 390,
+        height: 844,
+        mobile: true,
+        theme: 'dark',
+        openExpression: `
+          (() => {
+            const button = [...document.querySelectorAll('button')].find((item) => item.textContent?.includes('إضافة معاملة بطاقات'));
+            if (!button) throw new Error('fast card entry button not found');
+            button.click();
+          })()
+        `,
+      },
+      {
+        name: 'mobile-new-transaction-customer-dialog',
+        route: '/new-transaction',
+        modalName: 'new-transaction-customer',
+        width: 390,
+        height: 844,
+        mobile: true,
+        theme: 'light',
+        openExpression: `
+          (() => {
+            const select = [...document.querySelectorAll('select')].find((item) =>
+              [...item.options].some((option) => option.value === '__add_customer__')
+            );
+            if (!select) throw new Error('add customer select not found');
+            select.value = '__add_customer__';
+            select.dispatchEvent(new Event('change', { bubbles: true }));
+          })()
+        `,
+      },
+    ];
+
+    for (const scenario of dialogScenarios) {
+      await assertDialogScenario(scenario);
     }
 
     cdp.close();
@@ -228,9 +395,8 @@ main().catch((error) => {
   process.exitCode = 1;
 }).finally(async () => {
   if (temporarySessionId) {
-    await prisma.loginSession.update({
+    await prisma.loginSession.delete({
       where: { id: temporarySessionId },
-      data: { revokedAt: new Date() },
     }).catch(() => null);
   }
   await prisma.$disconnect();

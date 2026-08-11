@@ -19,6 +19,7 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { formatMoney, formatNumber, normalizeNumberInput } from '@/lib/format';
+import ModalLayer, { ModalBackdrop } from '@/components/ModalLayer';
 import {
   detailedPaymentCurrencyCode,
   detailedPaymentLabels,
@@ -448,7 +449,6 @@ export default function NewTransaction({
   }
 
   function closeCustomerModal() {
-    if (customerLoading) return;
     setCustomerModalOpen(false);
     setCustomerForm(initialCustomerForm);
   }
@@ -465,28 +465,33 @@ export default function NewTransaction({
     }
 
     setCustomerLoading(true);
-    const response = await fetch('/api/people', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        fullName: customerForm.fullName,
-        phone: customerForm.phone || undefined,
-        category: customerForm.category,
-        notes: customerForm.notes || undefined,
-        externalId: customerForm.externalId || undefined,
-      }),
-    });
-    const result = await response.json();
-    setCustomerLoading(false);
+    try {
+      const response = await fetch('/api/people', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          fullName: customerForm.fullName,
+          phone: customerForm.phone || undefined,
+          category: customerForm.category,
+          notes: customerForm.notes || undefined,
+          externalId: customerForm.externalId || undefined,
+        }),
+      });
+      const result = await response.json().catch(() => ({}));
 
-    if (!response.ok) return toast.error(result.error || 'تعذر إضافة الزبون');
+      if (!response.ok) return toast.error(result.error || 'تعذر إضافة الزبون');
 
-    setPeople((current) => [result, ...current.filter((person) => person.id !== result.id)]);
-    setField('personId', result.id);
-    setCustomerForm(initialCustomerForm);
-    setCustomerModalOpen(false);
-    toast.success('تمت إضافة الزبون واختياره');
-    router.refresh();
+      setPeople((current) => [result, ...current.filter((person) => person.id !== result.id)]);
+      setField('personId', result.id);
+      setCustomerForm(initialCustomerForm);
+      setCustomerModalOpen(false);
+      toast.success('تمت إضافة الزبون واختياره');
+      router.refresh();
+    } catch {
+      toast.error('تعذر الاتصال بالخادم أثناء إضافة الزبون');
+    } finally {
+      setCustomerLoading(false);
+    }
   }
 
   async function add(event: FormEvent) {
@@ -1355,12 +1360,13 @@ export default function NewTransaction({
       </form>
 
       {customerModalOpen ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4">
+        <ModalLayer name="new-transaction-customer" onClose={closeCustomerModal}>
+          <ModalBackdrop onClick={closeCustomerModal} />
           <form
             onSubmit={addCustomer}
-            className="w-full max-w-xl rounded-lg border border-slate-200 bg-white p-5 shadow-xl dark:border-slate-800 dark:bg-slate-900"
+            className="modal-panel modal-panel--auto sheet-panel max-w-xl dark:bg-slate-900"
           >
-            <div className="mb-5 flex items-start justify-between gap-4">
+            <div className="modal-header flex items-start justify-between gap-4">
               <div>
                 <h2 className="text-lg font-black text-slate-900 dark:text-slate-100">إضافة زبون جديد</h2>
                 <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
@@ -1370,15 +1376,14 @@ export default function NewTransaction({
               <button
                 type="button"
                 onClick={closeCustomerModal}
-                disabled={customerLoading}
-                className="rounded-lg p-2 text-slate-500 hover:bg-slate-100 hover:text-slate-900 disabled:cursor-not-allowed dark:hover:bg-slate-800 dark:hover:text-slate-100"
+                className="modal-close text-slate-500 hover:bg-slate-100 hover:text-slate-900 dark:hover:bg-slate-800 dark:hover:text-slate-100"
                 aria-label="إغلاق نافذة إضافة زبون"
               >
                 <X size={20} />
               </button>
             </div>
 
-            <div className="grid gap-4 md:grid-cols-2">
+            <div className="modal-body grid gap-4 p-5 md:grid-cols-2" data-modal-scroll-body>
               <Field label="اسم الزبون">
                 <input
                   autoFocus
@@ -1425,11 +1430,10 @@ export default function NewTransaction({
               </Field>
             </div>
 
-            <div className="mt-5 grid gap-3 sm:grid-cols-2">
+            <div className="modal-footer grid gap-3 sm:grid-cols-2">
               <button
                 type="button"
                 onClick={closeCustomerModal}
-                disabled={customerLoading}
                 className="rounded-lg border border-slate-200 px-4 py-3 font-bold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
               >
                 إلغاء
@@ -1443,7 +1447,7 @@ export default function NewTransaction({
               </button>
             </div>
           </form>
-        </div>
+        </ModalLayer>
       ) : null}
     </>
   );

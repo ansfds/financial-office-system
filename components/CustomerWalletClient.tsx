@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation';
 import { CheckCircle2, Loader2, Plus, Save, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { formatDateTime, formatMoney, numberValue } from '@/lib/format';
+import ModalLayer, { ModalBackdrop } from '@/components/ModalLayer';
 import {
   walletAccountLabels,
   walletBuckets,
@@ -226,38 +227,43 @@ export default function CustomerWalletClient({
     if (action.type === 'ADD_CREDIT' && !action.reason.trim()) return toast.error('اكتب سبب الدين');
 
     setSaving(true);
-    const response = await fetch(`/api/people/${personId}/wallet-settlements`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        direction: action.type === 'REPAYMENT' ? 'SUBTRACT' : 'ADD',
-        accountType: action.type === 'REPAYMENT' ? 'DEBT' : 'CREDIT',
-        currencyId: action.currencyId,
-        paymentMethod: action.paymentMethod,
-        amount: action.amount,
-        reason: action.type === 'REPAYMENT' ? 'تم السداد' : action.reason,
-        note: action.note || null,
-        movementKind: action.type === 'REPAYMENT' ? 'REPAYMENT' : 'ADJUSTMENT',
-        settlementMethod: action.paymentMethod,
-        effectMode: action.effectMode,
-      }),
-    });
-    const payload = await response.json().catch(() => ({}));
-    setSaving(false);
+    try {
+      const response = await fetch(`/api/people/${personId}/wallet-settlements`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          direction: action.type === 'REPAYMENT' ? 'SUBTRACT' : 'ADD',
+          accountType: action.type === 'REPAYMENT' ? 'DEBT' : 'CREDIT',
+          currencyId: action.currencyId,
+          paymentMethod: action.paymentMethod,
+          amount: action.amount,
+          reason: action.type === 'REPAYMENT' ? 'تم السداد' : action.reason,
+          note: action.note || null,
+          movementKind: action.type === 'REPAYMENT' ? 'REPAYMENT' : 'ADJUSTMENT',
+          settlementMethod: action.paymentMethod,
+          effectMode: action.effectMode,
+        }),
+      });
+      const payload = await response.json().catch(() => ({}));
 
-    if (!response.ok) {
-      toast.error(payload.error || 'تعذرت إضافة الحركة');
-      return;
+      if (!response.ok) {
+        toast.error(payload.error || 'تعذرت إضافة الحركة');
+        return;
+      }
+
+      toast.success(
+        `تم الحفظ. لنا الآن ${formatMoney(preview.debtAfter, selectedSummary.currency)}، وعلينا ${formatMoney(
+          preview.creditAfter,
+          selectedSummary.currency,
+        )}`,
+      );
+      setAction(null);
+      router.refresh();
+    } catch {
+      toast.error('تعذر الاتصال بالخادم أثناء حفظ الحركة');
+    } finally {
+      setSaving(false);
     }
-
-    toast.success(
-      `تم الحفظ. لنا الآن ${formatMoney(preview.debtAfter, selectedSummary.currency)}، وعلينا ${formatMoney(
-        preview.creditAfter,
-        selectedSummary.currency,
-      )}`,
-    );
-    setAction(null);
-    router.refresh();
   }
 
   return (
@@ -409,9 +415,10 @@ export default function CustomerWalletClient({
       </div>
 
       {action && selectedSummary ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4">
-          <form onSubmit={submit} className="w-full max-w-2xl rounded-lg bg-white p-5 shadow-xl dark:bg-slate-900">
-            <div className="mb-5 flex items-start justify-between gap-4">
+        <ModalLayer name="customer-wallet-action" onClose={() => setAction(null)}>
+          <ModalBackdrop onClick={() => setAction(null)} />
+          <form onSubmit={submit} className="modal-panel sheet-panel max-w-2xl dark:bg-slate-900">
+            <div className="modal-header flex items-start justify-between gap-4">
               <div>
                 <h3 className="text-lg font-black">{action.type === 'REPAYMENT' ? 'تم السداد' : 'إضافة مبلغ علينا'}</h3>
                 <p className="mt-1 text-sm text-slate-500">{selectedSummary.currency.name}</p>
@@ -419,15 +426,14 @@ export default function CustomerWalletClient({
               <button
                 type="button"
                 onClick={() => setAction(null)}
-                disabled={saving}
-                className="rounded-lg p-2 text-slate-500 hover:bg-slate-100 hover:text-slate-900 disabled:cursor-not-allowed dark:hover:bg-slate-800 dark:hover:text-slate-100"
+                className="modal-close text-slate-500 hover:bg-slate-100 hover:text-slate-900 dark:hover:bg-slate-800 dark:hover:text-slate-100"
                 aria-label="إغلاق النافذة"
               >
                 <X size={20} />
               </button>
             </div>
 
-            <div className="grid gap-4 sm:grid-cols-2">
+            <div className="modal-body grid gap-4 p-5 sm:grid-cols-2" data-modal-scroll-body>
               <Field label={action.type === 'REPAYMENT' ? 'القيمة التي سددها الزبون' : 'القيمة'}>
                 <input
                   type="number"
@@ -479,9 +485,8 @@ export default function CustomerWalletClient({
                   rows={3}
                 />
               </Field>
-            </div>
 
-            <div className="mt-5 rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm dark:border-slate-800 dark:bg-slate-950">
+            <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm dark:border-slate-800 dark:bg-slate-950 sm:col-span-2">
               <div className="mb-3 font-black">معاينة الأرصدة قبل الحفظ</div>
               {preview ? (
                 <div className="grid gap-2 sm:grid-cols-2">
@@ -496,12 +501,12 @@ export default function CustomerWalletClient({
                 </div>
               ) : null}
             </div>
+            </div>
 
-            <div className="mt-5 grid gap-3 sm:grid-cols-2">
+            <div className="modal-footer grid gap-3 sm:grid-cols-2">
               <button
                 type="button"
                 onClick={() => setAction(null)}
-                disabled={saving}
                 className="rounded-lg border border-slate-200 px-4 py-3 font-bold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
               >
                 إلغاء
@@ -515,7 +520,7 @@ export default function CustomerWalletClient({
               </button>
             </div>
           </form>
-        </div>
+        </ModalLayer>
       ) : null}
     </section>
   );

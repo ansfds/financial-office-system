@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { CheckCircle2, Eye, Link2, Loader2, Save, Search, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { formatDateTime, formatMoney, formatNumber, numberValue } from '@/lib/format';
+import ModalLayer, { ModalBackdrop } from '@/components/ModalLayer';
 import {
   paymentMethodLabel,
   simplePaymentLabels,
@@ -266,32 +267,37 @@ export default function TransactionsClient({
     if (!window.confirm('تأكيد تعديل المعاملة وتحديث أثر الصندوق حسب فرق المبلغ؟')) return;
 
     setSavingId(editor.transaction.id);
-    const response = await fetch(`/api/transactions/${editor.transaction.id}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        receivedAmount: decimal(editor.draft.receivedAmount),
-        paidAmount: decimal(editor.draft.paidAmount),
-        bankName: editor.draft.bankName || null,
-        executionType: editor.draft.executionType || null,
-        executionStatus: editor.draft.executionStatus,
-        executionNote: editor.draft.executionNote || null,
-        notExecutedAction:
-          editor.draft.executionStatus === 'NOT_EXECUTED' ? editor.draft.notExecutedAction || null : null,
-        verificationReceived: Boolean(editor.draft.verificationReceived),
-        secureInternalNote: editor.draft.secureInternalNote || null,
-        notes: editor.draft.notes || null,
-      }),
-    });
-    const data = await response.json();
-    setSavingId('');
+    try {
+      const response = await fetch(`/api/transactions/${editor.transaction.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          receivedAmount: decimal(editor.draft.receivedAmount),
+          paidAmount: decimal(editor.draft.paidAmount),
+          bankName: editor.draft.bankName || null,
+          executionType: editor.draft.executionType || null,
+          executionStatus: editor.draft.executionStatus,
+          executionNote: editor.draft.executionNote || null,
+          notExecutedAction:
+            editor.draft.executionStatus === 'NOT_EXECUTED' ? editor.draft.notExecutedAction || null : null,
+          verificationReceived: Boolean(editor.draft.verificationReceived),
+          secureInternalNote: editor.draft.secureInternalNote || null,
+          notes: editor.draft.notes || null,
+        }),
+      });
+      const data = await response.json().catch(() => ({}));
 
-    if (!response.ok) return toast.error(data.error || 'تعذر حفظ التعديل');
+      if (!response.ok) return toast.error(data.error || 'تعذر حفظ التعديل');
 
-    updateLocal(editor.transaction.id, data);
-    setEditor(null);
-    toast.success('تم تعديل المعاملة وتحديث الصندوق بالفرق فقط');
-    router.refresh();
+      updateLocal(editor.transaction.id, data);
+      setEditor(null);
+      toast.success('تم تعديل المعاملة وتحديث الصندوق بالفرق فقط');
+      router.refresh();
+    } catch {
+      toast.error('تعذر الاتصال بالخادم أثناء تعديل المعاملة');
+    } finally {
+      setSavingId('');
+    }
   }
 
   async function refreshEditorTransaction(transactionId: string, transaction?: any) {
@@ -306,40 +312,50 @@ export default function TransactionsClient({
     if (!editor) return;
 
     setSavingId(item.id);
-    const response = await fetch(`/api/transactions/${editor.transaction.id}/execution-items/${item.id}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    });
-    const data = await response.json();
-    setSavingId('');
+    try {
+      const response = await fetch(`/api/transactions/${editor.transaction.id}/execution-items/${item.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const data = await response.json().catch(() => ({}));
 
-    if (!response.ok) return toast.error(data.error || 'تعذر تحديث عنصر التنفيذ');
+      if (!response.ok) return toast.error(data.error || 'تعذر تحديث عنصر التنفيذ');
 
-    toast.success('تم تحديث عنصر التنفيذ');
-    await refreshEditorTransaction(editor.transaction.id, data);
-    await loadExecutionDetails(editor.transaction.id);
-    router.refresh();
+      toast.success('تم تحديث عنصر التنفيذ');
+      await refreshEditorTransaction(editor.transaction.id, data);
+      await loadExecutionDetails(editor.transaction.id);
+      router.refresh();
+    } catch {
+      toast.error('تعذر الاتصال بالخادم أثناء تحديث عنصر التنفيذ');
+    } finally {
+      setSavingId('');
+    }
   }
 
   async function completeAllExecutionItems() {
     if (!editor) return;
 
     setSavingId(editor.transaction.id);
-    const response = await fetch(`/api/transactions/${editor.transaction.id}/execution-items`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'COMPLETE_ALL' }),
-    });
-    const data = await response.json();
-    setSavingId('');
+    try {
+      const response = await fetch(`/api/transactions/${editor.transaction.id}/execution-items`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'COMPLETE_ALL' }),
+      });
+      const data = await response.json().catch(() => ({}));
 
-    if (!response.ok) return toast.error(data.error || 'تعذر تنفيذ الطلب بالكامل');
+      if (!response.ok) return toast.error(data.error || 'تعذر تنفيذ الطلب بالكامل');
 
-    toast.success('تم تنفيذ الطلب بالكامل');
-    await refreshEditorTransaction(editor.transaction.id, data);
-    await loadExecutionDetails(editor.transaction.id);
-    router.refresh();
+      toast.success('تم تنفيذ الطلب بالكامل');
+      await refreshEditorTransaction(editor.transaction.id, data);
+      await loadExecutionDetails(editor.transaction.id);
+      router.refresh();
+    } catch {
+      toast.error('تعذر الاتصال بالخادم أثناء تنفيذ الطلب بالكامل');
+    } finally {
+      setSavingId('');
+    }
   }
 
   function renderExecutionItemsPanel() {
@@ -591,30 +607,34 @@ export default function TransactionsClient({
       </div>
 
       {noteModal.open ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4">
-          <div className="w-full max-w-xl rounded-lg border border-slate-200 bg-white p-5 shadow-xl dark:border-slate-800 dark:bg-slate-900">
-            <div className="mb-4 flex items-center justify-between gap-4">
+        <ModalLayer name="transaction-note" onClose={() => setNoteModal({ open: false, text: '' })}>
+          <ModalBackdrop onClick={() => setNoteModal({ open: false, text: '' })} />
+          <div className="modal-panel modal-panel--auto sheet-panel max-w-xl dark:bg-slate-900">
+            <div className="modal-header flex items-center justify-between gap-4">
               <h2 className="text-lg font-black">ملاحظة</h2>
               <button
                 type="button"
                 onClick={() => setNoteModal({ open: false, text: '' })}
-                className="rounded-lg p-2 text-slate-500 hover:bg-slate-100 hover:text-slate-900 dark:hover:bg-slate-800 dark:hover:text-slate-100"
+                className="modal-close text-slate-500 hover:bg-slate-100 hover:text-slate-900 dark:hover:bg-slate-800 dark:hover:text-slate-100"
                 aria-label="إغلاق الملاحظة"
               >
                 <X size={20} />
               </button>
             </div>
+            <div className="modal-body p-5" data-modal-scroll-body>
             <div className="whitespace-pre-wrap rounded-lg bg-slate-50 p-4 leading-7 text-slate-700 dark:bg-slate-950 dark:text-slate-200">
               {noteModal.text}
             </div>
+            </div>
           </div>
-        </div>
+        </ModalLayer>
       ) : null}
 
       {editor ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4">
-          <div className="max-h-[92vh] w-full max-w-4xl overflow-y-auto rounded-lg border border-slate-200 bg-white p-5 shadow-xl dark:border-slate-800 dark:bg-slate-900">
-            <div className="mb-5 flex items-start justify-between gap-4">
+        <ModalLayer name="transaction-editor" onClose={() => setEditor(null)}>
+          <ModalBackdrop onClick={() => setEditor(null)} />
+          <div className="modal-panel sheet-panel max-w-4xl dark:bg-slate-900">
+            <div className="modal-header flex items-start justify-between gap-4">
               <div>
                 <h2 className="text-lg font-black">عرض / تعديل المعاملة {editor.transaction.number}</h2>
                 <p className="mt-1 text-sm text-slate-500">
@@ -624,14 +644,14 @@ export default function TransactionsClient({
               <button
                 type="button"
                 onClick={() => setEditor(null)}
-                className="rounded-lg p-2 text-slate-500 hover:bg-slate-100 hover:text-slate-900 dark:hover:bg-slate-800 dark:hover:text-slate-100"
+                className="modal-close text-slate-500 hover:bg-slate-100 hover:text-slate-900 dark:hover:bg-slate-800 dark:hover:text-slate-100"
                 aria-label="إغلاق نافذة تعديل المعاملة"
               >
                 <X size={20} />
               </button>
             </div>
 
-            <div className="grid gap-4 md:grid-cols-2">
+            <div className="modal-body grid gap-4 p-5 md:grid-cols-2" data-modal-scroll-body>
               <Info label="الزبون" value={editor.transaction.person?.fullName || '—'} />
               <Info label="التاريخ" value={editor.transaction.transactionAt ? formatDateTime(editor.transaction.transactionAt) : '—'} />
               <Info label="التفاصيل" value={detailsLabel(editor.transaction)} className="md:col-span-2" />
@@ -740,7 +760,7 @@ export default function TransactionsClient({
               </div>
             </div>
 
-            <div className="mt-5 grid gap-3 sm:grid-cols-2">
+            <div className="modal-footer grid gap-3 sm:grid-cols-2">
               <button
                 type="button"
                 onClick={() => setEditor(null)}
@@ -759,7 +779,7 @@ export default function TransactionsClient({
               </button>
             </div>
           </div>
-        </div>
+        </ModalLayer>
       ) : null}
     </div>
   );

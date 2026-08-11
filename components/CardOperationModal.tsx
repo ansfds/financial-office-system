@@ -5,6 +5,7 @@ import { useMemo, useState } from 'react';
 import { toast } from 'sonner';
 import { formatMoney, numberValue } from '@/lib/format';
 import { defaultCardDiscountCategories } from '@/lib/customer-cards';
+import ModalLayer, { ModalBackdrop } from '@/components/ModalLayer';
 
 type Props = {
   card: any;
@@ -70,47 +71,53 @@ export default function CardOperationModal({ card, operation, initialType, onClo
     }
 
     setSaving(true);
-    const response = await fetch(
-      operation
-        ? `/api/inventory/received-cards/${card.id}/operations/${operation.id}`
-        : `/api/inventory/received-cards/${card.id}/operations`,
-      {
-        method: operation ? 'PATCH' : 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          operationType: form.operationType,
-          categoryCode: form.operationType === 'GIFT_CARD' ? form.categoryCode : null,
-          quantity: Number(form.quantity || 1),
-          amount:
-            form.operationType === 'FINAL_SETTLEMENT' && !form.amount
-              ? undefined
-              : Number(form.amount || projectedAmount || 0),
-          note: form.note || null,
-          reason: form.reason || null,
-        }),
-      },
-    );
-    const result = await response.json().catch(() => ({}));
-    setSaving(false);
-    if (!response.ok) return toast.error(result.error || 'تعذر حفظ عملية البطاقة');
-    toast.success(operation ? 'تم تعديل العملية وإعادة حساب الرصيد' : 'تم تسجيل عملية البطاقة');
-    onSaved(result);
+    try {
+      const response = await fetch(
+        operation
+          ? `/api/inventory/received-cards/${card.id}/operations/${operation.id}`
+          : `/api/inventory/received-cards/${card.id}/operations`,
+        {
+          method: operation ? 'PATCH' : 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            operationType: form.operationType,
+            categoryCode: form.operationType === 'GIFT_CARD' ? form.categoryCode : null,
+            quantity: Number(form.quantity || 1),
+            amount:
+              form.operationType === 'FINAL_SETTLEMENT' && !form.amount
+                ? undefined
+                : Number(form.amount || projectedAmount || 0),
+            note: form.note || null,
+            reason: form.reason || null,
+          }),
+        },
+      );
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) return toast.error(result.error || 'تعذر حفظ عملية البطاقة');
+      toast.success(operation ? 'تم تعديل العملية وإعادة حساب الرصيد' : 'تم تسجيل عملية البطاقة');
+      onSaved(result);
+    } catch {
+      toast.error('تعذر الاتصال بالخادم أثناء حفظ عملية البطاقة');
+    } finally {
+      setSaving(false);
+    }
   }
 
   return (
-    <div className="fixed inset-0 z-[80] flex items-end justify-center bg-slate-950/60 p-0 backdrop-blur-sm md:items-center md:p-4">
-      <form onSubmit={submit} className="sheet-panel flex max-h-[96dvh] w-full max-w-xl flex-col overflow-hidden rounded-t-lg border border-slate-200 bg-white shadow-xl dark:border-slate-800 dark:bg-slate-950 md:rounded-lg">
-        <div className="flex items-start justify-between gap-4 border-b border-slate-200 p-4 dark:border-slate-800">
+    <ModalLayer name="card-operation" onClose={onClose}>
+      <ModalBackdrop onClick={onClose} />
+      <form onSubmit={submit} className="modal-panel sheet-panel max-w-xl dark:bg-slate-950">
+        <div className="modal-header flex items-start justify-between gap-4">
           <div>
             <h2 className="text-lg font-black">{operation ? 'تعديل عملية بطاقة' : 'إضافة عملية بطاقة'}</h2>
             <p className="mt-1 text-sm text-slate-500">المتبقي الحالي: {formatMoney(remaining, card.currency || card.batch?.currency || '$')}</p>
           </div>
-          <button type="button" onClick={onClose} disabled={saving} className="rounded-lg p-2 text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800" aria-label="إغلاق">
+          <button type="button" onClick={onClose} className="modal-close text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800" aria-label="إغلاق">
             <X size={20} />
           </button>
         </div>
 
-        <div className="overflow-y-auto p-4">
+        <div className="modal-body p-4" data-modal-scroll-body>
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
             {operationTypes.map((type) => (
               <button
@@ -178,8 +185,8 @@ export default function CardOperationModal({ card, operation, initialType, onClo
         ) : null}
         </div>
 
-        <div className="grid gap-3 border-t border-slate-200 p-4 dark:border-slate-800 sm:grid-cols-2">
-          <button type="button" onClick={onClose} disabled={saving} className="rounded-lg border border-slate-200 px-4 py-3 font-bold dark:border-slate-700">
+        <div className="modal-footer grid gap-3 sm:grid-cols-2">
+          <button type="button" onClick={onClose} className="rounded-lg border border-slate-200 px-4 py-3 font-bold dark:border-slate-700">
             إلغاء
           </button>
           <button disabled={saving} className="inline-flex items-center justify-center gap-2 rounded-lg bg-indigo-600 px-4 py-3 font-bold text-white disabled:bg-indigo-400">
@@ -188,6 +195,6 @@ export default function CardOperationModal({ card, operation, initialType, onClo
           </button>
         </div>
       </form>
-    </div>
+    </ModalLayer>
   );
 }

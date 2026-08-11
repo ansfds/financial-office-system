@@ -5,6 +5,7 @@ import { toast } from 'sonner';
 import { useMemo, useState } from 'react';
 import type { CSSProperties } from 'react';
 import { formatMoney } from '@/lib/format';
+import ModalLayer, { ModalBackdrop } from '@/components/ModalLayer';
 
 type CurrencyOption = {
   id: string;
@@ -183,59 +184,65 @@ export default function FastCardEntryModal({ people, selectedPerson, currencies,
     if (incomplete) return toast.error('أكمل آخر 4 أرقام والسعر المتفق عليه لكل بطاقة');
 
     setSaving(true);
-    const response = await fetch('/api/inventory/received-cards', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        personId: mode === 'existing' ? personId : null,
-        newPerson: mode === 'new' ? newPerson : null,
-        currencyId: defaults.currencyId || null,
-        cardCount: rows.length,
-        valueUsdPerCard: numericValue(defaults.valueUsd),
-        agreedAmountPerCard: numericValue(defaults.agreedAmount || rows[0]?.agreedAmount),
-        commonBankName: defaults.bankName || undefined,
-        notes: defaults.notes || undefined,
-        cards: rows.map((row) => ({
-          cardLast4: row.cardLast4,
-          valueUsd: numericValue(row.valueUsd),
-          agreedAmount: numericValue(row.agreedAmount),
-          currencyId: row.currencyId || defaults.currencyId || null,
-          bankName: row.bankName || undefined,
-          notes: row.notes || undefined,
-        })),
-      }),
-    });
-    const result = await response.json().catch(() => ({}));
-    setSaving(false);
-    if (!response.ok) return toast.error(result.error || 'تعذر حفظ معاملة البطاقات');
+    try {
+      const response = await fetch('/api/inventory/received-cards', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          personId: mode === 'existing' ? personId : null,
+          newPerson: mode === 'new' ? newPerson : null,
+          currencyId: defaults.currencyId || null,
+          cardCount: rows.length,
+          valueUsdPerCard: numericValue(defaults.valueUsd),
+          agreedAmountPerCard: numericValue(defaults.agreedAmount || rows[0]?.agreedAmount),
+          commonBankName: defaults.bankName || undefined,
+          notes: defaults.notes || undefined,
+          cards: rows.map((row) => ({
+            cardLast4: row.cardLast4,
+            valueUsd: numericValue(row.valueUsd),
+            agreedAmount: numericValue(row.agreedAmount),
+            currencyId: row.currencyId || defaults.currencyId || null,
+            bankName: row.bankName || undefined,
+            notes: row.notes || undefined,
+          })),
+        }),
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) return toast.error(result.error || 'تعذر حفظ معاملة البطاقات');
 
-    const warnings = result.entryTransaction?.duplicateWarnings || [];
-    toast.success(`تم حفظ ${result.cards?.length || rows.length} بطاقة`);
-    if (Array.isArray(warnings) && warnings.length) {
-      toast.warning(`تنبيه: ${warnings.length} رقمًا من آخر 4 موجودة سابقًا`);
+      const warnings = result.entryTransaction?.duplicateWarnings || [];
+      toast.success(`تم حفظ ${result.cards?.length || rows.length} بطاقة`);
+      if (Array.isArray(warnings) && warnings.length) {
+        toast.warning(`تنبيه: ${warnings.length} رقمًا من آخر 4 موجودة سابقًا`);
+      }
+      onSaved(result);
+    } catch {
+      toast.error('تعذر الاتصال بالخادم أثناء حفظ معاملة البطاقات');
+    } finally {
+      setSaving(false);
     }
-    onSaved(result);
   }
 
   return (
-    <div className="fixed inset-0 z-[70] flex items-end justify-center bg-slate-950/60 p-0 backdrop-blur-sm md:items-center md:p-3">
+    <ModalLayer name="fast-card-entry" onClose={requestClose}>
+      <ModalBackdrop onClick={requestClose} />
       <form
         onSubmit={submit}
-        className="sheet-panel flex h-[96dvh] w-full max-w-6xl flex-col overflow-hidden rounded-t-lg border border-slate-200 bg-white shadow-2xl dark:border-slate-800 dark:bg-slate-950 md:h-auto md:max-h-[94vh] md:rounded-lg"
+        className="modal-panel sheet-panel max-w-6xl dark:bg-slate-950"
       >
-        <div className="flex items-start justify-between gap-4 border-b border-slate-200 p-4 dark:border-slate-800">
+        <div className="modal-header flex items-start justify-between gap-4">
           <div>
             <h2 className="text-xl font-black">إضافة معاملة بطاقات</h2>
             <p className="mt-1 text-sm text-slate-500">
               {summary.completeRows} من {rows.length} صف مكتمل
             </p>
           </div>
-          <button type="button" onClick={requestClose} disabled={saving} className="rounded-lg p-2 text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800" aria-label="إغلاق">
+          <button type="button" onClick={requestClose} className="modal-close text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800" aria-label="إغلاق">
             <X size={22} />
           </button>
         </div>
 
-        <div className="overflow-y-auto p-4">
+        <div className="modal-body p-4" data-modal-scroll-body>
           <div className="grid gap-3 md:grid-cols-4">
             <div className="flex rounded-lg bg-slate-100 p-1 dark:bg-slate-900">
               <button
@@ -477,11 +484,11 @@ export default function FastCardEntryModal({ people, selectedPerson, currencies,
           ) : null}
         </div>
 
-        <div className="grid gap-3 border-t border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-950 md:grid-cols-[1fr_auto_auto]">
+        <div className="modal-footer grid gap-3 md:grid-cols-[1fr_auto_auto]">
           <div className="text-sm text-slate-500">
             الإجمالي الأصلي: <b>{formatMoney(summary.original, '$')}</b>، المتفق عليه: <b>{formatMoney(summary.agreed, '$')}</b>
           </div>
-          <button type="button" onClick={requestClose} disabled={saving} className="rounded-lg border border-slate-200 px-4 py-3 font-bold dark:border-slate-700">
+          <button type="button" onClick={requestClose} className="rounded-lg border border-slate-200 px-4 py-3 font-bold dark:border-slate-700">
             إلغاء
           </button>
           <button disabled={saving} className="inline-flex items-center justify-center gap-2 rounded-lg bg-indigo-600 px-5 py-3 font-bold text-white disabled:cursor-not-allowed disabled:bg-indigo-400">
@@ -490,6 +497,6 @@ export default function FastCardEntryModal({ people, selectedPerson, currencies,
           </button>
         </div>
       </form>
-    </div>
+    </ModalLayer>
   );
 }

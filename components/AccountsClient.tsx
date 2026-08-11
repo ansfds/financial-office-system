@@ -7,6 +7,7 @@ import { Edit3, Eye, Loader2, Plus, Search, Trash2, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { formatDateTime, formatMoney } from '@/lib/format';
 import { walletBuckets, walletSettlementDirectionLabels } from '@/lib/customer-wallet';
+import ModalLayer, { ModalBackdrop } from '@/components/ModalLayer';
 
 type CurrencyOption = {
   id: string;
@@ -172,14 +173,18 @@ export default function AccountsClient({
     );
   }, [q, rows]);
 
-  const selectedSettlements = selectedRow
-    ? settlements.filter(
-        (settlement) =>
-          settlement.personId === selectedRow.personId &&
-          settlement.currencyId === selectedRow.currency.id &&
-          settlement.paymentMethod === selectedRow.paymentMethod,
-      )
-    : [];
+  const selectedSettlements = useMemo(
+    () =>
+      selectedRow
+        ? settlements.filter(
+            (settlement) =>
+              settlement.personId === selectedRow.personId &&
+              settlement.currencyId === selectedRow.currency.id &&
+              settlement.paymentMethod === selectedRow.paymentMethod,
+          )
+        : [],
+    [selectedRow, settlements],
+  );
 
   function resetForm(row?: AccountRow | null) {
     const currencyId = row?.currency.id || currencies[0]?.id || '';
@@ -251,18 +256,23 @@ export default function AccountsClient({
     }
 
     setSaving(true);
-    const response = await fetch(`/api/people/${form.personId}/wallet-settlements`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(form),
-    });
-    const result = await response.json().catch(() => ({}));
-    setSaving(false);
-    if (!response.ok) return toast.error(result.error || 'تعذر حفظ الحركة');
+    try {
+      const response = await fetch(`/api/people/${form.personId}/wallet-settlements`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(form),
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) return toast.error(result.error || 'تعذر حفظ الحركة');
 
-    toast.success('تم حفظ الحركة المالية');
-    setOpenForm(false);
-    router.refresh();
+      toast.success('تم حفظ الحركة المالية');
+      setOpenForm(false);
+      router.refresh();
+    } catch {
+      toast.error('تعذر الاتصال بالخادم أثناء حفظ الحركة');
+    } finally {
+      setSaving(false);
+    }
   }
 
   function openEdit(settlement: Settlement) {
@@ -287,18 +297,23 @@ export default function AccountsClient({
     if (!editing) return;
 
     setSaving(true);
-    const response = await fetch(`/api/people/${editing.personId}/wallet-settlements/${editing.id}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(form),
-    });
-    const result = await response.json().catch(() => ({}));
-    setSaving(false);
-    if (!response.ok) return toast.error(result.error || 'تعذر تعديل الحركة');
+    try {
+      const response = await fetch(`/api/people/${editing.personId}/wallet-settlements/${editing.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(form),
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) return toast.error(result.error || 'تعذر تعديل الحركة');
 
-    toast.success('تم تعديل الحركة وإعادة حساب الرصيد');
-    setEditing(null);
-    router.refresh();
+      toast.success('تم تعديل الحركة وإعادة حساب الرصيد');
+      setEditing(null);
+      router.refresh();
+    } catch {
+      toast.error('تعذر الاتصال بالخادم أثناء تعديل الحركة');
+    } finally {
+      setSaving(false);
+    }
   }
 
   async function deleteSettlement(settlement: Settlement) {
@@ -495,10 +510,10 @@ export default function AccountsClient({
       ) : null}
 
       {selectedRow ? (
-        <div className="fixed inset-0 z-50">
-          <button className="sheet-backdrop absolute inset-0 bg-slate-950/45 backdrop-blur-sm" aria-label="إغلاق التفاصيل" onClick={() => setSelectedRow(null)} />
-          <aside className="sheet-panel absolute inset-x-0 bottom-0 h-[96dvh] w-full overflow-y-auto rounded-t-lg border-t border-slate-200 bg-white p-4 shadow-2xl dark:border-slate-800 dark:bg-slate-950 md:inset-y-0 md:left-0 md:right-auto md:h-auto md:max-w-4xl md:rounded-none md:border-r md:border-t-0 md:p-5 md:w-[78vw]">
-            <div className="sticky top-0 z-10 -mx-4 -mt-4 mb-4 flex items-start justify-between gap-4 border-b border-slate-100 bg-white/95 p-4 backdrop-blur dark:border-slate-800 dark:bg-slate-950/95 md:static md:m-0 md:mb-5 md:border-0 md:bg-transparent md:p-0">
+        <ModalLayer name="account-details" onClose={() => setSelectedRow(null)} className="md:items-stretch md:justify-start">
+          <ModalBackdrop className="bg-slate-950/45" aria-label="إغلاق التفاصيل" onClick={() => setSelectedRow(null)} />
+          <aside className="modal-panel modal-panel--drawer sheet-panel max-w-4xl dark:bg-slate-950 md:w-[78vw]">
+            <div className="modal-header flex items-start justify-between gap-4">
               <div>
                 <div className="text-sm font-bold text-indigo-600">{selectedRow.customerNo || '—'}</div>
                 <h2 className="text-2xl font-black">{selectedRow.fullName}</h2>
@@ -507,13 +522,14 @@ export default function AccountsClient({
               <button
                 type="button"
                 onClick={() => setSelectedRow(null)}
-                className="rounded-lg p-2 text-slate-500 hover:bg-slate-100 hover:text-slate-900 dark:hover:bg-slate-800 dark:hover:text-slate-100"
+                className="modal-close text-slate-500 hover:bg-slate-100 hover:text-slate-900 dark:hover:bg-slate-800 dark:hover:text-slate-100"
                 aria-label="إغلاق"
               >
                 <X size={22} />
               </button>
             </div>
 
+            <div className="modal-body p-4 md:p-5" data-modal-scroll-body>
             <div className="mb-5 grid gap-3 md:grid-cols-3">
               <AccountPanel
                 title="لنا"
@@ -649,8 +665,9 @@ export default function AccountsClient({
                 </tbody>
               </table>
             </div>
+            </div>
           </aside>
-        </div>
+        </ModalLayer>
       ) : null}
     </>
   );
@@ -757,16 +774,17 @@ function MovementModal({
   const options = paymentOptions(currencies, form.currencyId);
 
   return (
-    <div className="fixed inset-0 z-[60] flex items-end justify-center bg-slate-950/60 p-0 backdrop-blur-sm md:items-center md:p-4">
-      <form onSubmit={onSubmit} className="sheet-panel flex max-h-[96dvh] w-full max-w-2xl flex-col overflow-hidden rounded-t-lg border border-slate-200 bg-white shadow-xl dark:border-slate-800 dark:bg-slate-900 md:rounded-lg">
-        <div className="flex items-start justify-between gap-4 border-b border-slate-200 p-4 dark:border-slate-800">
+    <ModalLayer name="wallet-movement" onClose={onClose}>
+      <ModalBackdrop onClick={onClose} />
+      <form onSubmit={onSubmit} className="modal-panel sheet-panel max-w-2xl dark:bg-slate-900">
+        <div className="modal-header flex items-start justify-between gap-4">
           <h2 className="text-lg font-black">{title}</h2>
-          <button type="button" onClick={onClose} disabled={saving} className="rounded-lg p-2 text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800" aria-label="إغلاق">
+          <button type="button" onClick={onClose} className="modal-close text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800" aria-label="إغلاق">
             <X size={20} />
           </button>
         </div>
 
-        <div className="grid gap-4 overflow-y-auto p-4 md:grid-cols-2">
+        <div className="modal-body grid gap-4 p-4 md:grid-cols-2" data-modal-scroll-body>
           <select value={form.personId} onChange={(event) => onChange({ ...form, personId: event.target.value })}>
             {people.map((person) => (
               <option key={person.id} value={person.id}>
@@ -854,11 +872,10 @@ function MovementModal({
           ) : null}
         </div>
 
-        <div className="grid gap-3 border-t border-slate-200 p-4 dark:border-slate-800 sm:grid-cols-2">
+        <div className="modal-footer grid gap-3 sm:grid-cols-2">
           <button
             type="button"
             onClick={onClose}
-            disabled={saving}
             className="rounded-lg border border-slate-200 px-4 py-3 font-bold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
           >
             إلغاء
@@ -872,6 +889,6 @@ function MovementModal({
           </button>
         </div>
       </form>
-    </div>
+    </ModalLayer>
   );
 }

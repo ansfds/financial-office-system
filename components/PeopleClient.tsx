@@ -1,9 +1,8 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { CSSProperties } from 'react';
-import { createPortal } from 'react-dom';
-import { usePathname, useRouter } from 'next/navigation';
+import { useRouter } from 'next/navigation';
 import {
   Archive,
   ChevronDown,
@@ -26,6 +25,7 @@ import { detailedPaymentLabels } from '@/lib/payment-methods';
 import FastCardEntryModal from '@/components/FastCardEntryModal';
 import CardOperationModal from '@/components/CardOperationModal';
 import CustomerDeliveryModal from '@/components/CustomerDeliveryModal';
+import ModalLayer, { ModalBackdrop } from '@/components/ModalLayer';
 import { cardOperationTypeLabels } from '@/lib/customer-cards';
 import { compareCardsBySequence, sortByCustomerCode } from '@/lib/customer-code-sort';
 
@@ -270,7 +270,6 @@ export default function PeopleClient({
   currencies: CurrencyOption[];
 }) {
   const router = useRouter();
-  const pathname = usePathname();
   const [items, setItems] = useState<any[]>(() => sortByCustomerCode(initialPeople));
   const [q, setQ] = useState('');
   const [loading, setLoading] = useState(false);
@@ -296,32 +295,27 @@ export default function PeopleClient({
   const [fastEntryOpen, setFastEntryOpen] = useState(false);
   const [operationModal, setOperationModal] = useState<{ card: any; operation?: any | null; initialType?: string } | null>(null);
   const [deliveryOpen, setDeliveryOpen] = useState(false);
-  const [portalReady, setPortalReady] = useState(false);
-  const cardsDrawerHistoryOpen = useRef(false);
-  const selectedPersonIdRef = useRef('');
 
   const selectedPerson = useMemo(
     () => items.find((person) => person.id === selectedPersonId) || null,
     [items, selectedPersonId],
   );
-  const selectedPersonCards = selectedPerson ? personSummary(selectedPerson).cards : [];
-  const visibleCards = selectedPersonCards.filter((card: any) => statusFilter === 'ALL' || card.status === statusFilter);
-  const selectedDeliveryRows = selectedPerson ? customerDeliverySummary(selectedPerson, currencies) : [];
+  const selectedPersonSummary = useMemo(() => (selectedPerson ? personSummary(selectedPerson) : null), [selectedPerson]);
+  const selectedPersonCards = useMemo(() => selectedPersonSummary?.cards || [], [selectedPersonSummary]);
+  const visibleCards = useMemo(
+    () => selectedPersonCards.filter((card: any) => statusFilter === 'ALL' || card.status === statusFilter),
+    [selectedPersonCards, statusFilter],
+  );
+  const selectedDeliveryRows = useMemo(
+    () => (selectedPerson ? customerDeliverySummary(selectedPerson, currencies) : []),
+    [currencies, selectedPerson],
+  );
 
   const closeCustomerCardsDrawer = useCallback(() => {
     setSelectedPersonId('');
     setDeliveryOpen(false);
     setExpandedCardIds(new Set());
     setSelectedCards(new Set());
-
-    if (
-      typeof window !== 'undefined' &&
-      cardsDrawerHistoryOpen.current &&
-      window.history.state?.customerCardsDrawer === true
-    ) {
-      cardsDrawerHistoryOpen.current = false;
-      window.history.back();
-    }
   }, []);
 
   const openCustomerCardsDrawer = useCallback((personId: string) => {
@@ -333,56 +327,6 @@ export default function PeopleClient({
   useEffect(() => {
     setItems(sortByCustomerCode(initialPeople));
   }, [initialPeople]);
-
-  useEffect(() => {
-    setPortalReady(true);
-  }, []);
-
-  useEffect(() => {
-    selectedPersonIdRef.current = selectedPersonId;
-  }, [selectedPersonId]);
-
-  useEffect(() => {
-    if (!selectedPersonIdRef.current) return;
-    setSelectedPersonId('');
-    setDeliveryOpen(false);
-    cardsDrawerHistoryOpen.current = false;
-  }, [pathname]);
-
-  useEffect(() => {
-    if (!selectedPerson) return;
-
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-
-    if (!cardsDrawerHistoryOpen.current) {
-      window.history.pushState({ ...(window.history.state || {}), customerCardsDrawer: true }, '', window.location.href);
-      cardsDrawerHistoryOpen.current = true;
-    }
-
-    function handleKeyDown(event: KeyboardEvent) {
-      if (event.key !== 'Escape') return;
-      event.preventDefault();
-      closeCustomerCardsDrawer();
-    }
-
-    function handlePopState() {
-      cardsDrawerHistoryOpen.current = false;
-      setSelectedPersonId('');
-      setDeliveryOpen(false);
-      setExpandedCardIds(new Set());
-      setSelectedCards(new Set());
-    }
-
-    document.addEventListener('keydown', handleKeyDown);
-    window.addEventListener('popstate', handlePopState);
-
-    return () => {
-      document.body.style.overflow = previousOverflow;
-      document.removeEventListener('keydown', handleKeyDown);
-      window.removeEventListener('popstate', handlePopState);
-    };
-  }, [selectedPerson, closeCustomerCardsDrawer]);
 
   useEffect(() => {
     const handle = window.setTimeout(() => {
@@ -431,27 +375,32 @@ export default function PeopleClient({
     if (!editingPerson) return;
 
     setSavingPerson(true);
-    const response = await fetch(`/api/people/${editingPerson.id}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        fullName: editForm.fullName,
-        phone: editForm.phone || null,
-        address: editForm.address || null,
-        notes: editForm.notes || null,
-        externalId: editForm.externalId || null,
-        category: editForm.category,
-      }),
-    });
-    const result = await response.json().catch(() => ({}));
-    setSavingPerson(false);
+    try {
+      const response = await fetch(`/api/people/${editingPerson.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          fullName: editForm.fullName,
+          phone: editForm.phone || null,
+          address: editForm.address || null,
+          notes: editForm.notes || null,
+          externalId: editForm.externalId || null,
+          category: editForm.category,
+        }),
+      });
+      const result = await response.json().catch(() => ({}));
 
-    if (!response.ok) return toast.error(result.error || 'تعذر تعديل الزبون');
+      if (!response.ok) return toast.error(result.error || 'تعذر تعديل الزبون');
 
-    setItems((current) => sortByCustomerCode(current.map((person) => (person.id === result.id ? result : person))));
-    setEditingPerson(null);
-    toast.success('تم تعديل بيانات الزبون');
-    router.refresh();
+      setItems((current) => sortByCustomerCode(current.map((person) => (person.id === result.id ? result : person))));
+      setEditingPerson(null);
+      toast.success('تم تعديل بيانات الزبون');
+      router.refresh();
+    } catch {
+      toast.error('تعذر الاتصال بالخادم أثناء تعديل الزبون');
+    } finally {
+      setSavingPerson(false);
+    }
   }
 
   async function archivePerson(person: any) {
@@ -891,12 +840,16 @@ export default function PeopleClient({
         </button>
       </div>
 
-      {portalReady && selectedPerson ? createPortal((
-        <div className="fixed inset-0 z-[80]" data-customer-cards-drawer="root">
-          <button
-            type="button"
+      {selectedPerson ? (
+        <ModalLayer
+          name="customer-cards"
+          onClose={closeCustomerCardsDrawer}
+          className="md:items-stretch md:justify-start"
+          rootProps={{ 'data-customer-cards-drawer': 'root' }}
+        >
+          <ModalBackdrop
             aria-label="إغلاق تفاصيل الزبون"
-            className="sheet-backdrop absolute inset-0 z-0 bg-slate-950/45 backdrop-blur-sm"
+            className="bg-slate-950/45"
             onClick={closeCustomerCardsDrawer}
           />
           <aside
@@ -904,9 +857,9 @@ export default function PeopleClient({
             aria-modal="true"
             aria-labelledby="customer-cards-drawer-title"
             data-customer-cards-drawer="panel"
-            className="sheet-panel mobile-modal-viewport absolute inset-0 z-10 flex w-full flex-col overflow-y-auto overscroll-contain rounded-none border-t border-slate-200 bg-white p-4 pb-[calc(1rem+env(safe-area-inset-bottom))] shadow-2xl dark:border-slate-800 dark:bg-slate-950 md:inset-y-0 md:left-0 md:right-auto md:max-w-5xl md:border-r md:border-t-0 md:p-5 md:w-[86vw]"
+            className="modal-panel modal-panel--drawer sheet-panel max-w-5xl dark:bg-slate-950 md:w-[86vw]"
           >
-            <div className="sticky top-0 z-20 -mx-4 -mt-4 mb-4 flex items-start justify-between gap-4 border-b border-slate-100 bg-white/95 p-4 backdrop-blur dark:border-slate-800 dark:bg-slate-950/95 md:static md:m-0 md:mb-5 md:border-0 md:bg-transparent md:p-0">
+            <div className="modal-header flex items-start justify-between gap-4">
               <div>
                 <div className="text-sm font-bold text-indigo-600">{selectedPerson.customerNo || 'زبون بدون رقم'}</div>
                 <h2 id="customer-cards-drawer-title" className="mt-1 text-2xl font-black">{selectedPerson.fullName}</h2>
@@ -916,13 +869,14 @@ export default function PeopleClient({
               <button
                 type="button"
                 onClick={closeCustomerCardsDrawer}
-                className="inline-flex min-h-11 w-11 shrink-0 items-center justify-center rounded-lg p-2 text-slate-500 hover:bg-slate-100 hover:text-slate-900 dark:hover:bg-slate-800 dark:hover:text-slate-100"
+                className="modal-close text-slate-500 hover:bg-slate-100 hover:text-slate-900 dark:hover:bg-slate-800 dark:hover:text-slate-100"
                 aria-label="إغلاق"
               >
                 <X size={22} />
               </button>
             </div>
 
+            <div className="modal-body p-4 md:p-5" data-modal-scroll-body>
             <div className="mb-4 flex flex-wrap gap-2">
               <button
                 type="button"
@@ -1318,17 +1272,19 @@ export default function PeopleClient({
                 </div>
               ) : null}
             </div>
+            </div>
           </aside>
-        </div>
-      ), document.body) : null}
+        </ModalLayer>
+      ) : null}
 
       {editingPerson ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4">
+        <ModalLayer name="edit-person" onClose={() => setEditingPerson(null)}>
+          <ModalBackdrop onClick={() => setEditingPerson(null)} />
           <form
             onSubmit={saveEdit}
-            className="w-full max-w-2xl rounded-lg border border-slate-200 bg-white p-5 shadow-xl dark:border-slate-800 dark:bg-slate-900"
+            className="modal-panel modal-panel--auto sheet-panel max-w-2xl dark:bg-slate-900"
           >
-            <div className="mb-5 flex items-start justify-between gap-4">
+            <div className="modal-header flex items-start justify-between gap-4">
               <div>
                 <h2 className="text-lg font-black">تعديل بيانات الزبون</h2>
                 <p className="mt-1 text-sm text-slate-500">{editingPerson.customerNo || ''}</p>
@@ -1336,15 +1292,14 @@ export default function PeopleClient({
               <button
                 type="button"
                 onClick={() => setEditingPerson(null)}
-                disabled={savingPerson}
-                className="rounded-lg p-2 text-slate-500 hover:bg-slate-100 hover:text-slate-900 disabled:cursor-not-allowed dark:hover:bg-slate-800 dark:hover:text-slate-100"
+                className="modal-close text-slate-500 hover:bg-slate-100 hover:text-slate-900 dark:hover:bg-slate-800 dark:hover:text-slate-100"
                 aria-label="إغلاق تعديل الزبون"
               >
                 <X size={20} />
               </button>
             </div>
 
-            <div className="grid gap-4 md:grid-cols-2">
+            <div className="modal-body grid gap-4 p-5 md:grid-cols-2" data-modal-scroll-body>
               <input value={editForm.fullName} onChange={(event) => setEditForm({ ...editForm, fullName: event.target.value })} placeholder="الاسم" />
               <input value={editForm.phone} onChange={(event) => setEditForm({ ...editForm, phone: event.target.value })} placeholder="رقم الهاتف" />
               <input value={editForm.address} onChange={(event) => setEditForm({ ...editForm, address: event.target.value })} placeholder="العنوان" />
@@ -1361,11 +1316,10 @@ export default function PeopleClient({
               />
             </div>
 
-            <div className="mt-5 grid gap-3 sm:grid-cols-2">
+            <div className="modal-footer grid gap-3 sm:grid-cols-2">
               <button
                 type="button"
                 onClick={() => setEditingPerson(null)}
-                disabled={savingPerson}
                 className="rounded-lg border border-slate-200 px-4 py-3 font-bold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
               >
                 إلغاء
@@ -1379,7 +1333,7 @@ export default function PeopleClient({
               </button>
             </div>
           </form>
-        </div>
+        </ModalLayer>
       ) : null}
 
       {fastEntryOpen ? (

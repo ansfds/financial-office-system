@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { AlertTriangle, DatabaseZap, Loader2, Trash2, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { formatNumber } from '@/lib/format';
+import ModalLayer, { ModalBackdrop } from '@/components/ModalLayer';
 
 const TRANSACTION_RESET_CONFIRMATION_TEXT = 'RESET SYSTEM DATA';
 const FULL_RESET_CONFIRMATION_TEXT = 'RESET FULL SYSTEM DATA';
@@ -292,14 +293,15 @@ function ResetModal({
   severe?: boolean;
 }) {
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4">
+    <ModalLayer name="danger-reset" onClose={onClose}>
+      <ModalBackdrop onClick={onClose} />
       <form
         onSubmit={onSubmit}
-        className={`w-full max-w-xl rounded-lg border bg-white p-5 shadow-xl dark:bg-slate-900 ${
+        className={`modal-panel sheet-panel max-w-xl dark:bg-slate-900 ${
           severe ? 'border-red-400 dark:border-red-800' : 'border-red-200 dark:border-red-900'
         }`}
       >
-        <div className="mb-5 flex items-start justify-between gap-4">
+        <div className="modal-header flex items-start justify-between gap-4">
           <div>
             <h2 className="text-lg font-black text-red-700 dark:text-red-300">{title}</h2>
             <p className="mt-2 text-sm leading-7 text-slate-500">{description}</p>
@@ -310,21 +312,19 @@ function ResetModal({
           <button
             type="button"
             onClick={onClose}
-            disabled={loading}
-            className="rounded-lg p-2 text-slate-500 hover:bg-slate-100 hover:text-slate-900 disabled:cursor-not-allowed dark:hover:bg-slate-800 dark:hover:text-slate-100"
+            className="modal-close text-slate-500 hover:bg-slate-100 hover:text-slate-900 dark:hover:bg-slate-800 dark:hover:text-slate-100"
             aria-label="إغلاق نافذة التصفير"
           >
             <X size={20} />
           </button>
         </div>
 
-        <div className="grid gap-4">{children}</div>
+        <div className="modal-body grid gap-4 p-5" data-modal-scroll-body>{children}</div>
 
-        <div className="mt-5 grid gap-3 sm:grid-cols-2">
+        <div className="modal-footer grid gap-3 sm:grid-cols-2">
           <button
             type="button"
             onClick={onClose}
-            disabled={loading}
             className="rounded-lg border border-slate-200 px-4 py-3 font-bold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
           >
             إلغاء
@@ -338,6 +338,6 @@ function ResetModal({
           </button>
         </div>
       </form>
-    </div>
+    </ModalLayer>
   );
 }
