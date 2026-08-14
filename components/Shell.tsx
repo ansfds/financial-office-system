@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 import ThemeSwitcher from './ThemeSwitcher';
 import SessionActivity from './SessionActivity';
+import SmartAssistant from './SmartAssistant';
 import { reduceMobileDrawerState, shouldCloseMobileDrawerFromDrag } from '@/lib/mobile-nav-drawer';
 
 const logoUrl = 'https://i.postimg.cc/k4nQr4gx/680242520-122094061526346951-872670812110961262-n.jpg';
@@ -224,6 +225,7 @@ export default function Shell({ children }: { children: React.ReactNode }) {
         {children}
       </main>
       <SessionActivity />
+      <SmartAssistant />
     </div>
   );
 }

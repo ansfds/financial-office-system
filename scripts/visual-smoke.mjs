@@ -395,6 +395,22 @@ async function main() {
           })()
         `,
       },
+      ...[320, 360, 390, 412].map((width) => ({
+        name: `mobile-smart-assistant-${width}`,
+        route: '/dashboard',
+        modalName: 'smart-assistant',
+        width,
+        height: 844,
+        mobile: true,
+        theme: width === 360 || width === 412 ? 'dark' : 'light',
+        openExpression: `
+          (() => {
+            const button = [...document.querySelectorAll('button')].find((item) => item.textContent?.includes('المساعد الذكي'));
+            if (!button) throw new Error('smart assistant button not found');
+            button.click();
+          })()
+        `,
+      })),
     ];
 
     for (const scenario of dialogScenarios) {
