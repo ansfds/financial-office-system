@@ -193,8 +193,17 @@ export default function ModalLayer({
 
       pushedHistoryRef.current = false;
       if (window.history.state?.fosModalLayer === id) {
+        const modalScrollSnapshot = scrollSnapshot
+          ? { scrollX: scrollSnapshot.scrollX, scrollY: scrollSnapshot.scrollY }
+          : null;
+        const restoreModalScroll = () => {
+          if (modalScrollSnapshot) restoreWindowScroll(modalScrollSnapshot);
+        };
         window.history.back();
-        window.setTimeout(restoreHistoryScroll, 120);
+        window.setTimeout(restoreModalScroll, 80);
+        window.setTimeout(restoreModalScroll, 220);
+        window.setTimeout(restoreModalScroll, 420);
+        window.setTimeout(restoreHistoryScroll, 480);
         return;
       }
 
