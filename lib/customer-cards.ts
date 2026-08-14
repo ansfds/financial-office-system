@@ -1,6 +1,7 @@
 import { D } from './money';
 
 export const CUSTOMER_CARD_MAX_STAGE = 6;
+export const STANDARD_CUSTOMER_CARD_VALUE_USD = 2000;
 
 export const defaultCardDiscountCategories = [
   { code: '100', name: 'كرت 100', faceValue: 100, deductionAmount: 101 },
@@ -40,9 +41,10 @@ export function cardStatusForStage(stage: unknown, fallback = 'RECEIVED') {
   return 'RECEIVED';
 }
 
-export function cardBaseAmount(valueUsd: unknown, agreedAmount: unknown) {
+export function cardBaseAmount(valueUsd: unknown, _agreedAmount?: unknown) {
+  void _agreedAmount;
   const value = D(valueUsd || 0);
-  return value.gt(0) ? value : D(agreedAmount || 0);
+  return value.gt(0) ? value : D(0);
 }
 
 export function cardRemainingAmount(valueUsd: unknown, agreedAmount: unknown, receivedAmount: unknown) {

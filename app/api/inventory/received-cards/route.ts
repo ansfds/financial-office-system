@@ -3,7 +3,7 @@ import { audit, requireSession } from '@/lib/auth';
 import { apiError, fail, ok } from '@/lib/http';
 import { D } from '@/lib/money';
 import { revalidateFinancePaths } from '@/lib/revalidate';
-import { cardBaseAmount, cardProgressPercent } from '@/lib/customer-cards';
+import { STANDARD_CUSTOMER_CARD_VALUE_USD, cardBaseAmount, cardProgressPercent } from '@/lib/customer-cards';
 import { Prisma } from '@prisma/client';
 import { z } from 'zod';
 
@@ -40,7 +40,7 @@ const createBatchSchema = z.object({
   currencyId: z.string().optional().nullable(),
   receivedAt: z.string().optional(),
   cardCount: z.coerce.number().int().min(1).max(200),
-  valueUsdPerCard: z.coerce.number().min(0).default(0),
+  valueUsdPerCard: z.coerce.number().min(0).default(STANDARD_CUSTOMER_CARD_VALUE_USD),
   agreedAmountPerCard: z.coerce.number().positive(),
   commonBankName: z.string().trim().optional(),
   notes: z.string().trim().optional(),

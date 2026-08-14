@@ -1,7 +1,7 @@
 import { db } from '@/lib/db';
 import { audit, requireSession } from '@/lib/auth';
-import { sortByCustomerCode } from '@/lib/customer-code-sort';
 import { apiError, fail, ok } from '@/lib/http';
+import { findPeopleWithCardSummaries } from '@/lib/people-card-summary';
 import { revalidateFinancePaths } from '@/lib/revalidate';
 import { Prisma } from '@prisma/client';
 import { z } from 'zod';
@@ -35,49 +35,7 @@ export async function GET(request: Request) {
     const page = Math.max(Number(new URL(request.url).searchParams.get('page') || 1), 1);
     const pageSize = Math.min(Math.max(Number(new URL(request.url).searchParams.get('pageSize') || 100), 20), 200);
 
-    const people = await db.person.findMany({
-      where: {
-        deletedAt: null,
-        status: 'ACTIVE',
-        OR: q
-          ? [
-              { fullName: { contains: q, mode: 'insensitive' } },
-              { phone: { contains: q } },
-              { customerNo: { contains: q, mode: 'insensitive' } },
-              { externalId: { contains: q, mode: 'insensitive' } },
-              { notes: { contains: q, mode: 'insensitive' } },
-              { cardBatches: { some: { cards: { some: { cardLast4: { contains: q } } } } } },
-            ]
-          : undefined,
-      },
-      include: {
-        cardBatches: {
-          include: {
-            currency: true,
-            cards: {
-              where: { deletedAt: null },
-              include: {
-                settlementCurrency: true,
-                operations: { where: { deletedAt: null }, orderBy: { occurredAt: 'desc' }, take: 20 },
-                stageLogs: { orderBy: { createdAt: 'desc' }, take: 8 },
-              },
-              orderBy: { sequence: 'asc' },
-            },
-          },
-          orderBy: { receivedAt: 'desc' },
-        },
-        cardDeliveries: {
-          where: { deletedAt: null },
-          include: { currency: true },
-          orderBy: { occurredAt: 'desc' },
-        },
-      },
-      orderBy: [{ customerNo: 'asc' }, { createdAt: 'asc' }, { id: 'asc' }],
-      skip: (page - 1) * pageSize,
-      take: pageSize,
-    });
-
-    return ok(sortByCustomerCode(people));
+    return ok(await findPeopleWithCardSummaries({ q, page, pageSize }));
   } catch (error) {
     return apiError(error);
   }

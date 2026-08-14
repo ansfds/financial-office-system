@@ -87,7 +87,7 @@ export default async function Dashboard() {
     const current =
       cardTotalsByCurrency.get(currency.id) ||
       { currency, original: 0, deducted: 0, remaining: 0, agreed: 0, delivered: 0 };
-    const original = Number(card.valueUsd || 0) > 0 ? Number(card.valueUsd || 0) : Number(card.agreedAmount || 0);
+    const original = Number(card.valueUsd || 0) > 0 ? Number(card.valueUsd || 0) : 0;
     current.original += original;
     current.deducted += Number(card.totalDeducted ?? card.receivedAmount ?? 0);
     current.remaining += Number(card.remainingAmount ?? Math.max(original - Number(card.receivedAmount || 0), 0));

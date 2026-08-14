@@ -25,7 +25,7 @@ const operationTypes = [
 
 function currentRemaining(card: any) {
   if (card.remainingAmount !== undefined && card.remainingAmount !== null) return numberValue(card.remainingAmount);
-  const base = numberValue(card.valueUsd) > 0 ? numberValue(card.valueUsd) : numberValue(card.agreedAmount);
+  const base = numberValue(card.valueUsd) > 0 ? numberValue(card.valueUsd) : 0;
   return Math.max(base - numberValue(card.receivedAmount), 0);
 }
 
@@ -41,7 +41,7 @@ export default function CardOperationModal({ card, operation, initialType, onClo
   });
 
   const remaining = currentRemaining(card);
-  const baseAmount = numberValue(card.valueUsd) > 0 ? numberValue(card.valueUsd) : numberValue(card.agreedAmount);
+  const baseAmount = numberValue(card.valueUsd) > 0 ? numberValue(card.valueUsd) : 0;
   const currentDeducted = Math.max(numberValue(card.totalDeducted ?? card.receivedAmount), 0);
   const projectedAmount = useMemo(() => {
     if (form.operationType === 'GIFT_CARD') {

@@ -15,6 +15,7 @@ import {
   X,
 } from 'lucide-react';
 import ThemeSwitcher from './ThemeSwitcher';
+import SessionActivity from './SessionActivity';
 import { reduceMobileDrawerState, shouldCloseMobileDrawerFromDrag } from '@/lib/mobile-nav-drawer';
 
 const logoUrl = 'https://i.postimg.cc/k4nQr4gx/680242520-122094061526346951-872670812110961262-n.jpg';
@@ -222,6 +223,7 @@ export default function Shell({ children }: { children: React.ReactNode }) {
       <main className="page-enter min-h-screen px-3 pb-[calc(5.75rem+env(safe-area-inset-bottom))] pt-4 sm:px-4 lg:mr-72 lg:p-8">
         {children}
       </main>
+      <SessionActivity />
     </div>
   );
 }

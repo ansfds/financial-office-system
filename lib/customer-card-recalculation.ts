@@ -2,7 +2,6 @@ import { Prisma } from '@prisma/client';
 import {
   cardBaseAmount,
   cardProgressPercent,
-  cardRemainingAmount,
   cardStatusForBalance,
   isCardDeductionOperation,
 } from './customer-cards';
@@ -52,13 +51,7 @@ export async function recalculateReceivedCard(tx: Prisma.TransactionClient, card
 
   const baseAmount = cardBaseAmount(card.valueUsd, card.agreedAmount);
   const operations = [...card.operations].sort(compareOperations);
-  const firstOperation = operations[0];
-  let remaining = firstOperation
-    ? D(firstOperation.balanceBefore)
-    : cardRemainingAmount(card.valueUsd, card.agreedAmount, card.receivedAmount);
-
-  if (remaining.gt(baseAmount)) remaining = baseAmount;
-  if (remaining.lt(0)) remaining = D(0);
+  let remaining = baseAmount;
 
   let rejectedAt: Date | null = card.rejectedAt || null;
   let rejectReason: string | null = card.rejectReason || null;

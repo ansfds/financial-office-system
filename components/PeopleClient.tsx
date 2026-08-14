@@ -1,8 +1,8 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties } from 'react';
-import { useRouter } from 'next/navigation';
+import dynamic from 'next/dynamic';
 import {
   Archive,
   ChevronDown,
@@ -22,12 +22,13 @@ import {
 import { toast } from 'sonner';
 import { formatDate, formatDateTime, formatMoney, numberValue } from '@/lib/format';
 import { detailedPaymentLabels } from '@/lib/payment-methods';
-import FastCardEntryModal from '@/components/FastCardEntryModal';
-import CardOperationModal from '@/components/CardOperationModal';
-import CustomerDeliveryModal from '@/components/CustomerDeliveryModal';
 import ModalLayer, { ModalBackdrop } from '@/components/ModalLayer';
-import { cardOperationTypeLabels } from '@/lib/customer-cards';
+import { STANDARD_CUSTOMER_CARD_VALUE_USD, cardOperationTypeLabels } from '@/lib/customer-cards';
 import { compareCardsBySequence, sortByCustomerCode } from '@/lib/customer-code-sort';
+
+const FastCardEntryModal = dynamic(() => import('@/components/FastCardEntryModal'), { ssr: false });
+const CardOperationModal = dynamic(() => import('@/components/CardOperationModal'), { ssr: false });
+const CustomerDeliveryModal = dynamic(() => import('@/components/CustomerDeliveryModal'), { ssr: false });
 
 type CurrencyOption = {
   id: string;
@@ -100,6 +101,7 @@ const statusOptions = [
 ];
 
 const settlementMethods = ['USD_CASH', 'USD_TRANSFER', 'USD_CARD', 'LYD_CASH', 'LYD_TRANSFER', 'LYD_OFFICE_TRANSFER', 'LYD_CARD'];
+const defaultOriginalCardValue = String(STANDARD_CUSTOMER_CARD_VALUE_USD);
 
 function formFromPerson(person: any): PersonForm {
   return {
@@ -129,7 +131,7 @@ function cardCode(card: any) {
 }
 
 function cardOriginal(card: any) {
-  return numberValue(card.valueUsd) > 0 ? numberValue(card.valueUsd) : numberValue(card.agreedAmount);
+  return numberValue(card.valueUsd) > 0 ? numberValue(card.valueUsd) : 0;
 }
 
 function cardRemaining(card: any) {
@@ -176,6 +178,19 @@ function cardProgressLabel(card: any, draft: CardDraft = {}) {
 }
 
 function personSummary(person: any) {
+  if (!person.cardBatches?.length && person.cardSummary) {
+    return {
+      cards: [],
+      totalCards: numberValue(person.cardSummary.totalCards),
+      originalTotal: numberValue(person.cardSummary.originalTotal),
+      agreedTotal: numberValue(person.cardSummary.agreedTotal),
+      active: numberValue(person.cardSummary.active),
+      completed: numberValue(person.cardSummary.completed),
+      rejected: numberValue(person.cardSummary.rejected),
+      lastUpdate: person.cardSummary.lastUpdate ? new Date(person.cardSummary.lastUpdate) : person.updatedAt || person.createdAt,
+    };
+  }
+
   const cards = allCards(person);
   const active = cards.filter((card: any) => ['RECEIVED', 'IN_SETTLEMENT', 'PARTIAL'].includes(card.status)).length;
   const completed = cards.filter((card: any) => ['SETTLED', 'COMPLETED'].includes(card.status)).length;
@@ -198,6 +213,10 @@ function personSummary(person: any) {
 }
 
 function customerDeliverySummary(person: any, currencies: CurrencyOption[]) {
+  if (!person.cardBatches?.length && Array.isArray(person.deliverySummary)) {
+    return person.deliverySummary;
+  }
+
   const currencyById = new Map(currencies.map((currency) => [currency.id, currency]));
   const rows = new Map<string, { currency: CurrencyOption; agreed: number; delivered: number; remaining: number }>();
 
@@ -269,10 +288,11 @@ export default function PeopleClient({
   initialPeople: any[];
   currencies: CurrencyOption[];
 }) {
-  const router = useRouter();
   const [items, setItems] = useState<any[]>(() => sortByCustomerCode(initialPeople));
+  const [detailCache, setDetailCache] = useState<Record<string, any>>({});
   const [q, setQ] = useState('');
   const [loading, setLoading] = useState(false);
+  const [loadingPersonId, setLoadingPersonId] = useState('');
   const [savingPerson, setSavingPerson] = useState(false);
   const [form, setForm] = useState<PersonForm>(blankForm);
   const [editingPerson, setEditingPerson] = useState<any | null>(null);
@@ -286,7 +306,7 @@ export default function PeopleClient({
   const [mobileAddOpen, setMobileAddOpen] = useState(false);
   const [batchForm, setBatchForm] = useState({
     cardCount: '1',
-    valueUsdPerCard: '',
+    valueUsdPerCard: defaultOriginalCardValue,
     agreedAmountPerCard: '',
     currencyId: defaultCurrencyId(currencies),
     commonBankName: '',
@@ -295,10 +315,13 @@ export default function PeopleClient({
   const [fastEntryOpen, setFastEntryOpen] = useState(false);
   const [operationModal, setOperationModal] = useState<{ card: any; operation?: any | null; initialType?: string } | null>(null);
   const [deliveryOpen, setDeliveryOpen] = useState(false);
+  const detailAbortRef = useRef<AbortController | null>(null);
+  const searchAbortRef = useRef<AbortController | null>(null);
+  const loadingDetailRef = useRef('');
 
   const selectedPerson = useMemo(
-    () => items.find((person) => person.id === selectedPersonId) || null,
-    [items, selectedPersonId],
+    () => detailCache[selectedPersonId] || items.find((person) => person.id === selectedPersonId) || null,
+    [detailCache, items, selectedPersonId],
   );
   const selectedPersonSummary = useMemo(() => (selectedPerson ? personSummary(selectedPerson) : null), [selectedPerson]);
   const selectedPersonCards = useMemo(() => selectedPersonSummary?.cards || [], [selectedPersonSummary]);
@@ -310,6 +333,39 @@ export default function PeopleClient({
     () => (selectedPerson ? customerDeliverySummary(selectedPerson, currencies) : []),
     [currencies, selectedPerson],
   );
+  const selectedPersonHasDetails = Boolean(selectedPersonId && detailCache[selectedPersonId]);
+
+  const loadPersonDetails = useCallback(async (personId: string) => {
+    if (!personId) return;
+    if (loadingDetailRef.current === personId) return;
+
+    detailAbortRef.current?.abort();
+    const controller = new AbortController();
+    detailAbortRef.current = controller;
+    loadingDetailRef.current = personId;
+    setLoadingPersonId(personId);
+
+    try {
+      const response = await fetch(`/api/people/${personId}`, {
+        cache: 'no-store',
+        signal: controller.signal,
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        toast.error(result.error || 'تعذر تحميل تفاصيل الزبون');
+        return;
+      }
+
+      setDetailCache((current) => ({ ...current, [personId]: result }));
+      setItems((current) => sortByCustomerCode(current.map((person) => (person.id === personId ? { ...person, ...result } : person))));
+    } catch (error) {
+      if ((error as Error).name !== 'AbortError') toast.error('تعذر الاتصال بالخادم أثناء تحميل تفاصيل الزبون');
+    } finally {
+      if (detailAbortRef.current === controller) detailAbortRef.current = null;
+      if (loadingDetailRef.current === personId) loadingDetailRef.current = '';
+      setLoadingPersonId((current) => (current === personId ? '' : current));
+    }
+  }, []);
 
   const closeCustomerCardsDrawer = useCallback(() => {
     setSelectedPersonId('');
@@ -322,27 +378,51 @@ export default function PeopleClient({
     if (!personId) return;
     setStatusFilter('ALL');
     setSelectedPersonId(personId);
-  }, []);
+    void loadPersonDetails(personId);
+  }, [loadPersonDetails]);
 
   useEffect(() => {
     setItems(sortByCustomerCode(initialPeople));
   }, [initialPeople]);
 
+  // The debounced loader receives q as an argument, so adding the function itself would re-run every render.
   useEffect(() => {
     const handle = window.setTimeout(() => {
       load(q);
     }, 220);
 
     return () => window.clearTimeout(handle);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [q]);
 
+  useEffect(() => {
+    return () => {
+      detailAbortRef.current?.abort();
+      searchAbortRef.current?.abort();
+    };
+  }, []);
+
   async function load(search = q) {
+    searchAbortRef.current?.abort();
+    const controller = new AbortController();
+    searchAbortRef.current = controller;
     setLoading(true);
-    const response = await fetch(`/api/people?q=${encodeURIComponent(search)}`, { cache: 'no-store' });
+    try {
+    const response = await fetch(`/api/people?q=${encodeURIComponent(search)}`, {
+      cache: 'no-store',
+      signal: controller.signal,
+    });
     const data = await response.json().catch(() => []);
-    setLoading(false);
     if (!response.ok) return toast.error(data.error || 'تعذر تحميل الزبائن');
     setItems(sortByCustomerCode(Array.isArray(data) ? data : []));
+    } catch (error) {
+      if ((error as Error).name !== 'AbortError') toast.error('تعذر الاتصال بالخادم أثناء تحميل الزبائن');
+    } finally {
+      if (searchAbortRef.current === controller) {
+        searchAbortRef.current = null;
+        setLoading(false);
+      }
+    }
   }
 
   async function add(event: React.FormEvent) {
@@ -362,7 +442,6 @@ export default function PeopleClient({
     setForm(blankForm);
     setMobileAddOpen(false);
     await load('');
-    router.refresh();
   }
 
   function openEdit(person: any) {
@@ -395,7 +474,6 @@ export default function PeopleClient({
       setItems((current) => sortByCustomerCode(current.map((person) => (person.id === result.id ? result : person))));
       setEditingPerson(null);
       toast.success('تم تعديل بيانات الزبون');
-      router.refresh();
     } catch {
       toast.error('تعذر الاتصال بالخادم أثناء تعديل الزبون');
     } finally {
@@ -411,7 +489,6 @@ export default function PeopleClient({
     setItems((current) => current.filter((item) => item.id !== person.id));
     if (selectedPersonId === person.id) closeCustomerCardsDrawer();
     toast.success('تمت أرشفة الزبون');
-    router.refresh();
   }
 
   function setCardDraft(cardId: string, patch: CardDraft) {
@@ -455,7 +532,6 @@ export default function PeopleClient({
       );
     });
     openCustomerCardsDrawer(batch.personId);
-    router.refresh();
   }
 
   async function deleteCardOperation(card: any, operation: any) {
@@ -469,7 +545,6 @@ export default function PeopleClient({
     if (!response.ok) return toast.error(result.error || 'تعذر حذف عملية البطاقة');
     replaceCard(result);
     toast.success('تم حذف العملية وإعادة حساب الرصيد');
-    router.refresh();
   }
 
   async function saveCard(card: any, extra: Record<string, unknown> = {}) {
@@ -489,7 +564,6 @@ export default function PeopleClient({
     setDrafts((current) => ({ ...current, [card.id]: {} }));
     if (result.cashboxWarning) toast.warning(result.cashboxWarning);
     toast.success('تم حفظ البطاقة');
-    router.refresh();
   }
 
   async function deleteCard(card: any) {
@@ -499,7 +573,6 @@ export default function PeopleClient({
     if (!response.ok) return toast.error(result.error || 'تعذر حذف البطاقة');
     await load(q);
     toast.success('تم حذف البطاقة منطقيًا');
-    router.refresh();
   }
 
   async function addCards(event: React.FormEvent) {
@@ -514,7 +587,7 @@ export default function PeopleClient({
         personId: selectedPerson.id,
         currencyId: batchForm.currencyId || null,
         cardCount: Number(batchForm.cardCount || 1),
-        valueUsdPerCard: Number(batchForm.valueUsdPerCard || 0),
+        valueUsdPerCard: Number(batchForm.valueUsdPerCard || defaultOriginalCardValue),
         agreedAmountPerCard: Number(batchForm.agreedAmountPerCard),
         commonBankName: batchForm.commonBankName || undefined,
         notes: batchForm.notes || undefined,
@@ -530,20 +603,19 @@ export default function PeopleClient({
     );
     setBatchForm({
       cardCount: '1',
-      valueUsdPerCard: '',
+      valueUsdPerCard: defaultOriginalCardValue,
       agreedAmountPerCard: '',
       currencyId: defaultCurrencyId(currencies),
       commonBankName: '',
       notes: '',
     });
     toast.success('تمت إضافة البطاقات وربطها بالزبون');
-    router.refresh();
   }
 
   async function handleDeliverySaved() {
     setDeliveryOpen(false);
+    if (selectedPersonId) await loadPersonDetails(selectedPersonId);
     await load(q);
-    router.refresh();
   }
 
   function toggleCard(cardId: string) {
@@ -581,7 +653,6 @@ export default function PeopleClient({
     setSelectedCards(new Set());
     await load(q);
     toast.success('تم تحديث البطاقات المحددة');
-    router.refresh();
   }
 
   async function bulkReject() {
@@ -601,7 +672,6 @@ export default function PeopleClient({
     setSelectedCards(new Set());
     await load(q);
     toast.success('تم تحديث البطاقات المحددة');
-    router.refresh();
   }
 
   return (
@@ -761,8 +831,8 @@ export default function PeopleClient({
           {items.map((person, index) => {
             const summary = personSummary(person);
             const deliveryRows = customerDeliverySummary(person, currencies);
-            const delivered = deliveryRows.reduce((sum, row) => sum + row.delivered, 0);
-            const remaining = deliveryRows.reduce((sum, row) => sum + row.remaining, 0);
+            const delivered = deliveryRows.reduce((sum: number, row: { delivered: number }) => sum + row.delivered, 0);
+            const remaining = deliveryRows.reduce((sum: number, row: { remaining: number }) => sum + row.remaining, 0);
             return (
               <article
                 key={person.id}
@@ -864,7 +934,9 @@ export default function PeopleClient({
                 <div className="text-sm font-bold text-indigo-600">{selectedPerson.customerNo || 'زبون بدون رقم'}</div>
                 <h2 id="customer-cards-drawer-title" className="mt-1 text-2xl font-black">{selectedPerson.fullName}</h2>
                 <p className="mt-1 text-sm text-slate-500">{selectedPerson.phone || 'لا يوجد رقم هاتف'}</p>
-                <p className="mt-1 text-sm font-bold text-slate-600 dark:text-slate-300">عدد البطاقات: {selectedPersonCards.length}</p>
+                <p className="mt-1 text-sm font-bold text-slate-600 dark:text-slate-300">
+                  عدد البطاقات: {selectedPersonSummary?.totalCards || selectedPersonCards.length}
+                </p>
               </div>
               <button
                 type="button"
@@ -897,7 +969,7 @@ export default function PeopleClient({
             </div>
 
             <section className="mb-4 grid gap-3 md:grid-cols-3">
-              {selectedDeliveryRows.map((row) => (
+              {selectedDeliveryRows.map((row: { currency: CurrencyOption; agreed: number; delivered: number; remaining: number }) => (
                 <div key={row.currency.id} className="rounded-lg border border-slate-200 p-3 dark:border-slate-800">
                   <div className="text-xs font-bold text-slate-500">{row.currency.name}</div>
                   <div className="mt-2 grid gap-1 text-sm">
@@ -992,7 +1064,17 @@ export default function PeopleClient({
             </div>
 
             <div className="stagger-list grid gap-4 safe-bottom">
-              {visibleCards.map((card: any, index: number) => {
+              {loadingPersonId === selectedPersonId && !selectedPersonHasDetails ? (
+                <div className="grid gap-3">
+                  {Array.from({ length: 3 }).map((_, index) => (
+                    <div
+                      key={index}
+                      className="h-28 animate-pulse rounded-lg border border-slate-200 bg-slate-100 dark:border-slate-800 dark:bg-slate-900"
+                    />
+                  ))}
+                </div>
+              ) : null}
+              {selectedPersonHasDetails ? visibleCards.map((card: any, index: number) => {
                 const draft = drafts[card.id] || {};
                 const expanded = expandedCardIds.has(card.id);
                 const currentStage = Math.max(0, Math.min(Number(draft.currentStage ?? card.currentStage ?? 0), 6));
@@ -1265,8 +1347,8 @@ export default function PeopleClient({
                     </div>
                   </article>
                 );
-              })}
-              {!visibleCards.length ? (
+              }) : null}
+              {selectedPersonHasDetails && !visibleCards.length ? (
                 <div className="rounded-lg border border-dashed border-slate-300 p-8 text-center text-slate-500 dark:border-slate-700">
                   لا توجد بطاقات بهذه الحالة.
                 </div>
@@ -1355,7 +1437,6 @@ export default function PeopleClient({
           onSaved={(card) => {
             replaceCard(card);
             setOperationModal(null);
-            router.refresh();
           }}
         />
       ) : null}

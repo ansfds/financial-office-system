@@ -56,7 +56,7 @@ export async function GET() {
     }
 
     for (const { card, currency } of cards) {
-      const original = numberValue(card.valueUsd) > 0 ? numberValue(card.valueUsd) : numberValue(card.agreedAmount);
+      const original = numberValue(card.valueUsd) > 0 ? numberValue(card.valueUsd) : 0;
       const remaining = Math.max(original - numberValue(card.receivedAmount), 0);
       rows.push([
         person.customerNo || '',

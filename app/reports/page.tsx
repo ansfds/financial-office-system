@@ -298,7 +298,7 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
     .reduce((sum, item) => sum + item._count, 0);
   const receivedCardStats = receivedCardRows.reduce(
     (stats, card) => {
-      const baseAmount = amount(card.valueUsd) > 0 ? amount(card.valueUsd) : amount(card.agreedAmount);
+      const baseAmount = amount(card.valueUsd) > 0 ? amount(card.valueUsd) : 0;
       stats.totalValue += baseAmount;
       stats.totalRemaining += Math.max(baseAmount - amount(card.receivedAmount), 0);
 

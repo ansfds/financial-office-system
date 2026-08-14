@@ -46,6 +46,10 @@ export default function Login() {
       }
     }
 
+    if (typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('reason') === 'inactive') {
+      setError('انتهت الجلسة بسبب عدم النشاط');
+    }
+
     checkSession();
 
     return () => {

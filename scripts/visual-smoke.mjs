@@ -41,7 +41,7 @@ async function createTemporarySession() {
   assert(user, 'No active user found for visual smoke');
 
   const id = randomUUID();
-  const expiresAt = new Date(Date.now() + 15 * 60_000);
+  const expiresAt = new Date(Date.now() + 30 * 60_000);
   await prisma.loginSession.create({
     data: {
       id,
@@ -230,6 +230,25 @@ async function main() {
         `);
         await new Promise((resolve) => setTimeout(resolve, 120));
         await evaluate(scenario.openExpression);
+        const appeared = await evaluate(`
+          new Promise((resolve) => {
+            const expiresAt = Date.now() + 4000;
+            const check = () => {
+              const root = document.querySelector('[data-modal-layer="root"][data-modal-name="${scenario.modalName}"]');
+              if (root?.querySelector('.modal-panel') && root?.querySelector('.modal-backdrop')) {
+                resolve(true);
+                return;
+              }
+              if (Date.now() > expiresAt) {
+                resolve(false);
+                return;
+              }
+              window.setTimeout(check, 80);
+            };
+            check();
+          })
+        `);
+        assert(appeared, `${scenario.name}-${position} modal did not appear`);
         await new Promise((resolve) => setTimeout(resolve, 280));
 
         const audit = await evaluate(`

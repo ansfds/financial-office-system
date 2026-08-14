@@ -5,6 +5,7 @@ import { toast } from 'sonner';
 import { useMemo, useState } from 'react';
 import type { CSSProperties } from 'react';
 import { formatMoney } from '@/lib/format';
+import { STANDARD_CUSTOMER_CARD_VALUE_USD } from '@/lib/customer-cards';
 import ModalLayer, { ModalBackdrop } from '@/components/ModalLayer';
 
 type CurrencyOption = {
@@ -53,6 +54,8 @@ function cleanLast4(value: string) {
   return value.replace(/\D/g, '').slice(-4);
 }
 
+const defaultOriginalCardValue = String(STANDARD_CUSTOMER_CARD_VALUE_USD);
+
 export default function FastCardEntryModal({ people, selectedPerson, currencies, onClose, onSaved }: Props) {
   const cardCurrencies = currencies.filter((currency) => ['USD', 'LYD'].includes(currency.code));
   const defaultCurrencyId = cardCurrencies.find((currency) => currency.code === 'USD')?.id || cardCurrencies[0]?.id || '';
@@ -61,13 +64,15 @@ export default function FastCardEntryModal({ people, selectedPerson, currencies,
   const [newPerson, setNewPerson] = useState({ fullName: '', phone: '', address: '', notes: '' });
   const [defaults, setDefaults] = useState({
     count: '1',
-    valueUsd: '',
+    valueUsd: defaultOriginalCardValue,
     agreedAmount: '',
     currencyId: defaultCurrencyId,
     bankName: '',
     notes: '',
   });
-  const [rows, setRows] = useState<FastCardRow[]>([newRow({ valueUsd: '', agreedAmount: '', currencyId: defaultCurrencyId, bankName: '' })]);
+  const [rows, setRows] = useState<FastCardRow[]>([
+    newRow({ valueUsd: defaultOriginalCardValue, agreedAmount: '', currencyId: defaultCurrencyId, bankName: '' }),
+  ]);
   const [bulkText, setBulkText] = useState('');
   const [saving, setSaving] = useState(false);
   const [expandedRows, setExpandedRows] = useState<Set<string>>(() => new Set(rows.map((row) => row.id)));
@@ -117,12 +122,19 @@ export default function FastCardEntryModal({ people, selectedPerson, currencies,
       newPerson.fullName ||
         newPerson.phone ||
         newPerson.address ||
-        defaults.valueUsd ||
+        defaults.valueUsd !== defaultOriginalCardValue ||
         defaults.agreedAmount ||
         defaults.bankName ||
         defaults.notes ||
         bulkText ||
-        rows.some((row) => row.cardLast4 || row.valueUsd || row.agreedAmount || row.bankName || row.notes),
+        rows.some(
+          (row) =>
+            row.cardLast4 ||
+            row.valueUsd !== defaultOriginalCardValue ||
+            row.agreedAmount ||
+            row.bankName ||
+            row.notes,
+        ),
     );
   }
 
@@ -193,7 +205,7 @@ export default function FastCardEntryModal({ people, selectedPerson, currencies,
           newPerson: mode === 'new' ? newPerson : null,
           currencyId: defaults.currencyId || null,
           cardCount: rows.length,
-          valueUsdPerCard: numericValue(defaults.valueUsd),
+          valueUsdPerCard: numericValue(defaults.valueUsd || defaultOriginalCardValue),
           agreedAmountPerCard: numericValue(defaults.agreedAmount || rows[0]?.agreedAmount),
           commonBankName: defaults.bankName || undefined,
           notes: defaults.notes || undefined,

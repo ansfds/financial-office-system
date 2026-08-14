@@ -83,7 +83,7 @@ async function createTemporarySession(env) {
   assert(user, 'No active user found for temporary smoke session');
 
   const id = randomUUID();
-  const expiresAt = new Date(Date.now() + 15 * 60_000);
+  const expiresAt = new Date(Date.now() + 30 * 60_000);
   await prisma.loginSession.create({
     data: {
       id,

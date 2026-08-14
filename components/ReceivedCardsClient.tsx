@@ -6,6 +6,7 @@ import { ChevronDown, Loader2, Plus, Save } from 'lucide-react';
 import { toast } from 'sonner';
 import { formatDate, formatMoney, numberValue } from '@/lib/format';
 import { detailedPaymentLabels } from '@/lib/payment-methods';
+import { STANDARD_CUSTOMER_CARD_VALUE_USD } from '@/lib/customer-cards';
 
 const statusLabels: Record<string, string> = {
   RECEIVED: 'غير مصفاة',
@@ -26,13 +27,14 @@ const statusOptions = [
 const settlementMethods = ['USD_CASH', 'USD_TRANSFER', 'USD_CARD', 'LYD_CASH', 'LYD_TRANSFER', 'LYD_OFFICE_TRANSFER', 'LYD_CARD'];
 
 const settlementStatuses = new Set(['PARTIAL', 'SETTLED', 'COMPLETED']);
+const defaultOriginalCardValue = String(STANDARD_CUSTOMER_CARD_VALUE_USD);
 
 function decimal(value: any) {
   return numberValue(value);
 }
 
 function cardBaseAmount(card: any) {
-  return decimal(card.valueUsd) > 0 ? decimal(card.valueUsd) : decimal(card.agreedAmount);
+  return decimal(card.valueUsd) > 0 ? decimal(card.valueUsd) : 0;
 }
 
 function cardRemaining(card: any) {
@@ -75,7 +77,7 @@ export default function ReceivedCardsClient({
     personId: '',
     currencyId: '',
     cardCount: '1',
-    valueUsdPerCard: '',
+    valueUsdPerCard: defaultOriginalCardValue,
     agreedAmountPerCard: '',
     commonBankName: '',
     notes: '',
@@ -109,7 +111,7 @@ export default function ReceivedCardsClient({
         personId: form.personId,
         currencyId: form.currencyId || null,
         cardCount: Number(form.cardCount),
-        valueUsdPerCard: Number(form.valueUsdPerCard || 0),
+        valueUsdPerCard: Number(form.valueUsdPerCard || defaultOriginalCardValue),
         agreedAmountPerCard: Number(form.agreedAmountPerCard),
         commonBankName: form.commonBankName || undefined,
         notes: form.notes || undefined,
@@ -122,7 +124,7 @@ export default function ReceivedCardsClient({
       personId: people[0]?.id || '',
       currencyId: defaultCurrencyId,
       cardCount: '1',
-      valueUsdPerCard: '',
+      valueUsdPerCard: defaultOriginalCardValue,
       agreedAmountPerCard: '',
       commonBankName: '',
       notes: '',
