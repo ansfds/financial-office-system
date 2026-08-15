@@ -19,8 +19,7 @@ export async function POST(request: Request) {
     const result = await executeAssistantConfirmation(parsed.data.confirmationToken, session);
     return ok({
       type: 'executed',
-      message: result.duplicated ? 'هذه العملية منفذة سابقًا ولم يتم تكرارها.' : 'تم تنفيذ العملية وتسجيلها في سجل العمليات.',
-      result,
+      message: result.message,
     });
   } catch (error) {
     if ((error as Error).message === 'INVALID_ASSISTANT_CONFIRMATION') {

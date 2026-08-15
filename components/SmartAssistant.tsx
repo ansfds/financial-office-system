@@ -11,28 +11,11 @@ type ChatMessage = {
   content: string;
   preview?: AssistantPreview;
   confirmationToken?: string;
-  answer?: unknown;
   dismissed?: boolean;
 };
 
 function messageId() {
   return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-}
-
-function summarizeAnswer(answer: unknown) {
-  if (!answer || typeof answer !== 'object') return null;
-  const data = answer as any;
-  const customer = data.customer || data.answer?.customer;
-  const cards = data.cards || data.answer?.cards;
-  const wallet = data.wallet || data.answer?.wallet;
-  const logs = data.logs || data.answer?.logs;
-
-  return {
-    customer,
-    cards: Array.isArray(cards) ? cards.slice(0, 12) : undefined,
-    wallet: Array.isArray(wallet) ? wallet.slice(0, 12) : undefined,
-    logs: Array.isArray(logs) ? logs.slice(0, 8) : undefined,
-  };
 }
 
 function PreviewCard({
@@ -180,7 +163,7 @@ export default function SmartAssistant() {
       if (assistantData.type === 'preview') {
         append({ role: 'assistant', content: assistantData.message, preview: assistantData.preview, confirmationToken: assistantData.confirmationToken });
       } else if (assistantData.type === 'answer') {
-        append({ role: 'assistant', content: assistantData.message, answer: assistantData.answer });
+        append({ role: 'assistant', content: assistantData.message });
       } else {
         append({ role: 'assistant', content: assistantData.message });
       }
@@ -317,7 +300,6 @@ export default function SmartAssistant() {
               ) : null}
 
               {messages.map((message) => {
-                const answerSummary = summarizeAnswer(message.answer);
                 return (
                   <div key={message.id} className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}>
                     <div
@@ -327,12 +309,7 @@ export default function SmartAssistant() {
                           : 'bg-slate-100 text-slate-800 dark:bg-slate-900 dark:text-slate-100'
                       }`}
                     >
-                      <div>{message.content}</div>
-                      {answerSummary ? (
-                        <pre className="mt-2 max-h-64 overflow-auto rounded-lg bg-white/70 p-2 text-xs leading-6 text-slate-700 dark:bg-slate-950/60 dark:text-slate-200">
-                          {JSON.stringify(answerSummary, null, 2)}
-                        </pre>
-                      ) : null}
+                      <div className="whitespace-pre-line">{message.content}</div>
                       {message.preview && message.confirmationToken && !message.dismissed ? (
                         <PreviewCard
                           preview={message.preview}

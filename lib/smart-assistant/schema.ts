@@ -2,6 +2,18 @@ import { z } from 'zod';
 
 export const assistantCurrencyCodeSchema = z.enum(['USD', 'LYD', 'USDT', 'CNY']);
 
+export const assistantReadQueryModeSchema = z.enum([
+  'DEBT_SUMMARY',
+  'CARDS_SUMMARY',
+  'CARDS_DETAILS',
+  'DELIVERIES_SUMMARY',
+  'FINANCIAL_REMAINING',
+  'ACCOUNT_SUMMARY',
+  'CARD_LAST_OPERATION',
+  'CARD_REMAINING',
+  'FULL_SUMMARY',
+]);
+
 export const assistantPaymentMethodSchema = z
   .enum([
     'USD_CASH',
@@ -85,6 +97,10 @@ export const queryCustomerIntentSchema = z.object({
   customerName: z.string().trim().min(2).optional(),
   includeCards: z.boolean().default(true),
   includeWallet: z.boolean().default(true),
+  queryMode: assistantReadQueryModeSchema.default('FULL_SUMMARY'),
+  cardPublicCode: z.string().trim().max(30).optional(),
+  cardLast4: z.string().trim().regex(/^\d{4}$/).optional(),
+  currencyCode: assistantCurrencyCodeSchema.optional(),
 });
 
 export const explainAuditIntentSchema = z.object({
@@ -157,7 +173,7 @@ export type AssistantResponse =
   | {
       type: 'answer';
       message: string;
-      answer: unknown;
+      answer?: never;
     }
   | {
       type: 'preview';

@@ -3,7 +3,7 @@ import type { Person, Prisma } from '@prisma/client';
 import { createHash } from 'crypto';
 import { z } from 'zod';
 import { audit, clientMeta } from '@/lib/auth';
-import { cardOperationAmount, defaultCardDiscountCategories, isCardDeductionOperation } from '@/lib/customer-cards';
+import { cardOperationAmount, cardOperationTypeLabels, defaultCardDiscountCategories, isCardDeductionOperation } from '@/lib/customer-cards';
 import { recalculateReceivedCard } from '@/lib/customer-card-recalculation';
 import {
   buildWalletSnapshot,
@@ -17,6 +17,20 @@ import {
 import { db } from '@/lib/db';
 import { D } from '@/lib/money';
 import { revalidateFinancePaths } from '@/lib/revalidate';
+import {
+  enforceArabicAssistantMessage,
+  formatAuditLogsAnswer,
+  formatCardReadAnswer,
+  formatCustomerReadAnswer,
+  formatDuplicateCustomers,
+  formatSystemAccountAnswer,
+  tryBuildDeterministicReadIntent,
+  type AssistantAmount,
+  type AssistantCustomerCardView,
+  type AssistantCustomerReadView,
+  type AssistantReadQueryMode,
+  type AssistantSystemAccountView,
+} from './read-format';
 import {
   assistantIntentSchema,
   isAssistantWriteIntent,
@@ -41,13 +55,155 @@ type PreparedAssistantCardInput = {
   notes?: string;
 };
 
-const textModel = () => process.env.OPENAI_TEXT_MODEL?.trim() || 'gpt-5.6-luna';
+const textModel = () => process.env.OPENAI_TEXT_MODEL?.trim() || 'gpt-5.6-sol';
 const requestTimeoutMs = 25_000;
 
 const modelIntentOutputSchema = z.object({
   intent: assistantIntentSchema,
   reply: z.string().trim().max(900).optional(),
 });
+const modelIntentTextFormat = {
+  type: 'json_schema',
+  name: 'assistant_intent',
+  strict: true,
+  schema: {
+    type: 'object',
+    additionalProperties: false,
+    properties: {
+      intent: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          type: {
+            type: 'string',
+            enum: [
+              'ASK_CLARIFICATION',
+              'QUERY_CUSTOMER',
+              'EXPLAIN_AUDIT',
+              'CREATE_CUSTOMER_WITH_CARDS',
+              'ADD_CARD_OPERATION',
+              'RECORD_CUSTOMER_DELIVERY',
+              'ADD_WALLET_SETTLEMENT',
+            ],
+          },
+          question: { type: ['string', 'null'] },
+          missingFields: { type: ['array', 'null'], items: { type: 'string' } },
+          customerCode: { type: ['string', 'null'] },
+          customerName: { type: ['string', 'null'] },
+          includeCards: { type: ['boolean', 'null'] },
+          includeWallet: { type: ['boolean', 'null'] },
+          queryMode: {
+            type: ['string', 'null'],
+            enum: [
+              'DEBT_SUMMARY',
+              'CARDS_SUMMARY',
+              'CARDS_DETAILS',
+              'DELIVERIES_SUMMARY',
+              'FINANCIAL_REMAINING',
+              'ACCOUNT_SUMMARY',
+              'CARD_LAST_OPERATION',
+              'CARD_REMAINING',
+              'FULL_SUMMARY',
+              null,
+            ],
+          },
+          cardPublicCode: { type: ['string', 'null'] },
+          cardLast4: { type: ['string', 'null'] },
+          currencyCode: { type: ['string', 'null'], enum: ['USD', 'LYD', 'USDT', 'CNY', null] },
+          query: { type: ['string', 'null'] },
+          transactionNumber: { type: ['string', 'null'] },
+          entityId: { type: ['string', 'null'] },
+          phone: { type: ['string', 'null'] },
+          address: { type: ['string', 'null'] },
+          notes: { type: ['string', 'null'] },
+          category: { type: ['string', 'null'], enum: ['VIP', 'REGULAR', null] },
+          agreedAmountPerCard: { type: ['number', 'null'] },
+          valueUsdPerCard: { type: ['number', 'null'] },
+          cards: {
+            type: ['array', 'null'],
+            items: {
+              type: 'object',
+              additionalProperties: false,
+              properties: {
+                cardLast4: { type: ['string', 'null'] },
+                bankName: { type: ['string', 'null'] },
+                valueUsd: { type: ['number', 'null'] },
+                agreedAmount: { type: ['number', 'null'] },
+                notes: { type: ['string', 'null'] },
+              },
+              required: ['cardLast4', 'bankName', 'valueUsd', 'agreedAmount', 'notes'],
+            },
+          },
+          cardCount: { type: ['number', 'null'] },
+          operationType: { type: ['string', 'null'], enum: ['GIFT_CARD', 'INVOICE', 'FINAL_SETTLEMENT', 'REJECT', null] },
+          categoryCode: { type: ['string', 'null'], enum: ['100', '300', '500', null] },
+          quantity: { type: ['number', 'null'] },
+          amount: { type: ['number', 'null'] },
+          note: { type: ['string', 'null'] },
+          reason: { type: ['string', 'null'] },
+          paymentMethod: {
+            type: ['string', 'null'],
+            enum: [
+              'USD_CASH',
+              'USD_TRANSFER',
+              'LYD_CASH',
+              'LYD_TRANSFER',
+              'LYD_OFFICE_TRANSFER',
+              'LYD_CARD',
+              'USDT',
+              'CNY',
+              'CASH',
+              'TRANSFER',
+              'CARD',
+              null,
+            ],
+          },
+          accountType: { type: ['string', 'null'], enum: ['DEBT', 'CREDIT', null] },
+          direction: { type: ['string', 'null'], enum: ['ADD', 'SUBTRACT', null] },
+          movementKind: { type: ['string', 'null'], enum: ['ADJUSTMENT', 'REPAYMENT', null] },
+          effectMode: { type: ['string', 'null'], enum: ['NORMAL', 'OFFSET', null] },
+        },
+        required: [
+          'type',
+          'question',
+          'missingFields',
+          'customerCode',
+          'customerName',
+          'includeCards',
+          'includeWallet',
+          'queryMode',
+          'cardPublicCode',
+          'cardLast4',
+          'currencyCode',
+          'query',
+          'transactionNumber',
+          'entityId',
+          'phone',
+          'address',
+          'notes',
+          'category',
+          'agreedAmountPerCard',
+          'valueUsdPerCard',
+          'cards',
+          'cardCount',
+          'operationType',
+          'categoryCode',
+          'quantity',
+          'amount',
+          'note',
+          'reason',
+          'paymentMethod',
+          'accountType',
+          'direction',
+          'movementKind',
+          'effectMode',
+        ],
+      },
+      reply: { type: ['string', 'null'] },
+    },
+    required: ['intent', 'reply'],
+  },
+} as const;
 
 function hasOpenAIKey() {
   return Boolean(process.env.OPENAI_API_KEY?.trim());
@@ -87,7 +243,7 @@ function previewTokenFor(session: SessionLike, preview: AssistantPreview, transc
 function responsePreview(preview: AssistantPreview, session: SessionLike, transcript?: string): AssistantResponse {
   return {
     type: 'preview',
-    message: 'راجعت الأمر وجهزت معاينة آمنة. التنفيذ يحتاج تأكيدك.',
+    message: enforceArabicAssistantMessage('راجعت الأمر وجهزت معاينة آمنة. التنفيذ يحتاج تأكيدك.'),
     preview,
     confirmationToken: previewTokenFor(session, preview, transcript),
   };
@@ -96,7 +252,7 @@ function responsePreview(preview: AssistantPreview, session: SessionLike, transc
 function clarify(message: string, missingFields: string[] = []): AssistantResponse {
   return {
     type: 'clarify',
-    message,
+    message: enforceArabicAssistantMessage(message),
     missingFields,
   };
 }
@@ -104,8 +260,16 @@ function clarify(message: string, missingFields: string[] = []): AssistantRespon
 function setupRequired(): AssistantResponse {
   return {
     type: 'setup_required',
-    message:
-      'المساعد جاهز داخل المنظومة، لكن مفتاح OpenAI غير مضبوط على الخادم. أضف OPENAI_API_KEY في Vercel ثم أعد المحاولة.',
+    message: enforceArabicAssistantMessage(
+      'المساعد جاهز داخل المنظومة، لكن مفتاح OpenAI غير مضبوط على الخادم. أضف مفتاح OpenAI في إعدادات الإنتاج ثم أعد المحاولة.',
+    ),
+  };
+}
+
+function answer(message: string): AssistantResponse {
+  return {
+    type: 'answer',
+    message: enforceArabicAssistantMessage(message),
   };
 }
 
@@ -129,6 +293,17 @@ function extractJson(text: string) {
   const match = trimmed.match(/\{[\s\S]*\}/);
   if (!match) throw new Error('ASSISTANT_JSON_OUTPUT_REQUIRED');
   return JSON.parse(match[0]);
+}
+
+function removeNullFields(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map((item) => removeNullFields(item));
+  if (!value || typeof value !== 'object') return value;
+
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>)
+      .filter(([, item]) => item !== null && item !== undefined)
+      .map(([key, item]) => [key, removeNullFields(item)]),
+  );
 }
 
 async function searchCustomersForTool(args: any) {
@@ -181,104 +356,6 @@ async function searchCustomersForTool(args: any) {
   };
 }
 
-async function getCustomerSnapshotForTool(args: any) {
-  const code = normalizeCustomerCode(args?.customerCode);
-  const id = String(args?.personId || '').trim();
-  if (!code && !id) return { error: 'CUSTOMER_REFERENCE_REQUIRED' };
-
-  const person = await db.person.findFirst({
-    where: { deletedAt: null, status: 'ACTIVE', ...(id ? { id } : { customerNo: code }) },
-    include: {
-      cardBatches: {
-        include: {
-          currency: true,
-          cards: {
-            where: { deletedAt: null },
-            select: {
-              id: true,
-              publicCode: true,
-              cardLast4: true,
-              bankName: true,
-              valueUsd: true,
-              agreedAmount: true,
-              settlementCurrencyId: true,
-              totalDeducted: true,
-              remainingAmount: true,
-              progressPercent: true,
-              status: true,
-            },
-            orderBy: [{ sequence: 'asc' }, { createdAt: 'asc' }],
-            take: 80,
-          },
-        },
-        orderBy: { receivedAt: 'desc' },
-        take: 20,
-      },
-      transactions: {
-        where: { deletedAt: null },
-        include: { currency: true },
-        orderBy: { transactionAt: 'desc' },
-        take: 25,
-      },
-      walletSettlements: {
-        where: { deletedAt: null },
-        include: { currency: true },
-        orderBy: { occurredAt: 'desc' },
-        take: 60,
-      },
-      cardDeliveries: {
-        where: { deletedAt: null },
-        include: { currency: true },
-        orderBy: { occurredAt: 'desc' },
-        take: 25,
-      },
-    },
-  });
-  if (!person) return { error: 'CUSTOMER_NOT_FOUND' };
-
-  const currencies = await db.currency.findMany({ where: { isActive: true } });
-  const wallet = buildWalletSnapshot(person.transactions, person.walletSettlements, currencies);
-
-  return {
-    customer: {
-      id: person.id,
-      code: person.customerNo,
-      name: person.fullName,
-      phone: person.phone,
-    },
-    cards: person.cardBatches.flatMap((batch) =>
-      batch.cards.map((card) => ({
-        publicCode: card.publicCode,
-        cardLast4: card.cardLast4,
-        bankName: card.bankName,
-        valueUsd: card.valueUsd.toString(),
-        agreedAmount: card.agreedAmount.toString(),
-        deducted: card.totalDeducted.toString(),
-        remaining: card.remainingAmount.toString(),
-        progressPercent: card.progressPercent.toString(),
-        status: card.status,
-        currencyCode: card.settlementCurrencyId ? undefined : batch.currency?.code,
-      })),
-    ),
-    wallet: wallet.rows
-      .filter((row) => row.credit || row.debt)
-      .map((row) => ({
-        paymentMethod: row.paymentMethod,
-        label: row.label,
-        currencyCode: row.currency.code,
-        علينا: row.credit,
-        لنا: row.debt,
-      })),
-    deliveries: person.cardDeliveries.map((delivery) => ({
-      amount: delivery.amount.toString(),
-      currencyCode: delivery.currency.code,
-      balanceBefore: delivery.balanceBefore.toString(),
-      balanceAfter: delivery.balanceAfter.toString(),
-      occurredAt: delivery.occurredAt,
-    })),
-  };
-}
-
 async function readRecentAuditLogsForTool(args: any) {
   const query = String(args?.query || '').trim();
   const code = normalizeCustomerCode(args?.customerCode);
@@ -317,11 +394,63 @@ async function readRecentAuditLogsForTool(args: any) {
   };
 }
 
+async function getCustomerReadAnswerForTool(args: any, mode: AssistantReadQueryMode) {
+  return db.$transaction(async (tx) => {
+    const personResult = await resolvePerson(tx, {
+      customerCode: args?.customerCode || undefined,
+      customerName: args?.customerName || undefined,
+    });
+    if (!personResult.ok) return { error: 'CUSTOMER_NOT_RESOLVED', message: personResult.message, matches: personResult.matches || [] };
+    const view = filterCustomerViewByCurrency(await getCustomerReadView(tx, personResult.person), args?.currencyCode || undefined);
+    return { message: formatCustomerReadAnswer(mode, view) };
+  });
+}
+
+async function getCardReadAnswerForTool(args: any, mode: Extract<AssistantReadQueryMode, 'CARD_LAST_OPERATION' | 'CARD_REMAINING'>) {
+  return db.$transaction(async (tx) => {
+    const result = await resolveCardForRead(tx, {
+      type: 'QUERY_CUSTOMER',
+      customerCode: args?.customerCode || undefined,
+      customerName: args?.customerName || undefined,
+      includeCards: true,
+      includeWallet: false,
+      queryMode: mode,
+      cardPublicCode: args?.cardPublicCode || undefined,
+      cardLast4: args?.cardLast4 || undefined,
+    });
+    if (!result.ok) return { error: 'CARD_NOT_RESOLVED', message: result.message };
+    return { message: formatCardReadAnswer(mode, result.card, result.customer) };
+  });
+}
+
+const customerToolParameters = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    customerCode: { type: 'string' },
+    customerName: { type: 'string' },
+    currencyCode: { type: 'string' },
+  },
+  required: ['customerCode', 'customerName', 'currencyCode'],
+} as const;
+
+const cardToolParameters = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    customerCode: { type: 'string' },
+    customerName: { type: 'string' },
+    cardPublicCode: { type: 'string' },
+    cardLast4: { type: 'string' },
+  },
+  required: ['customerCode', 'customerName', 'cardPublicCode', 'cardLast4'],
+} as const;
+
 const assistantTools = [
   {
     type: 'function',
-    name: 'search_customers',
-    description: 'ابحث عن زبون نشط بالكود أو الاسم أو الهاتف. يرجع حقولا مختصرة فقط.',
+    name: 'find_customer',
+    description: 'ابحث عن زبون نشط بالكود أو الاسم أو الهاتف عند وجود التباس. لا يغير البيانات.',
     strict: true,
     parameters: {
       type: 'object',
@@ -335,18 +464,61 @@ const assistantTools = [
   },
   {
     type: 'function',
-    name: 'get_customer_snapshot',
-    description: 'اقرأ ملخص زبون واحد وبطاقاته وأرصدة لنا وعلينا. لا يغير البيانات.',
+    name: 'get_customer_debt_summary',
+    description: 'اقرأ الدين الحالي للزبون فقط، مفصولًا حسب العملة، دون اعتبار الدين المسدد دينًا حاليًا.',
+    strict: true,
+    parameters: customerToolParameters,
+  },
+  {
+    type: 'function',
+    name: 'get_customer_cards_summary',
+    description: 'اقرأ ملخص بطاقات الزبون، مع عدد البطاقات وإجمالي الأصلي والمتفق عليه والمسلّم والمتبقي المالي.',
     strict: true,
     parameters: {
       type: 'object',
       additionalProperties: false,
       properties: {
-        personId: { type: 'string' },
         customerCode: { type: 'string' },
+        customerName: { type: 'string' },
+        details: { type: 'boolean' },
       },
-      required: ['personId', 'customerCode'],
+      required: ['customerCode', 'customerName', 'details'],
     },
+  },
+  {
+    type: 'function',
+    name: 'get_customer_deliveries_summary',
+    description: 'اقرأ مبالغ التسليم الفعلية للزبون والمتبقي المالي، مفصولة حسب العملة.',
+    strict: true,
+    parameters: customerToolParameters,
+  },
+  {
+    type: 'function',
+    name: 'get_customer_account_summary',
+    description: 'اقرأ ملخص حساب الزبون: لنا، علينا، والمتبقي المالي، مفصولًا حسب العملة.',
+    strict: true,
+    parameters: customerToolParameters,
+  },
+  {
+    type: 'function',
+    name: 'get_card_last_operation',
+    description: 'اقرأ آخر عملية غير محذوفة على بطاقة محددة، ولا يغير البيانات.',
+    strict: true,
+    parameters: cardToolParameters,
+  },
+  {
+    type: 'function',
+    name: 'get_card_remaining',
+    description: 'احسب المتبقي داخل بطاقة محددة من المبلغ الأصلي ناقص عمليات السحب غير المحذوفة.',
+    strict: true,
+    parameters: cardToolParameters,
+  },
+  {
+    type: 'function',
+    name: 'get_customer_full_summary',
+    description: 'اقرأ ملخصًا مختصرًا كاملًا للزبون عند طلب الحساب كاملًا فقط.',
+    strict: true,
+    parameters: customerToolParameters,
   },
   {
     type: 'function',
@@ -366,8 +538,14 @@ const assistantTools = [
 ] as const;
 
 async function runReadOnlyTool(name: string, args: unknown) {
-  if (name === 'search_customers') return searchCustomersForTool(args);
-  if (name === 'get_customer_snapshot') return getCustomerSnapshotForTool(args);
+  if (name === 'find_customer' || name === 'search_customers') return searchCustomersForTool(args);
+  if (name === 'get_customer_debt_summary') return getCustomerReadAnswerForTool(args, 'DEBT_SUMMARY');
+  if (name === 'get_customer_cards_summary') return getCustomerReadAnswerForTool(args, (args as any)?.details ? 'CARDS_DETAILS' : 'CARDS_SUMMARY');
+  if (name === 'get_customer_deliveries_summary') return getCustomerReadAnswerForTool(args, 'DELIVERIES_SUMMARY');
+  if (name === 'get_customer_account_summary') return getCustomerReadAnswerForTool(args, 'ACCOUNT_SUMMARY');
+  if (name === 'get_card_last_operation') return getCardReadAnswerForTool(args, 'CARD_LAST_OPERATION');
+  if (name === 'get_card_remaining') return getCardReadAnswerForTool(args, 'CARD_REMAINING');
+  if (name === 'get_customer_full_summary' || name === 'get_customer_snapshot') return getCustomerReadAnswerForTool(args, 'FULL_SUMMARY');
   if (name === 'read_recent_audit_logs') return readRecentAuditLogsForTool(args);
   return { error: 'UNKNOWN_TOOL' };
 }
@@ -376,21 +554,42 @@ function assistantInstructions() {
   return `
 أنت مساعد عربي داخل منظومة مالية. افهم العربية واللهجة الليبية وحول كلام المستخدم إلى intent JSON فقط.
 لا تنفذ كتابة. الكتابة دائما معاينة ثم تأكيد من المستخدم.
-استخدم أدوات القراءة فقط عند الحاجة للبحث عن زبون أو بطاقة أو سجل تدقيق.
+استخدم أدوات القراءة فقط عند الحاجة للبحث عن زبون أو بطاقة أو سجل تدقيق، لكن لا تعتمد على نفسك في أي جمع أو طرح مالي.
+نتائج الأدوات داخلية فقط. لا تعرض JSON أو أسماء الحقول أو function calls للمستخدم.
 إذا تكرر الاسم أو نقص كود الزبون في أمر يحتاج زبونا موجودا، اسأل عن الكود ولا تخمن.
 لا تطلب أو تعرض CVV أو أسرار. لا تقترح SQL ولا أسماء جداول ولا حذف نهائي.
 قواعد البطاقات: القيمة الأصلية الافتراضية 2000 USD منفصلة عن السعر المتفق عليه. كرت 100 يخصم 101، كرت 300 يخصم 292، كرت 500 يخصم 476. الفاتورة تخصم المبلغ المكتوب. التصفية تخصم المتبقي أو المبلغ المحدد.
 لنا = DEBT، علينا = CREDIT. "تم السداد" يعني SUBTRACT وحركة REPAYMENT من الجانب الحالي.
+في أسئلة القراءة اختر queryMode بدقة:
+- DEBT_SUMMARY عند سؤال الدين فقط.
+- CARDS_SUMMARY عند سؤال البطاقات كملخص.
+- CARDS_DETAILS عند طلب التفاصيل أو كل بطاقة منفصلة.
+- DELIVERIES_SUMMARY عند سؤال ما استلمه الزبون أو ما تم تسليمه له.
+- FINANCIAL_REMAINING عند سؤال المتبقي المالي للزبون.
+- ACCOUNT_SUMMARY عند سؤال حساب الزبون أو لنا وعلينا.
+- CARD_LAST_OPERATION عند سؤال آخر عملية على بطاقة.
+- CARD_REMAINING عند سؤال المتبقي داخل بطاقة.
+- FULL_SUMMARY عند طلب ملخص كامل فقط.
 أعد JSON فقط بهذا الشكل: {"intent": {...}, "reply": "جملة عربية قصيرة اختيارية"}.
 أنواع intent المسموحة:
 - ASK_CLARIFICATION: question, missingFields
-- QUERY_CUSTOMER: customerCode أو customerName, includeCards, includeWallet
+- QUERY_CUSTOMER: customerCode أو customerName, includeCards, includeWallet, queryMode, cardPublicCode أو cardLast4, currencyCode
 - EXPLAIN_AUDIT: query أو customerCode أو transactionNumber أو entityId
 - CREATE_CUSTOMER_WITH_CARDS: customerName, phone, currencyCode, agreedAmountPerCard, valueUsdPerCard, cards أو cardCount
 - ADD_CARD_OPERATION: customerCode أو customerName, cardPublicCode أو cardLast4, operationType, categoryCode, quantity, amount, note, reason
 - RECORD_CUSTOMER_DELIVERY: customerCode أو customerName, amount, currencyCode, paymentMethod, note
 - ADD_WALLET_SETTLEMENT: customerCode أو customerName, accountType, direction, amount, currencyCode, paymentMethod, reason, note, movementKind, effectMode
 `.trim();
+}
+
+function reasoningEffortFor(command: string) {
+  const normalized = command.trim();
+  const isLong = normalized.length > 260 || normalized.split(/\s+/).length > 45;
+  const hasMixedMoney =
+    /(دولار|USD|\$)/i.test(normalized) &&
+    (/(دينار|LYD|د\.ل)/i.test(normalized) || /(USDT|تيثر)/i.test(normalized));
+  const hasMessyFinancialRequest = /(تفاصيل|كامل|حساب|لنا|علينا|المتبقي|سداد|سدد|سدّد|استلم)/.test(normalized) && /[,،؛]/.test(normalized);
+  return isLong || hasMixedMoney || hasMessyFinancialRequest ? 'high' : 'medium';
 }
 
 async function runOpenAIIntent(command: string, history: Array<{ role: 'user' | 'assistant'; content: string }> = []) {
@@ -414,7 +613,8 @@ async function runOpenAIIntent(command: string, history: Array<{ role: 'user' | 
       tool_choice: 'auto',
       parallel_tool_calls: false,
       max_output_tokens: 1400,
-      reasoning: { effort: 'low' } as any,
+      reasoning: { effort: reasoningEffortFor(command) } as any,
+      text: { format: modelIntentTextFormat } as any,
     } as any),
   );
 
@@ -447,13 +647,14 @@ async function runOpenAIIntent(command: string, history: Array<{ role: 'user' | 
         tool_choice: 'auto',
         parallel_tool_calls: false,
         max_output_tokens: 1400,
-        reasoning: { effort: 'low' } as any,
+        reasoning: { effort: reasoningEffortFor(command) } as any,
+        text: { format: modelIntentTextFormat } as any,
       } as any),
     );
   }
 
   const raw = response.output_text || '';
-  const parsed = modelIntentOutputSchema.safeParse(extractJson(raw));
+  const parsed = modelIntentOutputSchema.safeParse(removeNullFields(extractJson(raw)));
   if (!parsed.success) throw new Error('ASSISTANT_INTENT_INVALID');
   return parsed.data;
 }
@@ -488,11 +689,12 @@ async function resolvePerson(
 
   if (matches.length === 1) return { ok: true, person: matches[0] };
   if (matches.length > 1) {
+    const duplicateMatches = matches.map((person) => ({ code: person.customerNo, name: person.fullName }));
     return {
       ok: false,
-      message: 'وجدت أكثر من زبون بهذا الاسم. أرسل كود الزبون المطلوب.',
+      message: formatDuplicateCustomers(duplicateMatches),
       missingFields: ['customerCode'],
-      matches: matches.map((person) => ({ code: person.customerNo, name: person.fullName })),
+      matches: duplicateMatches,
     };
   }
 
@@ -579,6 +781,297 @@ async function walletTotals(tx: Tx, personId: string, currencyId: string) {
   }
 
   return { transactions, settlements, debt, credit };
+}
+
+function decimalMaxZero(value: Prisma.Decimal) {
+  return value.gt(0) ? value : D(0);
+}
+
+function currencyAmount(currency: { code?: string | null; symbol?: string | null } | null | undefined, amount: unknown): AssistantAmount | null {
+  if (!currency?.code) return null;
+  return { amount, currencyCode: currency.code, currencySymbol: currency.symbol };
+}
+
+function addCurrencyAmount(
+  map: Map<string, { amount: Prisma.Decimal; currencyCode: string; currencySymbol?: string | null }>,
+  currency: { code?: string | null; symbol?: string | null } | null | undefined,
+  amount: unknown,
+) {
+  if (!currency?.code) return;
+  const existing = map.get(currency.code);
+  if (existing) existing.amount = existing.amount.add(D(amount || 0));
+  else map.set(currency.code, { amount: D(amount || 0), currencyCode: currency.code, currencySymbol: currency.symbol });
+}
+
+function ensureCurrencyAmount(
+  map: Map<string, { amount: Prisma.Decimal; currencyCode: string; currencySymbol?: string | null }>,
+  currency: { code?: string | null; symbol?: string | null } | null | undefined,
+) {
+  if (!currency?.code || map.has(currency.code)) return;
+  map.set(currency.code, { amount: D(0), currencyCode: currency.code, currencySymbol: currency.symbol });
+}
+
+function currencyMapToAmounts(map: Map<string, { amount: Prisma.Decimal; currencyCode: string; currencySymbol?: string | null }>) {
+  return Array.from(map.values()).map((item) => ({
+    amount: item.amount.toString(),
+    currencyCode: item.currencyCode,
+    currencySymbol: item.currencySymbol,
+  }));
+}
+
+function filterAmountsByCurrency(amounts: AssistantAmount[], currencyCode?: string) {
+  if (!currencyCode) return amounts;
+  return amounts.filter((item) => item.currencyCode === currencyCode);
+}
+
+function filterCustomerViewByCurrency(view: AssistantCustomerReadView, currencyCode?: string): AssistantCustomerReadView {
+  if (!currencyCode) return view;
+  return {
+    ...view,
+    agreedByCurrency: filterAmountsByCurrency(view.agreedByCurrency, currencyCode),
+    deliveredByCurrency: filterAmountsByCurrency(view.deliveredByCurrency, currencyCode),
+    financialRemainingByCurrency: filterAmountsByCurrency(view.financialRemainingByCurrency, currencyCode),
+    walletDebtByCurrency: filterAmountsByCurrency(view.walletDebtByCurrency, currencyCode),
+    walletCreditByCurrency: filterAmountsByCurrency(view.walletCreditByCurrency, currencyCode),
+  };
+}
+
+function latestActivityOf(
+  current: AssistantCustomerReadView['latestActivity'],
+  candidate: AssistantCustomerReadView['latestActivity'],
+) {
+  if (!candidate) return current;
+  if (!current) return candidate;
+  return new Date(candidate.occurredAt).getTime() > new Date(current.occurredAt).getTime() ? candidate : current;
+}
+
+function cardViewFromRecord(card: any): AssistantCustomerCardView {
+  const operations = Array.isArray(card.operations) ? card.operations : [];
+  const deducted = operations.reduce((sum: Prisma.Decimal, operation: any) => {
+    return isCardDeductionOperation(operation.operationType) ? sum.add(D(operation.amount || 0)) : sum;
+  }, D(0));
+  const remaining = decimalMaxZero(D(card.valueUsd || 0).sub(deducted));
+  const currency = card.settlementCurrency || card.batch?.currency || null;
+  const lastOperation = operations[0];
+  const operationLabel =
+    lastOperation && cardOperationTypeLabels[lastOperation.operationType as keyof typeof cardOperationTypeLabels]
+      ? cardOperationTypeLabels[lastOperation.operationType as keyof typeof cardOperationTypeLabels]
+      : lastOperation?.operationType;
+
+  return {
+    publicCode: card.publicCode,
+    cardLast4: card.cardLast4,
+    bankName: card.bankName,
+    originalAmount: D(card.valueUsd || 0).toString(),
+    agreedAmount: D(card.agreedAmount || 0).toString(),
+    agreedCurrencyCode: currency?.code || 'USD',
+    agreedCurrencySymbol: currency?.symbol,
+    deductedAmount: deducted.toString(),
+    remainingAmount: remaining.toString(),
+    status: card.status,
+    lastOperation: lastOperation
+      ? {
+          label: operationLabel || 'حركة بطاقة',
+          amount: D(lastOperation.amount || 0).toString(),
+          currencyCode: 'USD',
+          currencySymbol: '$',
+          occurredAt: lastOperation.occurredAt,
+        }
+      : null,
+  };
+}
+
+async function getCustomerReadView(tx: Tx, person: Person): Promise<AssistantCustomerReadView> {
+  const [currencies, cards, deliveries, transactions, settlements] = await Promise.all([
+    tx.currency.findMany({ where: { isActive: true } }),
+    tx.receivedCustomerCard.findMany({
+      where: { deletedAt: null, status: { not: 'CANCELLED' }, batch: { personId: person.id } },
+      include: {
+        settlementCurrency: true,
+        batch: { include: { currency: true } },
+        operations: {
+          where: { deletedAt: null },
+          orderBy: [{ occurredAt: 'desc' }, { createdAt: 'desc' }],
+        },
+      },
+      orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+    }),
+    tx.customerCardDelivery.findMany({
+      where: { personId: person.id, deletedAt: null },
+      include: { currency: true },
+      orderBy: [{ occurredAt: 'desc' }, { createdAt: 'desc' }],
+    }),
+    tx.financialTransaction.findMany({
+      where: { personId: person.id, deletedAt: null },
+      include: { currency: true },
+      orderBy: [{ transactionAt: 'desc' }, { createdAt: 'desc' }],
+    }),
+    tx.customerWalletSettlement.findMany({
+      where: { personId: person.id, deletedAt: null },
+      include: { currency: true },
+      orderBy: [{ occurredAt: 'desc' }, { createdAt: 'desc' }],
+    }),
+  ]);
+
+  const agreedMap = new Map<string, { amount: Prisma.Decimal; currencyCode: string; currencySymbol?: string | null }>();
+  const deliveredMap = new Map<string, { amount: Prisma.Decimal; currencyCode: string; currencySymbol?: string | null }>();
+  const remainingMap = new Map<string, { amount: Prisma.Decimal; currencyCode: string; currencySymbol?: string | null }>();
+  const cardViews: AssistantCustomerCardView[] = [];
+  let totalOriginalUsd = D(0);
+  let latestActivity: AssistantCustomerReadView['latestActivity'] = null;
+
+  for (const card of cards) {
+    const cardView = cardViewFromRecord(card);
+    const settlementCurrency = card.settlementCurrency || card.batch.currency || null;
+    cardViews.push(cardView);
+    totalOriginalUsd = totalOriginalUsd.add(D(card.valueUsd || 0));
+    addCurrencyAmount(agreedMap, settlementCurrency, card.agreedAmount);
+    ensureCurrencyAmount(deliveredMap, settlementCurrency);
+
+    for (const operation of card.operations) {
+      latestActivity = latestActivityOf(latestActivity, {
+        label: cardOperationTypeLabels[operation.operationType as keyof typeof cardOperationTypeLabels] || 'حركة بطاقة',
+        occurredAt: operation.occurredAt,
+      });
+    }
+  }
+
+  for (const delivery of deliveries) {
+    addCurrencyAmount(deliveredMap, delivery.currency, delivery.amount);
+    latestActivity = latestActivityOf(latestActivity, { label: 'تسليم للزبون', occurredAt: delivery.occurredAt });
+  }
+
+  for (const [currencyCode, agreed] of agreedMap.entries()) {
+    const delivered = deliveredMap.get(currencyCode);
+    remainingMap.set(currencyCode, {
+      amount: agreed.amount.sub(delivered?.amount || 0),
+      currencyCode: agreed.currencyCode,
+      currencySymbol: agreed.currencySymbol,
+    });
+  }
+
+  for (const [currencyCode, delivered] of deliveredMap.entries()) {
+    if (!remainingMap.has(currencyCode)) {
+      remainingMap.set(currencyCode, {
+        amount: D(0).sub(delivered.amount),
+        currencyCode: delivered.currencyCode,
+        currencySymbol: delivered.currencySymbol,
+      });
+    }
+  }
+
+  const wallet = buildWalletSnapshot(transactions, settlements, currencies);
+  const walletDebtByCurrency = wallet.totals.debt.map((item) => currencyAmount(item.currency, item.amount)).filter(Boolean) as AssistantAmount[];
+  const walletCreditByCurrency = wallet.totals.credit.map((item) => currencyAmount(item.currency, item.amount)).filter(Boolean) as AssistantAmount[];
+
+  for (const transaction of transactions) {
+    latestActivity = latestActivityOf(latestActivity, { label: 'عملية مالية', occurredAt: transaction.transactionAt });
+  }
+  for (const settlement of settlements) {
+    latestActivity = latestActivityOf(latestActivity, { label: 'حركة لنا وعلينا', occurredAt: settlement.occurredAt });
+  }
+
+  return {
+    customer: { code: person.customerNo, name: person.fullName },
+    cards: cardViews,
+    totalOriginalUsd: totalOriginalUsd.toString(),
+    agreedByCurrency: currencyMapToAmounts(agreedMap),
+    deliveredByCurrency: currencyMapToAmounts(deliveredMap),
+    financialRemainingByCurrency: currencyMapToAmounts(remainingMap),
+    walletDebtByCurrency,
+    walletCreditByCurrency,
+    hasDeliveries: deliveries.length > 0,
+    latestActivity,
+  };
+}
+
+async function getSystemAccountView(tx: Tx): Promise<AssistantSystemAccountView> {
+  const [currencies, transactions, settlements] = await Promise.all([
+    tx.currency.findMany({ where: { isActive: true } }),
+    tx.financialTransaction.findMany({
+      where: { deletedAt: null, person: { deletedAt: null, status: 'ACTIVE' } },
+      include: { currency: true },
+      orderBy: [{ transactionAt: 'desc' }, { createdAt: 'desc' }],
+    }),
+    tx.customerWalletSettlement.findMany({
+      where: { deletedAt: null, person: { deletedAt: null, status: 'ACTIVE' } },
+      include: { currency: true },
+      orderBy: [{ occurredAt: 'desc' }, { createdAt: 'desc' }],
+    }),
+  ]);
+
+  const wallet = buildWalletSnapshot(transactions, settlements, currencies);
+  let latestActivity: AssistantSystemAccountView['latestActivity'] = null;
+  for (const transaction of transactions) {
+    latestActivity = latestActivityOf(latestActivity, { label: 'عملية مالية', occurredAt: transaction.transactionAt });
+  }
+  for (const settlement of settlements) {
+    latestActivity = latestActivityOf(latestActivity, { label: 'حركة لنا وعلينا', occurredAt: settlement.occurredAt });
+  }
+
+  return {
+    walletDebtByCurrency: wallet.totals.debt.map((item) => currencyAmount(item.currency, item.amount)).filter(Boolean) as AssistantAmount[],
+    walletCreditByCurrency: wallet.totals.credit.map((item) => currencyAmount(item.currency, item.amount)).filter(Boolean) as AssistantAmount[],
+    latestActivity,
+  };
+}
+
+async function resolveCardForRead(
+  tx: Tx,
+  intent: Extract<AssistantIntent, { type: 'QUERY_CUSTOMER' }>,
+): Promise<
+  | { ok: true; card: AssistantCustomerCardView; customer: { code?: string | null; name: string } }
+  | { ok: false; message: string; missingFields: string[] }
+> {
+  const cardPublicCode = intent.cardPublicCode?.trim();
+  const cardLast4 = intent.cardLast4?.trim();
+  if (!cardPublicCode && !cardLast4) return { ok: false, message: 'أحتاج رقم البطاقة أو آخر 4 أرقام.', missingFields: ['cardLast4'] };
+
+  const personResult = intent.customerCode || intent.customerName ? await resolvePerson(tx, intent) : null;
+  if (personResult && !personResult.ok) return { ok: false, message: personResult.message, missingFields: personResult.missingFields };
+
+  const cards = await tx.receivedCustomerCard.findMany({
+    where: {
+      deletedAt: null,
+      status: { not: 'CANCELLED' },
+      ...(cardPublicCode ? { publicCode: cardPublicCode } : { cardLast4 }),
+      ...(personResult?.ok ? { batch: { personId: personResult.person.id } } : {}),
+    },
+    include: {
+      settlementCurrency: true,
+      batch: { include: { currency: true, person: true } },
+      operations: {
+        where: { deletedAt: null },
+        orderBy: [{ occurredAt: 'desc' }, { createdAt: 'desc' }],
+      },
+    },
+    orderBy: [{ createdAt: 'desc' }, { id: 'asc' }],
+    take: 8,
+  });
+
+  if (cards.length === 1) {
+    const card = cards[0];
+    return {
+      ok: true,
+      card: cardViewFromRecord(card),
+      customer: { code: card.batch.person.customerNo, name: card.batch.person.fullName },
+    };
+  }
+
+  if (cards.length > 1) {
+    return {
+      ok: false,
+      message: [
+        'وجدت أكثر من بطاقة بهذا الرقم. حدد كود البطاقة أو الزبون:',
+        ...cards.map((card) =>
+          `${card.batch.person.customerNo || 'بدون كود'} - ${card.batch.person.fullName} - ${card.publicCode || 'بطاقة'}${card.cardLast4 ? ` - ${card.cardLast4}` : ''}`,
+        ),
+      ].join('\n'),
+      missingFields: ['cardPublicCode'],
+    };
+  }
+
+  return { ok: false, message: 'لم أجد البطاقة المطلوبة.', missingFields: ['cardLast4'] };
 }
 
 async function buildCreateCustomerPreview(tx: Tx, intent: Extract<AssistantIntent, { type: 'CREATE_CUSTOMER_WITH_CARDS' }>, command: string, session: SessionLike) {
@@ -845,27 +1338,32 @@ export async function buildAssistantPreviewFromIntent(intent: AssistantIntent, c
 
 async function buildReadOnlyAnswer(intent: AssistantIntent): Promise<AssistantResponse> {
   if (intent.type === 'QUERY_CUSTOMER') {
-    const snapshot = await db.$transaction(async (tx) => {
+    const mode = (intent.queryMode || 'FULL_SUMMARY') as AssistantReadQueryMode;
+
+    if (mode === 'CARD_LAST_OPERATION' || mode === 'CARD_REMAINING') {
+      const cardResult = await db.$transaction((tx) => resolveCardForRead(tx, intent));
+      if (!cardResult.ok) return clarify(cardResult.message, cardResult.missingFields);
+      return answer(formatCardReadAnswer(mode, cardResult.card, cardResult.customer));
+    }
+
+    if (mode === 'ACCOUNT_SUMMARY' && !intent.customerCode && !intent.customerName) {
+      const systemView = await db.$transaction((tx) => getSystemAccountView(tx));
+      return answer(formatSystemAccountAnswer(systemView));
+    }
+
+    const readView = await db.$transaction(async (tx) => {
       const personResult = await resolvePerson(tx, intent);
       if (!personResult.ok) return personResult;
-      return getCustomerSnapshotForTool({ personId: personResult.person.id, customerCode: '' });
+      return filterCustomerViewByCurrency(await getCustomerReadView(tx, personResult.person), intent.currencyCode);
     });
 
-    if ('ok' in snapshot && !snapshot.ok) return clarify(snapshot.message, snapshot.missingFields);
-    return {
-      type: 'answer',
-      message: 'هذا ملخص الزبون والبطاقات والأرصدة الحالية.',
-      answer: snapshot,
-    };
+    if ((readView as any).ok === false) return clarify((readView as any).message, (readView as any).missingFields);
+    return answer(formatCustomerReadAnswer(mode, readView as AssistantCustomerReadView));
   }
 
   if (intent.type === 'EXPLAIN_AUDIT') {
-    const answer = await readRecentAuditLogsForTool(intent);
-    return {
-      type: 'answer',
-      message: 'هذه آخر السجلات المرتبطة بالاستعلام.',
-      answer,
-    };
+    const auditResult = await readRecentAuditLogsForTool(intent);
+    return answer(formatAuditLogsAnswer(auditResult.logs));
   }
 
   return clarify('أحتاج توضيحًا أكثر للأمر المطلوب.', []);
@@ -877,6 +1375,22 @@ export async function handleAssistantCommand(input: {
   history?: Array<{ role: 'user' | 'assistant'; content: string }>;
   session: SessionLike;
 }) {
+  const deterministicReadIntent = tryBuildDeterministicReadIntent(input.command);
+  if (deterministicReadIntent) {
+    await audit('ASSISTANT_COMMAND_PREVIEW', {
+      entityType: 'AssistantCommand',
+      entityId: undefined,
+      newValue: {
+        originalCommand: input.command,
+        transcript: input.transcript || null,
+        intent: deterministicReadIntent,
+        model: 'deterministic-read-parser',
+      } as any,
+      description: 'قراءة حتمية من المساعد الذكي',
+    });
+    return buildAssistantPreviewFromIntent(deterministicReadIntent, input.command, input.session, input.transcript);
+  }
+
   if (!hasOpenAIKey()) return setupRequired();
 
   try {
@@ -1161,6 +1675,64 @@ async function executeWalletSettlement(tx: Tx, intent: Extract<AssistantIntent, 
   return { personId: personResult.person.id, settlementId: settlement.id };
 }
 
+async function getCardReadById(tx: Tx, cardId: string) {
+  const card = await tx.receivedCustomerCard.findFirst({
+    where: { id: cardId, deletedAt: null },
+    include: {
+      settlementCurrency: true,
+      batch: { include: { currency: true, person: true } },
+      operations: {
+        where: { deletedAt: null },
+        orderBy: [{ occurredAt: 'desc' }, { createdAt: 'desc' }],
+      },
+    },
+  });
+  if (!card) return null;
+  return {
+    card: cardViewFromRecord(card),
+    customer: { code: card.batch.person.customerNo, name: card.batch.person.fullName },
+  };
+}
+
+async function readCustomerViewById(personId: string, currencyCode?: string) {
+  return db.$transaction(async (tx) => {
+    const person = await tx.person.findFirst({ where: { id: personId, deletedAt: null, status: 'ACTIVE' } });
+    if (!person) return null;
+    return filterCustomerViewByCurrency(await getCustomerReadView(tx, person), currencyCode);
+  });
+}
+
+async function buildPostExecutionMessage(intent: AssistantIntent, execution: any) {
+  if (!execution?.personId && !execution?.cardId) return 'تم حفظ العملية، لكن لم أجد سجلًا كافيًا لإعادة قراءة الرصيد.';
+
+  if (intent.type === 'ADD_CARD_OPERATION' && execution.cardId) {
+    const cardResult = await db.$transaction((tx) => getCardReadById(tx, execution.cardId));
+    if (!cardResult) return 'تم حفظ حركة البطاقة، لكن تعذرت إعادة قراءة البطاقة.';
+    return ['تم تسجيل حركة البطاقة.', formatCardReadAnswer('CARD_REMAINING', cardResult.card, cardResult.customer)].join('\n\n');
+  }
+
+  if (intent.type === 'RECORD_CUSTOMER_DELIVERY') {
+    const view = await readCustomerViewById(execution.personId, intent.currencyCode);
+    if (!view) return 'تم حفظ التسليم، لكن تعذرت إعادة قراءة حساب الزبون.';
+    return ['تم تسجيل التسليم.', formatCustomerReadAnswer('DELIVERIES_SUMMARY', view)].join('\n\n');
+  }
+
+  if (intent.type === 'ADD_WALLET_SETTLEMENT') {
+    const view = await readCustomerViewById(execution.personId, intent.currencyCode);
+    if (!view) return 'تم حفظ الحركة، لكن تعذرت إعادة قراءة حساب الزبون.';
+    const mode: AssistantReadQueryMode = intent.accountType === 'DEBT' ? 'DEBT_SUMMARY' : 'ACCOUNT_SUMMARY';
+    return [intent.movementKind === 'REPAYMENT' ? 'تم تسجيل السداد.' : 'تم تسجيل حركة الحساب.', formatCustomerReadAnswer(mode, view)].join('\n\n');
+  }
+
+  if (intent.type === 'CREATE_CUSTOMER_WITH_CARDS') {
+    const view = await readCustomerViewById(execution.personId, intent.currencyCode);
+    if (!view) return 'تم حفظ الزبون والبطاقات، لكن تعذرت إعادة قراءة الحساب.';
+    return ['تمت إضافة الزبون والبطاقات.', formatCustomerReadAnswer('CARDS_SUMMARY', view)].join('\n\n');
+  }
+
+  return 'تم حفظ العملية وإعادة قراءة السجل بنجاح.';
+}
+
 export async function executeAssistantConfirmation(token: string, session: SessionLike) {
   const payload = verifyAssistantConfirmationToken(token, session.id);
   const meta = await clientMeta();
@@ -1216,5 +1788,13 @@ export async function executeAssistantConfirmation(token: string, session: Sessi
 
   const personId = (result.result as any)?.personId;
   revalidateFinancePaths(['/dashboard', '/people', '/accounts', '/audit', ...(personId ? [`/people/${personId}`] : [])]);
-  return result;
+  const message = result.duplicated
+    ? 'هذه العملية منفذة سابقًا ولم يتم تكرارها.'
+    : enforceArabicAssistantMessage(await buildPostExecutionMessage(payload.intent, result.result as any));
+
+  return {
+    duplicated: result.duplicated,
+    auditLogId: result.auditLogId,
+    message,
+  };
 }
