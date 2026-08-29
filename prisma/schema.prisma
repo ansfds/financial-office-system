@@ -614,6 +614,11 @@ model ReceivedCustomerCard {
   currentStage         Int                @default(0)
   rejectedAt           DateTime?
   rejectReason         String?
+  cardImageDataUrl     String?            @db.Text
+  cardThumbnailDataUrl String?            @db.Text
+  cardImageMimeType    String?
+  cardImageSize        Int?
+  cardImageUpdatedAt   DateTime?
   archivedAt           DateTime?
   deletedAt            DateTime?
   createdAt            DateTime           @default(now())

@@ -5,19 +5,26 @@ import type { CSSProperties } from 'react';
 import dynamic from 'next/dynamic';
 import {
   Archive,
+  Camera,
+  Check,
+  CheckCircle2,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
   ChevronUp,
   Edit3,
   Eye,
+  ImagePlus,
   Loader2,
   Plus,
+  RotateCcw,
   Save,
   Search,
+  Sparkles,
   Trash2,
   UserPlus,
   X,
+  XCircle,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { formatDate, formatDateTime, formatMoney, numberValue } from '@/lib/format';
@@ -25,6 +32,7 @@ import { detailedPaymentLabels } from '@/lib/payment-methods';
 import ModalLayer, { ModalBackdrop } from '@/components/ModalLayer';
 import { STANDARD_CUSTOMER_CARD_VALUE_USD, cardOperationTypeLabels } from '@/lib/customer-cards';
 import { compareCardsBySequence, sortByCustomerCode } from '@/lib/customer-code-sort';
+import { processCardImageFile, type ProcessedCardImage } from '@/components/card-image-tools';
 
 const FastCardEntryModal = dynamic(() => import('@/components/FastCardEntryModal'), { ssr: false });
 const CardOperationModal = dynamic(() => import('@/components/CardOperationModal'), { ssr: false });
@@ -55,10 +63,15 @@ type CardDraft = {
   settlementAmount?: string;
   settlementPaymentMethod?: string;
   status?: string;
+  rejectReason?: string;
   notes?: string;
   stageAmount?: string;
   stageNote?: string;
   currentStage?: string;
+  cardImageDataUrl?: string | null;
+  cardThumbnailDataUrl?: string | null;
+  cardImageMimeType?: ProcessedCardImage['cardImageMimeType'] | null;
+  cardImageSize?: number | null;
 };
 
 const blankForm: PersonForm = {
@@ -102,6 +115,7 @@ const statusOptions = [
 
 const settlementMethods = ['USD_CASH', 'USD_TRANSFER', 'USD_CARD', 'LYD_CASH', 'LYD_TRANSFER', 'LYD_OFFICE_TRANSFER', 'LYD_CARD'];
 const defaultOriginalCardValue = String(STANDARD_CUSTOMER_CARD_VALUE_USD);
+const workflowStages = [1, 2, 3, 4, 5] as const;
 
 function formFromPerson(person: any): PersonForm {
   return {
@@ -128,6 +142,28 @@ function allCards(person: any) {
 
 function cardCode(card: any) {
   return card.publicCode || `#C${String(card.sequence || 0).padStart(4, '0')}`;
+}
+
+function displayLast4(card: any, draft: CardDraft = {}) {
+  return draft.cardLast4 ?? card.cardLast4 ?? '----';
+}
+
+function cardImageSrc(card: any, draft: CardDraft = {}) {
+  return draft.cardThumbnailDataUrl || card.cardThumbnailDataUrl || draft.cardImageDataUrl || card.cardImageDataUrl || '';
+}
+
+function isCardSettled(card: any, draft: CardDraft = {}) {
+  const status = draft.status ?? card.status;
+  return ['SETTLED', 'COMPLETED'].includes(status) || Number(draft.currentStage ?? card.currentStage ?? 0) >= 5;
+}
+
+function isCardStopped(card: any, draft: CardDraft = {}) {
+  return (draft.status ?? card.status) === 'CANCELLED';
+}
+
+function stageLabel(stage: number) {
+  if (stage === 5) return 'التصفية';
+  return `مرحلة ${stage}`;
 }
 
 function cardOriginal(card: any) {
@@ -263,7 +299,7 @@ function normalizeDraftValue(value: unknown) {
 }
 
 function cardPayload(card: any, draft: CardDraft) {
-  return {
+  const payload: Record<string, unknown> = {
     bankName: draft.bankName ?? card.bankName ?? null,
     cardLast4: draft.cardLast4 ?? card.cardLast4 ?? null,
     valueUsd: Number(draft.valueUsd ?? numberValue(card.valueUsd)),
@@ -277,8 +313,16 @@ function cardPayload(card: any, draft: CardDraft) {
           : null,
     settlementPaymentMethod: draft.settlementPaymentMethod ?? card.settlementPaymentMethod ?? null,
     status: draft.status ?? card.status,
+    rejectReason: draft.rejectReason ?? card.rejectReason ?? null,
     notes: draft.notes ?? card.notes ?? null,
   };
+
+  if (draft.cardImageDataUrl !== undefined) payload.cardImageDataUrl = draft.cardImageDataUrl;
+  if (draft.cardThumbnailDataUrl !== undefined) payload.cardThumbnailDataUrl = draft.cardThumbnailDataUrl;
+  if (draft.cardImageMimeType !== undefined) payload.cardImageMimeType = draft.cardImageMimeType;
+  if (draft.cardImageSize !== undefined) payload.cardImageSize = draft.cardImageSize;
+
+  return payload;
 }
 
 export default function PeopleClient({
@@ -302,6 +346,9 @@ export default function PeopleClient({
   const [savingCards, setSavingCards] = useState<Record<string, boolean>>({});
   const [selectedCards, setSelectedCards] = useState<Set<string>>(new Set());
   const [expandedCardIds, setExpandedCardIds] = useState<Set<string>>(new Set());
+  const [stageAnimations, setStageAnimations] = useState<Record<string, boolean>>({});
+  const [celebration, setCelebration] = useState<{ cardId: string; label: string } | null>(null);
+  const [processingCardImageId, setProcessingCardImageId] = useState('');
   const [statusFilter, setStatusFilter] = useState('ALL');
   const [mobileAddOpen, setMobileAddOpen] = useState(false);
   const [batchForm, setBatchForm] = useState({
@@ -495,6 +542,42 @@ export default function PeopleClient({
     setDrafts((current) => ({ ...current, [cardId]: { ...current[cardId], ...patch } }));
   }
 
+  function haptic(pattern: number | number[] = 18) {
+    if (typeof navigator !== 'undefined' && 'vibrate' in navigator) {
+      navigator.vibrate(pattern);
+    }
+  }
+
+  async function attachCardImage(cardId: string, file?: File | null) {
+    if (!file) return;
+    setProcessingCardImageId(cardId);
+    try {
+      const image = await processCardImageFile(file);
+      setCardDraft(cardId, {
+        cardImageDataUrl: image.cardImageDataUrl,
+        cardThumbnailDataUrl: image.cardThumbnailDataUrl,
+        cardImageMimeType: image.cardImageMimeType,
+        cardImageSize: image.cardImageSize,
+      });
+      toast.success('تم تجهيز صورة البطاقة');
+    } catch (error) {
+      const message = (error as Error).message;
+      toast.error(
+        message === 'IMAGE_TOO_LARGE'
+          ? 'الصورة ما زالت كبيرة بعد الضغط'
+          : message === 'INVALID_IMAGE_TYPE'
+            ? 'اختر صورة صحيحة'
+            : 'تعذر تجهيز الصورة',
+      );
+    } finally {
+      setProcessingCardImageId('');
+    }
+  }
+
+  function animationKey(cardId: string, stage: number) {
+    return `${cardId}-${stage}`;
+  }
+
   function replaceCard(updated: any) {
     const personId = updated.batch?.personId;
     if (!personId) return load(q);
@@ -518,7 +601,6 @@ export default function PeopleClient({
   }
 
   function handleFastEntrySaved(batch: any) {
-    setFastEntryOpen(false);
     setItems((current) => {
       const exists = current.some((person) => person.id === batch.personId);
       if (!exists) {
@@ -549,8 +631,13 @@ export default function PeopleClient({
 
   async function saveCard(card: any, extra: Record<string, unknown> = {}) {
     if (savingCards[card.id]) return;
-    setSavingCards((current) => ({ ...current, [card.id]: true }));
     const draft = drafts[card.id] || {};
+    const status = (extra.status as string | undefined) || draft.status || card.status;
+    const rejectReason = (extra.rejectReason as string | undefined) || draft.rejectReason || card.rejectReason;
+    if (status === 'CANCELLED' && !String(rejectReason || '').trim()) {
+      return toast.error('اكتب سبب إيقاف أو رفض البطاقة قبل الحفظ');
+    }
+    setSavingCards((current) => ({ ...current, [card.id]: true }));
     const response = await fetch(`/api/inventory/received-cards/${card.id}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
@@ -564,6 +651,74 @@ export default function PeopleClient({
     setDrafts((current) => ({ ...current, [card.id]: {} }));
     if (result.cashboxWarning) toast.warning(result.cashboxWarning);
     toast.success('تم حفظ البطاقة');
+  }
+
+  async function advanceCardStage(card: any, targetStage: number) {
+    const draft = drafts[card.id] || {};
+    const currentStage = Math.max(0, Math.min(Number(draft.currentStage ?? card.currentStage ?? 0), 5));
+    const terminal = isCardSettled(card, draft) || isCardStopped(card, draft);
+    const key = animationKey(card.id, targetStage);
+
+    if (terminal) return;
+    if (targetStage !== currentStage + 1) {
+      return toast.error('نفّذ المراحل بالترتيب');
+    }
+    if (savingCards[card.id]) return;
+
+    haptic(targetStage === 5 ? [20, 35, 24] : 18);
+    setStageAnimations((current) => ({ ...current, [key]: true }));
+    setSavingCards((current) => ({ ...current, [card.id]: true }));
+
+    try {
+      const response =
+        targetStage === 5
+          ? await fetch(`/api/inventory/received-cards/${card.id}/operations`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                operationType: 'FINAL_SETTLEMENT',
+                note: 'تمت تصفية البطاقة بالكامل من شريط المراحل',
+              }),
+            })
+          : await fetch(`/api/inventory/received-cards/${card.id}`, {
+              method: 'PATCH',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                ...cardPayload(card, draft),
+                stageAction: 'NEXT',
+                stageAmount: Number(draft.stageAmount || 0),
+                stageNote: draft.stageNote || `تم تنفيذ ${stageLabel(targetStage)}`,
+              }),
+            });
+      const result = await response.json().catch(() => ({}));
+
+      if (!response.ok) {
+        toast.error(result.error || 'تعذر تنفيذ المرحلة');
+        return;
+      }
+
+      replaceCard(result);
+      setDrafts((current) => ({ ...current, [card.id]: {} }));
+      if (result.cashboxWarning) toast.warning(result.cashboxWarning);
+      if (targetStage === 5) {
+        setCelebration({ cardId: card.id, label: displayLast4(result) });
+        window.setTimeout(() => setCelebration((current) => (current?.cardId === card.id ? null : current)), 2600);
+        toast.success('مبروك، تمت تصفية البطاقة بالكامل');
+      } else {
+        toast.success(`تم تنفيذ ${stageLabel(targetStage)}`);
+      }
+    } catch {
+      toast.error('تعذر الاتصال بالخادم أثناء تنفيذ المرحلة');
+    } finally {
+      window.setTimeout(() => {
+        setStageAnimations((current) => {
+          const next = { ...current };
+          delete next[key];
+          return next;
+        });
+      }, 620);
+      setSavingCards((current) => ({ ...current, [card.id]: false }));
+    }
   }
 
   async function deleteCard(card: any) {
@@ -659,13 +814,15 @@ export default function PeopleClient({
     const ids = Array.from(selectedCards);
     if (!ids.length) return toast.error('حدد بطاقة واحدة على الأقل');
     if (!window.confirm(`سيتم نقل ${ids.length} بطاقة إلى حالة مرفوضة أو متوقفة.`)) return;
+    const reason = window.prompt('اكتب سبب إيقاف أو رفض البطاقات المحددة');
+    if (!reason?.trim()) return toast.error('سبب الإيقاف مطلوب');
 
     await Promise.all(
       ids.map((id) =>
         fetch(`/api/inventory/received-cards/${id}`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ status: 'CANCELLED' }),
+          body: JSON.stringify({ status: 'CANCELLED', rejectReason: reason.trim() }),
         }),
       ),
     );
@@ -734,7 +891,7 @@ export default function PeopleClient({
             className="inline-flex items-center justify-center gap-2 rounded-lg bg-emerald-600 px-5 py-2.5 font-bold text-white"
           >
             <Plus size={18} />
-            إضافة معاملة بطاقات
+            إضافة بطاقة جديدة
           </button>
         </div>
 
@@ -898,7 +1055,7 @@ export default function PeopleClient({
           className="inline-flex items-center justify-center gap-2 rounded-full bg-emerald-600 px-4 py-3 text-sm font-black text-white shadow-lg"
         >
           <Plus size={18} />
-          بطاقات
+          بطاقة جديدة
         </button>
         <button
           type="button"
@@ -956,7 +1113,7 @@ export default function PeopleClient({
                 className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2.5 text-sm font-bold text-white"
               >
                 <Plus size={16} />
-                إضافة معاملة بطاقات
+                إضافة بطاقة
               </button>
               <button
                 type="button"
@@ -1077,39 +1234,74 @@ export default function PeopleClient({
               {selectedPersonHasDetails ? visibleCards.map((card: any, index: number) => {
                 const draft = drafts[card.id] || {};
                 const expanded = expandedCardIds.has(card.id);
-                const currentStage = Math.max(0, Math.min(Number(draft.currentStage ?? card.currentStage ?? 0), 6));
+                const currentStage = Math.max(0, Math.min(Number(draft.currentStage ?? card.currentStage ?? 0), 5));
                 const currency = card.currency || card.batch?.currency || '$';
                 const original = cardOriginal({ ...card, ...draft });
                 const remainingAmount = cardDraftRemaining(card, draft);
                 const deductedAmount = Math.min(cardDeducted(card, draft), original);
                 const progress = cardProgressPercent(card, draft);
+                const settled = isCardSettled(card, draft);
+                const stopped = isCardStopped(card, draft);
+                const terminal = settled || stopped;
+                const imageSrc = cardImageSrc(card, draft);
+                const last4 = displayLast4(card, draft);
                 return (
                   <article
                     key={card.id}
                     style={{ '--stagger': index } as CSSProperties}
-                    className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900"
+                    className={`customer-card-card rounded-lg border border-slate-200 bg-white p-3 shadow-sm dark:border-slate-800 dark:bg-slate-900 sm:p-4 ${
+                      settled ? 'customer-card-terminal customer-card-settled' : ''
+                    } ${stopped ? 'customer-card-terminal customer-card-stopped' : ''}`}
                   >
+                    <div className="customer-card-image-wrap">
+                      {imageSrc ? (
+                        <img
+                          src={imageSrc}
+                          alt={`صورة البطاقة ${last4}`}
+                          loading="lazy"
+                          className="customer-card-image"
+                        />
+                      ) : (
+                        <div className="customer-card-placeholder">
+                          <ImagePlus size={38} />
+                          <span>لا توجد صورة للبطاقة</span>
+                        </div>
+                      )}
+                      {settled ? (
+                        <div className="customer-card-state-overlay text-emerald-600">
+                          <CheckCircle2 size={66} />
+                          <b>تمت التصفية بالكامل</b>
+                        </div>
+                      ) : null}
+                      {stopped ? (
+                        <div className="customer-card-state-overlay text-red-600">
+                          <XCircle size={66} />
+                          <b>البطاقة متوقفة</b>
+                          {card.rejectReason ? <span>السبب: {card.rejectReason}</span> : null}
+                        </div>
+                      ) : null}
+                    </div>
                     <div className="grid gap-4">
                       <div className="grid gap-3 md:grid-cols-[1fr_auto] md:items-start">
                         <div className="min-w-0">
                           <div className="flex flex-wrap items-center gap-2">
                             <span className="text-lg font-black">{cardCode(card)}</span>
                             <span className="rounded-md bg-slate-100 px-2 py-1 text-xs font-bold text-slate-600 dark:bg-slate-800 dark:text-slate-200">
-                              آخر 4 أرقام: {draft.cardLast4 ?? card.cardLast4 ?? '—'}
+                              **** {last4}
                             </span>
                           </div>
                           <div className="mt-3 grid gap-2 text-sm sm:grid-cols-2 lg:grid-cols-4">
                             <span className="rounded-lg bg-slate-50 p-3 dark:bg-slate-950">
-                              الأصل: <b>{formatMoney(original, currency)}</b>
+                              قيمة البطاقة <b className="num mt-1 block text-xl text-slate-950 dark:text-white">{formatMoney(original, currency)}</b>
                             </span>
                             <span className="rounded-lg bg-slate-50 p-3 dark:bg-slate-950">
-                              المتبقي: <b>{formatMoney(remainingAmount, currency)}</b>
+                              المتفق عليه <b className="num mt-1 block text-xl text-slate-950 dark:text-white">{formatMoney(draft.agreedAmount ?? card.agreedAmount, currency)}</b>
                             </span>
                             <span className="rounded-lg bg-slate-50 p-3 dark:bg-slate-950">
-                              المسحوب: <b>{formatMoney(deductedAmount, currency)}</b>
+                              المستلم/المسحوب <b className="num mt-1 block text-xl text-slate-950 dark:text-white">{formatMoney(deductedAmount, currency)}</b>
                             </span>
                             <span className="rounded-lg bg-slate-50 p-3 dark:bg-slate-950">
-                              النسبة: <b>{cardProgressLabel(card, draft)}</b>
+                              المتبقي <b className="num mt-1 block text-xl text-emerald-700 dark:text-emerald-300">{formatMoney(remainingAmount, currency)}</b>
                             </span>
                           </div>
                         </div>
@@ -1117,6 +1309,13 @@ export default function PeopleClient({
                           {statusLabels[draft.status ?? card.status] || draft.status || card.status}
                         </span>
                       </div>
+
+                      {(draft.notes ?? card.notes) ? (
+                        <div className="rounded-lg bg-slate-50 p-3 text-sm text-slate-600 dark:bg-slate-950 dark:text-slate-300">
+                          <b>الملاحظات: </b>
+                          {draft.notes ?? card.notes}
+                        </div>
+                      ) : null}
 
                       <div className="grid gap-2">
                         <div className="relative h-9 overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800">
@@ -1130,11 +1329,35 @@ export default function PeopleClient({
                         </div>
                       </div>
 
+                      <div className="grid grid-cols-5 gap-2" aria-label="مراحل البطاقة">
+                        {workflowStages.map((stage) => {
+                          const done = settled || currentStage >= stage;
+                          const next = stage === currentStage + 1;
+                          const final = stage === 5;
+                          const running = stageAnimations[animationKey(card.id, stage)];
+                          return (
+                            <button
+                              type="button"
+                              key={stage}
+                              onClick={() => advanceCardStage(card, stage)}
+                              disabled={terminal || savingCards[card.id] || !next}
+                              aria-label={`تنفيذ ${stageLabel(stage)}`}
+                              title={stageLabel(stage)}
+                              className={`card-stage-tile ${final ? 'card-stage-final' : 'card-stage-normal'} ${
+                                done ? 'card-stage-done' : ''
+                              } ${running ? 'card-stage-animating' : ''}`}
+                            >
+                              {done ? <Check size={22} /> : stage}
+                            </button>
+                          );
+                        })}
+                      </div>
+
                       <div className="grid gap-2 sm:grid-cols-[1fr_auto]">
                         <button
                           type="button"
                           onClick={() => setOperationModal({ card })}
-                          disabled={card.status === 'CANCELLED'}
+                          disabled={terminal}
                           className="inline-flex items-center justify-center gap-2 rounded-lg bg-slate-900 px-3 py-2.5 text-sm font-bold text-white disabled:cursor-not-allowed disabled:opacity-50 dark:bg-slate-100 dark:text-slate-950"
                         >
                           <Plus size={16} />
@@ -1163,6 +1386,56 @@ export default function PeopleClient({
                           <span className="text-sm text-slate-500">
                             آخر عملية: {card.stageLogs?.[0] ? formatDateTime(card.stageLogs[0].createdAt) : '—'}
                           </span>
+                        </div>
+
+                        <div className="mb-4 grid gap-3 rounded-lg border border-slate-200 bg-slate-50 p-3 dark:border-slate-800 dark:bg-slate-950 md:grid-cols-[minmax(12rem,18rem)_1fr] md:items-center">
+                          <div className="relative aspect-[16/10] overflow-hidden rounded-lg bg-slate-200 dark:bg-slate-800">
+                            {imageSrc ? (
+                              <img src={imageSrc} alt={`صورة البطاقة ${last4}`} className="h-full w-full object-cover" loading="lazy" />
+                            ) : (
+                              <div className="flex h-full flex-col items-center justify-center gap-2 text-slate-500">
+                                <ImagePlus size={30} />
+                                <span className="text-sm font-bold">لا توجد صورة</span>
+                              </div>
+                            )}
+                          </div>
+                          <div className="grid gap-2">
+                            <input
+                              id={`manage-card-image-${card.id}`}
+                              type="file"
+                              accept="image/*"
+                              capture="environment"
+                              className="sr-only"
+                              onChange={(event) => {
+                                void attachCardImage(card.id, event.target.files?.[0]);
+                                event.currentTarget.value = '';
+                              }}
+                            />
+                            <label
+                              htmlFor={`manage-card-image-${card.id}`}
+                              className="inline-flex min-h-11 cursor-pointer items-center justify-center gap-2 rounded-lg bg-slate-900 px-3 py-2 text-sm font-black text-white dark:bg-slate-100 dark:text-slate-950"
+                            >
+                              {processingCardImageId === card.id ? <Loader2 className="animate-spin" size={16} /> : imageSrc ? <RotateCcw size={16} /> : <Camera size={16} />}
+                              {imageSrc ? 'تغيير صورة البطاقة' : 'تصوير البطاقة'}
+                            </label>
+                            {imageSrc ? (
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setCardDraft(card.id, {
+                                    cardImageDataUrl: null,
+                                    cardThumbnailDataUrl: null,
+                                    cardImageMimeType: null,
+                                    cardImageSize: null,
+                                  })
+                                }
+                                className="inline-flex items-center justify-center gap-2 rounded-lg bg-red-50 px-3 py-2 text-sm font-bold text-red-700 dark:bg-red-950 dark:text-red-200"
+                              >
+                                <Trash2 size={16} />
+                                حذف الصورة
+                              </button>
+                            ) : null}
+                          </div>
                         </div>
 
                         <div className="grid gap-3 md:grid-cols-4">
@@ -1232,6 +1505,14 @@ export default function PeopleClient({
                               </option>
                             ))}
                           </select>
+                          {(draft.status ?? card.status) === 'CANCELLED' ? (
+                            <input
+                              className="md:col-span-2"
+                              placeholder="سبب الإيقاف أو الرفض"
+                              value={draft.rejectReason ?? card.rejectReason ?? ''}
+                              onChange={(event) => setCardDraft(card.id, { rejectReason: event.target.value })}
+                            />
+                          ) : null}
                           <input
                             type="number"
                             min="0"
@@ -1258,7 +1539,7 @@ export default function PeopleClient({
                       <button
                         type="button"
                         onClick={() => setOperationModal({ card, initialType: 'REJECT' })}
-                        disabled={card.status === 'CANCELLED'}
+                        disabled={terminal}
                         className="inline-flex items-center gap-2 rounded-lg bg-red-50 px-3 py-2 text-sm font-bold text-red-700 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-red-950 dark:text-red-200"
                       >
                         <Trash2 size={16} />
@@ -1267,7 +1548,7 @@ export default function PeopleClient({
                       <button
                         type="button"
                         onClick={() => saveCard(card, { stageAction: 'PREVIOUS', stageAmount: 0 })}
-                        disabled={savingCards[card.id] || currentStage === 0}
+                        disabled={savingCards[card.id] || terminal || currentStage === 0}
                         className="inline-flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-sm font-bold disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-700"
                       >
                         <ChevronRight size={16} />
@@ -1275,14 +1556,8 @@ export default function PeopleClient({
                       </button>
                       <button
                         type="button"
-                        onClick={() =>
-                          saveCard(card, {
-                            stageAction: 'NEXT',
-                            stageAmount: Number(draft.stageAmount || 0),
-                            stageNote: draft.stageNote || null,
-                          })
-                        }
-                        disabled={savingCards[card.id] || currentStage === 6}
+                        onClick={() => advanceCardStage(card, currentStage + 1)}
+                        disabled={savingCards[card.id] || terminal || currentStage >= 5}
                         className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-3 py-2 text-sm font-bold text-white disabled:cursor-not-allowed disabled:bg-indigo-400"
                       >
                         <ChevronLeft size={16} />
@@ -1357,6 +1632,32 @@ export default function PeopleClient({
             </div>
           </aside>
         </ModalLayer>
+      ) : null}
+
+      {celebration ? (
+        <div className="card-celebration" role="status" aria-live="polite">
+          <div className="card-confetti" aria-hidden="true">
+            {Array.from({ length: 24 }).map((_, index) => (
+              <span
+                key={index}
+                style={
+                  {
+                    '--delay': `${index * 16}ms`,
+                    '--drift': `${(index - 12) * 0.75}rem`,
+                    '--x': `${3 + index * 4}%`,
+                  } as CSSProperties
+                }
+              />
+            ))}
+          </div>
+          <div className="card-celebration-message">
+            <Sparkles size={34} />
+            <div>
+              <b>مبروك، تمت تصفية البطاقة بالكامل</b>
+              <span>**** {celebration.label}</span>
+            </div>
+          </div>
+        </div>
       ) : null}
 
       {editingPerson ? (

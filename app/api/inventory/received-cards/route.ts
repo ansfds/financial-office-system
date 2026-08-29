@@ -7,6 +7,11 @@ import { STANDARD_CUSTOMER_CARD_VALUE_USD, cardBaseAmount, cardProgressPercent }
 import { Prisma } from '@prisma/client';
 import { z } from 'zod';
 
+const cardImageDataUrlSchema = z
+  .string()
+  .max(2800000)
+  .regex(/^data:image\/(?:png|jpe?g|webp);base64,[A-Za-z0-9+/=]+$/);
+
 const cardInputSchema = z.object({
   bankName: z.string().trim().optional(),
   cardLast4: z
@@ -20,6 +25,10 @@ const cardInputSchema = z.object({
   verificationReceived: z.coerce.boolean().default(false),
   secureInternalNote: z.string().trim().optional(),
   notes: z.string().trim().optional(),
+  cardImageDataUrl: cardImageDataUrlSchema.optional().nullable(),
+  cardThumbnailDataUrl: cardImageDataUrlSchema.optional().nullable(),
+  cardImageMimeType: z.enum(['image/jpeg', 'image/png', 'image/webp']).optional().nullable(),
+  cardImageSize: z.coerce.number().int().min(0).max(2000000).optional().nullable(),
 });
 
 type CardInput = z.infer<typeof cardInputSchema>;
@@ -260,6 +269,11 @@ export async function POST(request: Request) {
             verificationReceived: source?.verificationReceived || false,
             secureInternalNote: source?.secureInternalNote,
             notes: source?.notes,
+            cardImageDataUrl: source?.cardImageDataUrl || null,
+            cardThumbnailDataUrl: source?.cardThumbnailDataUrl || null,
+            cardImageMimeType: source?.cardImageMimeType || null,
+            cardImageSize: source?.cardImageSize || null,
+            cardImageUpdatedAt: source?.cardImageDataUrl ? new Date() : null,
           };
         }),
       });

@@ -1,12 +1,13 @@
 'use client';
 
-import { ChevronDown, ChevronUp, Copy, Loader2, Plus, Trash2, X } from 'lucide-react';
+import { Camera, CheckCircle2, ChevronDown, ChevronUp, Copy, ImagePlus, Loader2, Plus, RotateCcw, Trash2, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { useMemo, useState } from 'react';
 import type { CSSProperties } from 'react';
 import { formatMoney } from '@/lib/format';
 import { STANDARD_CUSTOMER_CARD_VALUE_USD } from '@/lib/customer-cards';
 import ModalLayer, { ModalBackdrop } from '@/components/ModalLayer';
+import { processCardImageFile, type ProcessedCardImage } from '@/components/card-image-tools';
 
 type CurrencyOption = {
   id: string;
@@ -23,6 +24,11 @@ type FastCardRow = {
   currencyId: string;
   bankName: string;
   notes: string;
+  imageConfirmed: boolean;
+  cardImageDataUrl?: string;
+  cardThumbnailDataUrl?: string;
+  cardImageMimeType?: ProcessedCardImage['cardImageMimeType'];
+  cardImageSize?: number;
 };
 
 type Props = {
@@ -42,6 +48,7 @@ function newRow(defaults: { valueUsd: string; agreedAmount: string; currencyId: 
     currencyId: defaults.currencyId,
     bankName: defaults.bankName,
     notes: '',
+    imageConfirmed: false,
   };
 }
 
@@ -75,6 +82,8 @@ export default function FastCardEntryModal({ people, selectedPerson, currencies,
   ]);
   const [bulkText, setBulkText] = useState('');
   const [saving, setSaving] = useState(false);
+  const [processingImageId, setProcessingImageId] = useState('');
+  const [lastSavedPerson, setLastSavedPerson] = useState<any | null>(null);
   const [expandedRows, setExpandedRows] = useState<Set<string>>(() => new Set(rows.map((row) => row.id)));
 
   const duplicateLast4 = useMemo(() => {
@@ -133,7 +142,8 @@ export default function FastCardEntryModal({ people, selectedPerson, currencies,
             row.valueUsd !== defaultOriginalCardValue ||
             row.agreedAmount ||
             row.bankName ||
-            row.notes,
+            row.notes ||
+            row.cardImageDataUrl,
         ),
     );
   }
@@ -184,6 +194,55 @@ export default function FastCardEntryModal({ people, selectedPerson, currencies,
     );
   }
 
+  async function attachImage(rowId: string, file?: File | null) {
+    if (!file) return;
+    setProcessingImageId(rowId);
+    try {
+      const processed = await processCardImageFile(file);
+      patchRow(rowId, { ...processed, imageConfirmed: true });
+      toast.success('تم تجهيز صورة البطاقة');
+    } catch (error) {
+      const message = (error as Error).message;
+      toast.error(
+        message === 'IMAGE_TOO_LARGE'
+          ? 'الصورة ما زالت كبيرة بعد الضغط، جرّب تصويرها من مسافة أقرب'
+          : message === 'INVALID_IMAGE_TYPE'
+            ? 'اختر صورة بطاقة صحيحة'
+            : 'تعذر تجهيز صورة البطاقة',
+      );
+    } finally {
+      setProcessingImageId('');
+    }
+  }
+
+  function clearImage(rowId: string) {
+    patchRow(rowId, {
+      imageConfirmed: false,
+      cardImageDataUrl: undefined,
+      cardThumbnailDataUrl: undefined,
+      cardImageMimeType: undefined,
+      cardImageSize: undefined,
+    });
+  }
+
+  function resetRowsForSamePerson(savedPersonId?: string) {
+    const row = newRow({
+      valueUsd: defaults.valueUsd || defaultOriginalCardValue,
+      agreedAmount: defaults.agreedAmount,
+      currencyId: defaults.currencyId,
+      bankName: defaults.bankName,
+    });
+    if (savedPersonId) {
+      setMode('existing');
+      setPersonId(savedPersonId);
+    }
+    setNewPerson({ fullName: '', phone: '', address: '', notes: '' });
+    setRows([row]);
+    setExpandedRows(new Set([row.id]));
+    setBulkText('');
+    setDefaults((current) => ({ ...current, count: '1' }));
+  }
+
   async function submit(event: React.FormEvent) {
     event.preventDefault();
     if (saving) return;
@@ -201,7 +260,7 @@ export default function FastCardEntryModal({ people, selectedPerson, currencies,
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          personId: mode === 'existing' ? personId : null,
+          personId: selectedPerson?.id || (mode === 'existing' ? personId : null),
           newPerson: mode === 'new' ? newPerson : null,
           currencyId: defaults.currencyId || null,
           cardCount: rows.length,
@@ -216,6 +275,10 @@ export default function FastCardEntryModal({ people, selectedPerson, currencies,
             currencyId: row.currencyId || defaults.currencyId || null,
             bankName: row.bankName || undefined,
             notes: row.notes || undefined,
+            cardImageDataUrl: row.cardImageDataUrl || null,
+            cardThumbnailDataUrl: row.cardThumbnailDataUrl || null,
+            cardImageMimeType: row.cardImageMimeType || null,
+            cardImageSize: row.cardImageSize || null,
           })),
         }),
       });
@@ -227,6 +290,8 @@ export default function FastCardEntryModal({ people, selectedPerson, currencies,
       if (Array.isArray(warnings) && warnings.length) {
         toast.warning(`تنبيه: ${warnings.length} رقمًا من آخر 4 موجودة سابقًا`);
       }
+      setLastSavedPerson(result.person || { id: result.personId, fullName: selectedPerson?.fullName || '' });
+      resetRowsForSamePerson(result.personId);
       onSaved(result);
     } catch {
       toast.error('تعذر الاتصال بالخادم أثناء حفظ معاملة البطاقات');
@@ -244,7 +309,7 @@ export default function FastCardEntryModal({ people, selectedPerson, currencies,
       >
         <div className="modal-header flex items-start justify-between gap-4">
           <div>
-            <h2 className="text-xl font-black">إضافة معاملة بطاقات</h2>
+            <h2 className="text-xl font-black">إضافة بطاقة جديدة</h2>
             <p className="mt-1 text-sm text-slate-500">
               {summary.completeRows} من {rows.length} صف مكتمل
             </p>
@@ -255,40 +320,69 @@ export default function FastCardEntryModal({ people, selectedPerson, currencies,
         </div>
 
         <div className="modal-body p-4" data-modal-scroll-body>
-          <div className="grid gap-3 md:grid-cols-4">
-            <div className="flex rounded-lg bg-slate-100 p-1 dark:bg-slate-900">
+          {selectedPerson ? (
+            <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-4 dark:border-emerald-900 dark:bg-emerald-950/40">
+              <div className="text-xs font-bold text-emerald-700 dark:text-emerald-200">سيتم ربط البطاقة بهذا الزبون مباشرة</div>
+              <div className="mt-1 text-lg font-black">{selectedPerson.fullName}</div>
+              <div className="text-sm text-slate-600 dark:text-slate-300">{selectedPerson.phone || selectedPerson.customerNo || 'زبون محدد'}</div>
+            </div>
+          ) : (
+            <div className="grid gap-3 md:grid-cols-4">
+              <div className="flex rounded-lg bg-slate-100 p-1 dark:bg-slate-900">
+                <button
+                  type="button"
+                  onClick={() => setMode('existing')}
+                  className={`flex-1 rounded-md px-3 py-2 text-sm font-bold ${mode === 'existing' ? 'bg-white shadow-sm dark:bg-slate-800' : 'text-slate-500'}`}
+                >
+                  زبون موجود
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setMode('new')}
+                  className={`flex-1 rounded-md px-3 py-2 text-sm font-bold ${mode === 'new' ? 'bg-white shadow-sm dark:bg-slate-800' : 'text-slate-500'}`}
+                >
+                  زبون جديد
+                </button>
+              </div>
+              {mode === 'existing' ? (
+                <select value={personId} onChange={(event) => setPersonId(event.target.value)} className="md:col-span-3">
+                  {people.map((person) => (
+                    <option key={person.id} value={person.id}>
+                      {person.customerNo ? `${person.customerNo} - ` : ''}
+                      {person.fullName}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <>
+                  <input value={newPerson.fullName} onChange={(event) => setNewPerson({ ...newPerson, fullName: event.target.value })} placeholder="اسم الزبون الجديد" />
+                  <input value={newPerson.phone} onChange={(event) => setNewPerson({ ...newPerson, phone: event.target.value })} placeholder="الهاتف" />
+                  <input value={newPerson.address} onChange={(event) => setNewPerson({ ...newPerson, address: event.target.value })} placeholder="العنوان" />
+                  <textarea value={newPerson.notes} onChange={(event) => setNewPerson({ ...newPerson, notes: event.target.value })} placeholder="ملاحظات الزبون" rows={2} className="md:col-span-4" />
+                </>
+              )}
+            </div>
+          )}
+
+          {lastSavedPerson ? (
+            <div className="mt-4 flex flex-col gap-3 rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-emerald-900 dark:border-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-100 sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex items-center gap-3">
+                <CheckCircle2 size={22} />
+                <div>
+                  <div className="font-black">تم الحفظ بنجاح</div>
+                  <div className="text-sm opacity-80">{lastSavedPerson.fullName || 'يمكن إضافة بطاقة أخرى لنفس الزبون الآن'}</div>
+                </div>
+              </div>
               <button
                 type="button"
-                onClick={() => setMode('existing')}
-                className={`flex-1 rounded-md px-3 py-2 text-sm font-bold ${mode === 'existing' ? 'bg-white shadow-sm dark:bg-slate-800' : 'text-slate-500'}`}
+                onClick={() => resetRowsForSamePerson(lastSavedPerson.id)}
+                className="inline-flex items-center justify-center gap-2 rounded-lg bg-emerald-600 px-4 py-2.5 text-sm font-black text-white"
               >
-                زبون موجود
-              </button>
-              <button
-                type="button"
-                onClick={() => setMode('new')}
-                className={`flex-1 rounded-md px-3 py-2 text-sm font-bold ${mode === 'new' ? 'bg-white shadow-sm dark:bg-slate-800' : 'text-slate-500'}`}
-              >
-                زبون جديد
+                <Plus size={16} />
+                إضافة بطاقة أخرى لنفس الزبون
               </button>
             </div>
-            {mode === 'existing' ? (
-              <select value={personId} onChange={(event) => setPersonId(event.target.value)} className="md:col-span-3">
-                {people.map((person) => (
-                  <option key={person.id} value={person.id}>
-                    {person.customerNo ? `${person.customerNo} - ` : ''}
-                    {person.fullName}
-                  </option>
-                ))}
-              </select>
-            ) : (
-              <>
-                <input value={newPerson.fullName} onChange={(event) => setNewPerson({ ...newPerson, fullName: event.target.value })} placeholder="اسم الزبون الجديد" />
-                <input value={newPerson.phone} onChange={(event) => setNewPerson({ ...newPerson, phone: event.target.value })} placeholder="الهاتف" />
-                <input value={newPerson.address} onChange={(event) => setNewPerson({ ...newPerson, address: event.target.value })} placeholder="العنوان" />
-              </>
-            )}
-          </div>
+          ) : null}
 
           <div className="mt-4 grid gap-3 md:grid-cols-6">
             <input type="number" min="1" max="200" value={defaults.count} onChange={(event) => setCount(event.target.value)} placeholder="عدد البطاقات" />
@@ -317,10 +411,11 @@ export default function FastCardEntryModal({ people, selectedPerson, currencies,
           </div>
 
           <div className="mt-4 hidden overflow-x-auto md:block">
-            <table className="min-w-[900px]">
+            <table className="min-w-[1060px]">
               <thead>
                 <tr>
                   <th>#</th>
+                  <th>الصورة</th>
                   <th>آخر 4</th>
                   <th>الأصل</th>
                   <th>المتفق</th>
@@ -334,6 +429,35 @@ export default function FastCardEntryModal({ people, selectedPerson, currencies,
                 {rows.map((row, index) => (
                   <tr key={row.id}>
                     <td>{index + 1}</td>
+                    <td>
+                      <div className="grid min-w-36 gap-2">
+                        {row.cardThumbnailDataUrl ? (
+                          <img src={row.cardThumbnailDataUrl} alt="معاينة البطاقة" className="h-20 w-full rounded-lg object-cover" />
+                        ) : (
+                          <div className="flex h-20 items-center justify-center rounded-lg border border-dashed border-slate-300 text-slate-400 dark:border-slate-700">
+                            <ImagePlus size={20} />
+                          </div>
+                        )}
+                        <input
+                          id={`desktop-card-camera-${row.id}`}
+                          type="file"
+                          accept="image/*"
+                          capture="environment"
+                          className="sr-only"
+                          onChange={(event) => {
+                            void attachImage(row.id, event.target.files?.[0]);
+                            event.currentTarget.value = '';
+                          }}
+                        />
+                        <label
+                          htmlFor={`desktop-card-camera-${row.id}`}
+                          className="inline-flex min-h-10 cursor-pointer items-center justify-center gap-2 rounded-lg bg-slate-900 px-3 py-2 text-xs font-black text-white dark:bg-slate-100 dark:text-slate-950"
+                        >
+                          {processingImageId === row.id ? <Loader2 className="animate-spin" size={14} /> : <Camera size={14} />}
+                          {row.cardThumbnailDataUrl ? 'إعادة' : 'تصوير'}
+                        </label>
+                      </div>
+                    </td>
                     <td>
                       <input inputMode="numeric" maxLength={4} value={row.cardLast4} onChange={(event) => patchRow(row.id, { cardLast4: cleanLast4(event.target.value) })} />
                     </td>
@@ -428,6 +552,63 @@ export default function FastCardEntryModal({ people, selectedPerson, currencies,
                   <div className={`grid overflow-hidden transition-all duration-200 ${expanded ? 'mt-3 grid-rows-[1fr] opacity-100' : 'grid-rows-[0fr] opacity-0'}`}>
                     <div className="min-h-0 overflow-hidden">
                       <div className="grid gap-3">
+                        <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 dark:border-slate-800 dark:bg-slate-950">
+                          <div className="relative aspect-[16/10] overflow-hidden rounded-lg bg-slate-200 dark:bg-slate-800">
+                            {row.cardThumbnailDataUrl ? (
+                              <img src={row.cardThumbnailDataUrl} alt="معاينة البطاقة" className="h-full w-full object-cover" />
+                            ) : (
+                              <div className="flex h-full flex-col items-center justify-center gap-2 text-slate-500">
+                                <ImagePlus size={34} />
+                                <span className="text-sm font-bold">لم يتم تصوير البطاقة بعد</span>
+                              </div>
+                            )}
+                            {row.imageConfirmed ? (
+                              <div className="absolute right-3 top-3 inline-flex items-center gap-1 rounded-full bg-emerald-600 px-3 py-1 text-xs font-black text-white shadow-lg">
+                                <CheckCircle2 size={14} />
+                                تم التأكيد
+                              </div>
+                            ) : null}
+                          </div>
+                          <input
+                            id={`mobile-card-camera-${row.id}`}
+                            type="file"
+                            accept="image/*"
+                            capture="environment"
+                            className="sr-only"
+                            onChange={(event) => {
+                              void attachImage(row.id, event.target.files?.[0]);
+                              event.currentTarget.value = '';
+                            }}
+                          />
+                          <div className="mt-3 grid grid-cols-2 gap-2">
+                            <label
+                              htmlFor={`mobile-card-camera-${row.id}`}
+                              className="inline-flex min-h-12 cursor-pointer items-center justify-center gap-2 rounded-lg bg-slate-900 px-3 py-2 text-sm font-black text-white dark:bg-slate-100 dark:text-slate-950"
+                            >
+                              {processingImageId === row.id ? <Loader2 className="animate-spin" size={17} /> : row.cardThumbnailDataUrl ? <RotateCcw size={17} /> : <Camera size={17} />}
+                              {row.cardThumbnailDataUrl ? 'إعادة التصوير' : 'تصوير البطاقة'}
+                            </label>
+                            <button
+                              type="button"
+                              onClick={() => (row.cardThumbnailDataUrl ? patchRow(row.id, { imageConfirmed: true }) : undefined)}
+                              disabled={!row.cardThumbnailDataUrl}
+                              className="inline-flex items-center justify-center gap-2 rounded-lg bg-emerald-600 px-3 py-2 text-sm font-black text-white disabled:cursor-not-allowed disabled:bg-emerald-300"
+                            >
+                              <CheckCircle2 size={17} />
+                              تأكيد الصورة
+                            </button>
+                          </div>
+                          {row.cardThumbnailDataUrl ? (
+                            <button
+                              type="button"
+                              onClick={() => clearImage(row.id)}
+                              className="mt-2 inline-flex w-full items-center justify-center gap-2 rounded-lg bg-red-50 px-3 py-2 text-sm font-bold text-red-700 dark:bg-red-950 dark:text-red-200"
+                            >
+                              <Trash2 size={16} />
+                              حذف الصورة
+                            </button>
+                          ) : null}
+                        </div>
                         <input inputMode="numeric" maxLength={4} value={row.cardLast4} onChange={(event) => patchRow(row.id, { cardLast4: cleanLast4(event.target.value) })} placeholder="آخر 4 أرقام" />
                         <div className="grid grid-cols-2 gap-2">
                           <input inputMode="decimal" type="number" min="0" step="0.000001" value={row.valueUsd} onChange={(event) => patchRow(row.id, { valueUsd: event.target.value })} placeholder="الأصل" />
@@ -505,7 +686,7 @@ export default function FastCardEntryModal({ people, selectedPerson, currencies,
           </button>
           <button disabled={saving} className="inline-flex items-center justify-center gap-2 rounded-lg bg-indigo-600 px-5 py-3 font-bold text-white disabled:cursor-not-allowed disabled:bg-indigo-400">
             {saving ? <Loader2 className="animate-spin" size={18} /> : <Plus size={18} />}
-            حفظ المعاملة
+            حفظ البطاقة
           </button>
         </div>
       </form>

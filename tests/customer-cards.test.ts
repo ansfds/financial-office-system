@@ -15,12 +15,12 @@ describe('customer card helpers', () => {
   it('clamps card stages to the supported workflow range', () => {
     expect(clampCardStage(-4)).toBe(0);
     expect(clampCardStage(3.8)).toBe(3);
-    expect(clampCardStage(99)).toBe(6);
+    expect(clampCardStage(99)).toBe(5);
   });
 
   it('moves cards forward and backward one stage at a time', () => {
     expect(nextCardStage(0, 'NEXT')).toBe(1);
-    expect(nextCardStage(6, 'NEXT')).toBe(6);
+    expect(nextCardStage(5, 'NEXT')).toBe(5);
     expect(nextCardStage(2, 'PREVIOUS')).toBe(1);
     expect(nextCardStage(0, 'PREVIOUS')).toBe(0);
   });
@@ -29,8 +29,7 @@ describe('customer card helpers', () => {
     expect(cardStatusForStage(0)).toBe('RECEIVED');
     expect(cardStatusForStage(2)).toBe('IN_SETTLEMENT');
     expect(cardStatusForStage(5)).toBe('SETTLED');
-    expect(cardStatusForStage(6)).toBe('COMPLETED');
-    expect(cardStatusForStage(6, 'CANCELLED')).toBe('CANCELLED');
+    expect(cardStatusForStage(5, 'CANCELLED')).toBe('CANCELLED');
   });
 
   it('uses only the original card value for remaining and progress math', () => {

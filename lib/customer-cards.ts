@@ -1,6 +1,6 @@
 import { D } from './money';
 
-export const CUSTOMER_CARD_MAX_STAGE = 6;
+export const CUSTOMER_CARD_MAX_STAGE = 5;
 export const STANDARD_CUSTOMER_CARD_VALUE_USD = 2000;
 
 export const defaultCardDiscountCategories = [
@@ -35,7 +35,6 @@ export function cardStatusForStage(stage: unknown, fallback = 'RECEIVED') {
   if (fallback === 'CANCELLED') return fallback;
 
   const current = clampCardStage(stage);
-  if (current >= 6) return 'COMPLETED';
   if (current >= 5) return 'SETTLED';
   if (current >= 1) return 'IN_SETTLEMENT';
   return 'RECEIVED';

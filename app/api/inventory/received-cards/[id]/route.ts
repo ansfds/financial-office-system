@@ -10,6 +10,10 @@ import { z } from 'zod';
 
 const settlementMethods = ['USD_CASH', 'USD_TRANSFER', 'USD_CARD', 'LYD_CASH', 'LYD_TRANSFER', 'LYD_OFFICE_TRANSFER', 'LYD_CARD'] as const;
 const settlementStatuses = new Set(['PARTIAL', 'SETTLED', 'COMPLETED']);
+const cardImageDataUrlSchema = z
+  .string()
+  .max(2800000)
+  .regex(/^data:image\/(?:png|jpe?g|webp);base64,[A-Za-z0-9+/=]+$/);
 
 const updateReceivedCardSchema = z.object({
   bankName: z.string().trim().optional().nullable(),
@@ -28,8 +32,13 @@ const updateReceivedCardSchema = z.object({
   verificationReceived: z.coerce.boolean().optional(),
   secureInternalNote: z.string().trim().optional().nullable(),
   notes: z.string().trim().optional().nullable(),
+  rejectReason: z.string().trim().optional().nullable(),
+  cardImageDataUrl: cardImageDataUrlSchema.optional().nullable(),
+  cardThumbnailDataUrl: cardImageDataUrlSchema.optional().nullable(),
+  cardImageMimeType: z.enum(['image/jpeg', 'image/png', 'image/webp']).optional().nullable(),
+  cardImageSize: z.coerce.number().int().min(0).max(2000000).optional().nullable(),
   status: z.enum(['RECEIVED', 'IN_SETTLEMENT', 'SETTLED', 'PARTIAL', 'COMPLETED', 'CANCELLED']).optional(),
-  currentStage: z.coerce.number().int().min(0).max(6).optional(),
+  currentStage: z.coerce.number().int().min(0).max(5).optional(),
   stageAction: z.enum(['NEXT', 'PREVIOUS']).optional(),
   stageAmount: z.coerce.number().min(0).optional(),
   stageNote: z.string().trim().optional().nullable(),
@@ -75,6 +84,11 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
       const status = input.status || cardStatusForStage(nextStage, oldValue.status);
       const shouldSettle = settlementStatuses.has(status);
       const note = input.notes === undefined ? oldValue.notes : input.notes;
+      const statusChanged = status !== oldValue.status;
+      const willCancel = status === 'CANCELLED';
+      const rejectReason =
+        input.rejectReason === undefined ? oldValue.rejectReason : input.rejectReason?.trim() || null;
+      if (willCancel && !rejectReason) throw new Error('REJECT_REASON_REQUIRED');
       const personId = oldValue.batch.personId;
       const personName = oldValue.batch.person?.fullName || '';
 
@@ -207,6 +221,40 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
         });
       }
 
+      if (statusChanged && willCancel) {
+        await tx.receivedCardStageLog.create({
+          data: {
+            cardId: id,
+            stage: oldStage,
+            direction: 'REJECT',
+            amount: D(0),
+            note: rejectReason,
+            userId: session.userId,
+            username: session.username,
+          },
+        });
+      }
+
+      if (statusChanged && oldValue.status === 'CANCELLED' && !willCancel) {
+        await tx.receivedCardStageLog.create({
+          data: {
+            cardId: id,
+            stage: nextStage,
+            direction: 'REACTIVATE',
+            amount: D(0),
+            note: input.stageNote || note || 'إعادة تنشيط البطاقة',
+            userId: session.userId,
+            username: session.username,
+          },
+        });
+      }
+
+      const imageChanged =
+        input.cardImageDataUrl !== undefined ||
+        input.cardThumbnailDataUrl !== undefined ||
+        input.cardImageMimeType !== undefined ||
+        input.cardImageSize !== undefined;
+
       return tx.receivedCustomerCard.update({
         where: { id },
         data: {
@@ -223,6 +271,8 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
           progressPercent,
           status: status as any,
           currentStage: nextStage,
+          rejectedAt: willCancel ? oldValue.rejectedAt || new Date() : oldValue.status === 'CANCELLED' ? null : oldValue.rejectedAt,
+          rejectReason: willCancel ? rejectReason : oldValue.status === 'CANCELLED' ? null : oldValue.rejectReason,
           archivedAt: ['SETTLED', 'COMPLETED'].includes(status) ? oldValue.archivedAt || new Date() : null,
           receivedCashboxMovementId,
           settlementCashboxMovementId,
@@ -231,6 +281,12 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
           secureInternalNote:
             input.secureInternalNote === undefined ? oldValue.secureInternalNote : input.secureInternalNote,
           notes: input.notes === undefined ? oldValue.notes : input.notes,
+          cardImageDataUrl: input.cardImageDataUrl === undefined ? oldValue.cardImageDataUrl : input.cardImageDataUrl,
+          cardThumbnailDataUrl:
+            input.cardThumbnailDataUrl === undefined ? oldValue.cardThumbnailDataUrl : input.cardThumbnailDataUrl,
+          cardImageMimeType: input.cardImageMimeType === undefined ? oldValue.cardImageMimeType : input.cardImageMimeType,
+          cardImageSize: input.cardImageSize === undefined ? oldValue.cardImageSize : input.cardImageSize,
+          cardImageUpdatedAt: imageChanged ? new Date() : oldValue.cardImageUpdatedAt,
         },
         include: {
           settlementCurrency: true,
@@ -285,6 +341,9 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
     }
     if ((error as Error).message === 'SETTLEMENT_REQUIRES_AMOUNT_METHOD_AND_CURRENCY') {
       return fail('تصفية البطاقة تتطلب مبلغ التصفية وطريقة الدفع');
+    }
+    if ((error as Error).message === 'REJECT_REASON_REQUIRED') {
+      return fail('اكتب سبب إيقاف أو رفض البطاقة');
     }
     if ((error as Error).message === 'WITHDRAWN_EXCEEDS_CARD_VALUE') {
       return fail('المبلغ المسحوب لا يمكن أن يكون أكبر من قيمة البطاقة');
