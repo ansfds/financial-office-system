@@ -40,6 +40,7 @@ type ScrollLockSnapshot = {
 const modalStack: string[] = [];
 let lockCount = 0;
 let scrollSnapshot: ScrollLockSnapshot | null = null;
+let suppressNextModalPopState = false;
 
 function restoreWindowScroll(snapshot: Pick<ScrollLockSnapshot, 'scrollX' | 'scrollY'>) {
   const previousScrollBehavior = document.documentElement.style.scrollBehavior;
@@ -170,6 +171,10 @@ export default function ModalLayer({
     pushedHistoryRef.current = true;
 
     function handlePopState() {
+      if (suppressNextModalPopState) {
+        suppressNextModalPopState = false;
+        return;
+      }
       if (!pushedHistoryRef.current || topModalId() !== id) return;
       pushedHistoryRef.current = false;
       onCloseRef.current();
@@ -199,6 +204,7 @@ export default function ModalLayer({
         const restoreModalScroll = () => {
           if (modalScrollSnapshot) restoreWindowScroll(modalScrollSnapshot);
         };
+        suppressNextModalPopState = true;
         window.history.back();
         window.setTimeout(restoreModalScroll, 80);
         window.setTimeout(restoreModalScroll, 220);
