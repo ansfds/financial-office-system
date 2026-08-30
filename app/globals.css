@@ -254,6 +254,130 @@ tbody tr {
   animation: page-enter 220ms ease-out both;
 }
 
+.people-toolbar {
+  position: sticky;
+  top: 0.5rem;
+  z-index: 20;
+  border-radius: 0.5rem;
+  background: rgba(255, 255, 255, 0.94);
+  padding: 0.35rem;
+  box-shadow: 0 10px 28px rgba(15, 23, 42, 0.12);
+  backdrop-filter: blur(10px);
+  transition:
+    transform 180ms ease,
+    opacity 180ms ease;
+  will-change: transform, opacity;
+}
+
+.dark .people-toolbar {
+  background: rgba(13, 29, 51, 0.94);
+}
+
+.people-toolbar--hidden {
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-110%);
+}
+
+.customer-compact-row {
+  overflow: hidden;
+  min-height: 4.25rem;
+}
+
+.customer-summary-strip,
+.customer-delivery-inline {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.customer-summary-strip span,
+.customer-delivery-inline > span {
+  display: inline-flex;
+  min-height: 1.8rem;
+  align-items: center;
+  gap: 0.35rem;
+  border-radius: 0.5rem;
+  border: 1px solid rgb(226 232 240);
+  background: rgb(248 250 252);
+  padding: 0.3rem 0.55rem;
+  color: rgb(71 85 105);
+  font-size: 0.75rem;
+  font-weight: 800;
+}
+
+.dark .customer-summary-strip span,
+.dark .customer-delivery-inline > span {
+  border-color: rgb(30 41 59);
+  background: rgb(15 23 42);
+  color: rgb(203 213 225);
+}
+
+.customer-delivery-inline > span > span {
+  padding-inline-start: 0.35rem;
+  border-inline-start: 1px solid rgb(226 232 240);
+}
+
+.dark .customer-delivery-inline > span > span {
+  border-color: rgb(51 65 85);
+}
+
+.accounts-simple-table table {
+  min-width: 0;
+  table-layout: fixed;
+}
+
+.accounts-simple-table th,
+.accounts-simple-table td {
+  padding: 0.8rem 0.7rem;
+}
+
+.accounts-simple-table th:first-child,
+.accounts-simple-table td:first-child {
+  width: 44%;
+}
+
+.accounts-detail-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.accounts-detail-strip span {
+  display: inline-flex;
+  min-height: 2.25rem;
+  align-items: center;
+  gap: 0.4rem;
+  border-radius: 0.5rem;
+  padding: 0.45rem 0.7rem;
+  font-size: 0.85rem;
+  font-weight: 900;
+}
+
+.accounts-detail-strip__green {
+  background: rgb(236 253 245);
+  color: rgb(4 120 87);
+}
+
+.accounts-detail-strip__red {
+  background: rgb(254 242 242);
+  color: rgb(185 28 28);
+}
+
+.dark .accounts-detail-strip__green {
+  background: rgba(6, 78, 59, 0.5);
+  color: rgb(167 243 208);
+}
+
+.dark .accounts-detail-strip__red {
+  background: rgba(127, 29, 29, 0.5);
+  color: rgb(254 202 202);
+}
+
+.accounts-movements-table table {
+  min-width: 760px;
+}
+
 .customer-card-card {
   overflow: hidden;
 }
@@ -277,7 +401,39 @@ tbody tr {
   display: block;
   height: 100%;
   width: 100%;
-  object-fit: cover;
+  object-fit: contain;
+  transition: transform 180ms ease;
+}
+
+.customer-card-image-button {
+  position: relative;
+  display: block;
+  height: 100%;
+  width: 100%;
+  cursor: zoom-in;
+  overflow: hidden;
+  border: 0;
+  background: transparent;
+  padding: 0;
+}
+
+.customer-card-image-button:hover .customer-card-image {
+  transform: scale(1.015);
+}
+
+.customer-card-image-action {
+  position: absolute;
+  inset-block-start: 0.5rem;
+  inset-inline-start: 0.5rem;
+  display: inline-flex;
+  min-height: 2rem;
+  min-width: 2rem;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0.5rem;
+  background: rgba(15, 23, 42, 0.72);
+  color: white;
+  opacity: 0.92;
 }
 
 .customer-card-placeholder {
@@ -315,6 +471,7 @@ tbody tr {
   inset: 0;
   z-index: 2;
   display: flex;
+  pointer-events: none;
   flex-direction: column;
   align-items: center;
   justify-content: center;
@@ -343,19 +500,65 @@ tbody tr {
   font-weight: 800;
 }
 
+.card-metric-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
+.card-metric-chip {
+  display: inline-flex;
+  min-height: 2.1rem;
+  align-items: center;
+  gap: 0.35rem;
+  border-radius: 0.5rem;
+  border: 1px solid rgb(226 232 240);
+  background: rgb(248 250 252);
+  padding: 0.35rem 0.55rem;
+  color: rgb(51 65 85);
+  font-size: 0.82rem;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.dark .card-metric-chip {
+  border-color: rgb(30 41 59);
+  background: rgb(15 23 42);
+  color: rgb(226 232 240);
+}
+
+.card-metric-chip--remaining {
+  border-color: rgba(16, 185, 129, 0.3);
+  background: rgb(236 253 245);
+  color: rgb(4 120 87);
+}
+
+.dark .card-metric-chip--remaining {
+  border-color: rgba(52, 211, 153, 0.28);
+  background: rgba(6, 78, 59, 0.55);
+  color: rgb(167 243 208);
+}
+
 .card-stage-tile {
   display: inline-flex;
-  min-height: 4rem;
+  position: relative;
+  min-height: 3rem;
   min-width: 0;
   align-items: center;
   justify-content: center;
+  overflow: hidden;
   border-radius: 0.5rem;
   border: 1px solid rgba(255, 255, 255, 0.26);
   color: white;
-  font-size: 1.1rem;
+  font-size: 0.98rem;
   font-weight: 900;
   box-shadow: inset 0 -10px 18px rgba(15, 23, 42, 0.12), 0 8px 18px rgba(15, 23, 42, 0.12);
   transform: translateZ(0);
+  transition:
+    background-color 120ms ease,
+    filter 120ms ease,
+    transform 120ms ease;
+  touch-action: manipulation;
 }
 
 .card-stage-normal {
@@ -385,7 +588,102 @@ tbody tr {
 }
 
 .card-stage-animating {
-  animation: card-stage-hit 620ms cubic-bezier(0.2, 0.9, 0.2, 1) both;
+  animation: card-stage-hit 360ms cubic-bezier(0.2, 0.9, 0.2, 1) both;
+}
+
+.card-stage-holding::after {
+  content: '';
+  position: absolute;
+  inset-block-end: 0;
+  inset-inline-start: 0;
+  height: 3px;
+  width: 100%;
+  background: rgba(255, 255, 255, 0.9);
+  transform-origin: right center;
+  animation: stage-hold-fill 420ms linear both;
+}
+
+.stage-undo-banner {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-block: 0.75rem;
+  border-radius: 0.5rem;
+  border: 1px solid rgba(34, 197, 94, 0.25);
+  background: rgb(236 253 245);
+  padding: 0.55rem 0.7rem;
+  color: rgb(21 128 61);
+  font-size: 0.85rem;
+  font-weight: 900;
+  box-shadow: 0 10px 28px rgba(15, 23, 42, 0.08);
+}
+
+.stage-undo-banner button {
+  display: inline-flex;
+  min-height: 2rem;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
+  border-radius: 0.5rem;
+  background: rgb(22 163 74);
+  padding: 0.3rem 0.65rem;
+  color: white;
+}
+
+.dark .stage-undo-banner {
+  border-color: rgba(52, 211, 153, 0.24);
+  background: rgba(6, 78, 59, 0.72);
+  color: rgb(187 247 208);
+}
+
+.card-image-viewer {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  height: var(--modal-visual-height, 100vh);
+  width: 100%;
+  grid-template-rows: auto 1fr;
+  background: rgba(2, 6, 23, 0.94);
+  color: white;
+}
+
+.card-image-viewer-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: max(0.75rem, env(safe-area-inset-top)) 0.75rem 0.75rem;
+}
+
+.card-image-viewer-toolbar button {
+  display: inline-flex;
+  min-height: 2.25rem;
+  min-width: 2.25rem;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0.5rem;
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.card-image-viewer-stage {
+  display: grid;
+  min-height: 0;
+  place-items: center;
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding: 1rem;
+  touch-action: pan-x pan-y;
+}
+
+.card-image-viewer-stage img {
+  max-width: none;
+  height: auto;
+  transition: width 140ms ease;
+  user-select: none;
 }
 
 .card-celebration {
@@ -502,6 +800,15 @@ tbody tr {
   }
 }
 
+@keyframes stage-hold-fill {
+  from {
+    transform: scaleX(0);
+  }
+  to {
+    transform: scaleX(1);
+  }
+}
+
 @keyframes celebration-pop {
   from {
     opacity: 0;
@@ -584,6 +891,20 @@ tbody tr {
 }
 
 @media (min-width: 768px) {
+  .people-toolbar {
+    position: static;
+    background: transparent;
+    padding: 0;
+    box-shadow: none;
+    backdrop-filter: none;
+  }
+
+  .people-toolbar--hidden {
+    opacity: 1;
+    pointer-events: auto;
+    transform: none;
+  }
+
   .modal-layer-root {
     align-items: center;
     justify-content: center;

@@ -1,9 +1,9 @@
 'use client';
 
 import { useMemo, useState } from 'react';
-import type { CSSProperties } from 'react';
+import type { CSSProperties, FormEvent } from 'react';
 import { useRouter } from 'next/navigation';
-import { Edit3, Eye, Loader2, Plus, Search, Trash2, X } from 'lucide-react';
+import { Edit3, Loader2, Plus, Search, Trash2, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { formatDateTime, formatMoney } from '@/lib/format';
 import { walletBuckets, walletSettlementDirectionLabels } from '@/lib/customer-wallet';
@@ -54,6 +54,22 @@ type Settlement = {
   };
 };
 
+type CurrencyTotal = {
+  currency: CurrencyOption;
+  amount: number;
+};
+
+type AccountSummary = {
+  personId: string;
+  customerNo?: string | null;
+  fullName: string;
+  phone?: string | null;
+  rows: AccountRow[];
+  ourTotals: CurrencyTotal[];
+  theirTotals: CurrencyTotal[];
+  lastMovement: string | Date;
+};
+
 type MovementForm = {
   personId: string;
   accountType: string;
@@ -82,10 +98,9 @@ const emptyForm: MovementForm = {
   effectMode: 'OFFSET',
 };
 
-function netLabel(row: AccountRow) {
-  if (row.net > 0) return `لنا عند الزبون ${formatMoney(row.net, row.currency)}`;
-  if (row.net < 0) return `علينا للزبون ${formatMoney(Math.abs(row.net), row.currency)}`;
-  return 'الحساب مصفّى';
+function numeric(value: unknown) {
+  const parsed = Number(value || 0);
+  return Number.isFinite(parsed) ? parsed : 0;
 }
 
 function movementEffectLabel(settlement: Pick<Settlement, 'movementKind' | 'settlementMethod'>) {
@@ -127,7 +142,14 @@ function previewMovement(rows: AccountRow[], form: MovementForm) {
   }
 
   if (ourAfter < 0 || theirAfter < 0) {
-    return { valid: false, message: 'لا يمكن أن يصبح الرصيد بالسالب', amount, ...totals, ourAfter: totals.ourAmount, theirAfter: totals.theirAmount };
+    return {
+      valid: false,
+      message: 'لا يمكن أن يصبح الرصيد بالسالب',
+      amount,
+      ...totals,
+      ourAfter: totals.ourAmount,
+      theirAfter: totals.theirAmount,
+    };
   }
 
   if (form.effectMode === 'OFFSET') {
@@ -137,6 +159,58 @@ function previewMovement(rows: AccountRow[], form: MovementForm) {
   }
 
   return { valid: true, message: '', amount, ...totals, ourAfter, theirAfter };
+}
+
+function rowDate(value: string | Date) {
+  return new Date(value).getTime() || 0;
+}
+
+function addTotal(totals: Map<string, CurrencyTotal>, row: AccountRow, amount: number) {
+  if (amount <= 0) return;
+  const current = totals.get(row.currency.id) || { currency: row.currency, amount: 0 };
+  current.amount += amount;
+  totals.set(row.currency.id, current);
+}
+
+function buildAccountSummaries(rows: AccountRow[]) {
+  const summaries = new Map<string, AccountSummary & { ourMap: Map<string, CurrencyTotal>; theirMap: Map<string, CurrencyTotal> }>();
+
+  for (const row of rows) {
+    const current =
+      summaries.get(row.personId) ||
+      {
+        personId: row.personId,
+        customerNo: row.customerNo,
+        fullName: row.fullName,
+        phone: row.phone,
+        rows: [],
+        ourTotals: [],
+        theirTotals: [],
+        lastMovement: row.lastMovement,
+        ourMap: new Map<string, CurrencyTotal>(),
+        theirMap: new Map<string, CurrencyTotal>(),
+      };
+
+    current.rows.push(row);
+    if (rowDate(row.lastMovement) > rowDate(current.lastMovement)) current.lastMovement = row.lastMovement;
+    addTotal(current.ourMap, row, row.ourAmount);
+    addTotal(current.theirMap, row, row.theirAmount);
+    summaries.set(row.personId, current);
+  }
+
+  return Array.from(summaries.values()).map((summary) => ({
+    ...summary,
+    ourTotals: Array.from(summary.ourMap.values()),
+    theirTotals: Array.from(summary.theirMap.values()),
+  }));
+}
+
+function firstUsefulRow(account: AccountSummary | null) {
+  return account?.rows.find((row) => row.ourAmount > 0 || row.theirAmount > 0) || account?.rows[0] || null;
+}
+
+function settlementStatus(settlement: Settlement) {
+  return numeric(settlement.balanceAfter) > 0 ? 'نشط' : 'مصفّى';
 }
 
 export default function AccountsClient({
@@ -153,7 +227,7 @@ export default function AccountsClient({
   const router = useRouter();
   const [q, setQ] = useState('');
   const [openForm, setOpenForm] = useState(false);
-  const [selectedRow, setSelectedRow] = useState<AccountRow | null>(null);
+  const [selectedAccount, setSelectedAccount] = useState<AccountSummary | null>(null);
   const [editing, setEditing] = useState<Settlement | null>(null);
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState<MovementForm>({
@@ -163,42 +237,41 @@ export default function AccountsClient({
     paymentMethod: paymentOptions(currencies, currencies[0]?.id || '')[0]?.paymentMethod || '',
   });
 
-  const filteredRows = useMemo(() => {
+  const accountSummaries = useMemo(() => buildAccountSummaries(rows), [rows]);
+
+  const filteredAccounts = useMemo(() => {
     const needle = q.trim().toLowerCase();
-    if (!needle) return rows;
-    return rows.filter((row) =>
-      [row.customerNo, row.fullName, row.phone, row.currency.name, row.currency.code, row.paymentLabel]
+    if (!needle) return accountSummaries;
+    return accountSummaries.filter((account) =>
+      [
+        account.customerNo,
+        account.fullName,
+        account.phone,
+        ...account.rows.flatMap((row) => [row.currency.name, row.currency.code, row.paymentLabel]),
+      ]
         .filter(Boolean)
         .some((value) => String(value).toLowerCase().includes(needle)),
     );
-  }, [q, rows]);
+  }, [accountSummaries, q]);
 
   const selectedSettlements = useMemo(
-    () =>
-      selectedRow
-        ? settlements.filter(
-            (settlement) =>
-              settlement.personId === selectedRow.personId &&
-              settlement.currencyId === selectedRow.currency.id &&
-              settlement.paymentMethod === selectedRow.paymentMethod,
-          )
-        : [],
-    [selectedRow, settlements],
+    () => (selectedAccount ? settlements.filter((settlement) => settlement.personId === selectedAccount.personId) : []),
+    [selectedAccount, settlements],
   );
 
-  function resetForm(row?: AccountRow | null) {
+  function resetForm(row?: AccountRow | null, personId?: string) {
     const currencyId = row?.currency.id || currencies[0]?.id || '';
     const options = paymentOptions(currencies, currencyId);
     setForm({
       ...emptyForm,
-      personId: row?.personId || people[0]?.id || '',
+      personId: row?.personId || personId || people[0]?.id || '',
       currencyId,
       paymentMethod: row?.paymentMethod || options[0]?.paymentMethod || '',
     });
   }
 
-  function openAdd(row?: AccountRow) {
-    resetForm(row);
+  function openAdd(row?: AccountRow | null, personId?: string) {
+    resetForm(row, personId);
     setOpenForm(true);
   }
 
@@ -222,28 +295,12 @@ export default function AccountsClient({
     setOpenForm(true);
   }
 
-  function openCreditAdd(row: AccountRow) {
-    setForm({
-      ...emptyForm,
-      personId: row.personId,
-      accountType: 'CREDIT',
-      direction: 'ADD',
-      currencyId: row.currency.id,
-      paymentMethod: row.paymentMethod,
-      reason: '',
-      movementKind: 'ADJUSTMENT',
-      settlementMethod: row.paymentLabel,
-      effectMode: 'OFFSET',
-    });
-    setOpenForm(true);
-  }
-
   function selectCurrency(currencyId: string) {
     const options = paymentOptions(currencies, currencyId);
     setForm({ ...form, currencyId, paymentMethod: options[0]?.paymentMethod || '' });
   }
 
-  async function submit(event: React.FormEvent) {
+  async function submit(event: FormEvent) {
     event.preventDefault();
     if (!form.personId || !form.currencyId || !form.paymentMethod || !form.amount || !form.reason.trim()) {
       toast.error('أكمل بيانات الحركة المالية');
@@ -292,7 +349,7 @@ export default function AccountsClient({
     });
   }
 
-  async function submitEdit(event: React.FormEvent) {
+  async function submitEdit(event: FormEvent) {
     event.preventDefault();
     if (!editing) return;
 
@@ -331,11 +388,11 @@ export default function AccountsClient({
 
   return (
     <>
-      <div className="sticky top-2 z-20 mb-5 grid gap-3 rounded-lg bg-white/92 p-2 shadow-sm backdrop-blur dark:bg-[#0d1d33]/92 md:static md:grid-cols-[1fr_auto] md:bg-transparent md:p-0 md:shadow-none md:backdrop-blur-0">
+      <div className="accounts-toolbar mb-4 grid gap-2 md:grid-cols-[1fr_auto]">
         <div className="relative">
-          <Search className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
+          <Search className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
           <input
-            className="pr-10"
+            className="h-10 pr-9 text-sm md:h-auto md:text-base"
             value={q}
             onChange={(event) => setQ(event.target.value)}
             placeholder="بحث باسم الزبون أو رقمه أو العملة"
@@ -343,153 +400,62 @@ export default function AccountsClient({
         </div>
         <button
           type="button"
-          onClick={() => openAdd()}
-          className="inline-flex items-center justify-center gap-2 rounded-lg bg-indigo-600 px-5 py-3 font-bold text-white"
+          onClick={() => openAdd(null)}
+          className="inline-flex min-h-10 items-center justify-center gap-2 rounded-lg bg-indigo-600 px-4 text-sm font-bold text-white md:text-base"
         >
-          <Plus size={18} />
+          <Plus size={17} />
           إضافة حركة
         </button>
       </div>
 
-      <section className="grid grid-cols-3 gap-2 md:gap-4">
-        <Summary title="إجمالي الحسابات" value={rows.length} />
-        <Summary title="حسابات لنا" value={rows.filter((row) => row.net > 0).length} tone="green" />
-        <Summary title="حسابات علينا" value={rows.filter((row) => row.net < 0).length} tone="red" />
-      </section>
-
-      <div className="table-wrap mt-5 hidden md:block">
+      <section className="accounts-simple-table table-wrap">
         <table>
           <thead>
             <tr>
-              <th>رقم الزبون</th>
-              <th>الاسم</th>
+              <th>اسم الزبون</th>
               <th>لنا</th>
               <th>علينا</th>
-              <th>الصافي</th>
-              <th>العملة</th>
-              <th>آخر حركة</th>
-              <th>تفاصيل</th>
             </tr>
           </thead>
           <tbody>
-            {filteredRows.map((row) => (
-              <tr key={`${row.personId}-${row.currency.id}-${row.paymentMethod}`}>
-                <td className="font-bold text-slate-500">{row.customerNo || '—'}</td>
+            {filteredAccounts.map((account, index) => (
+              <tr
+                key={account.personId}
+                style={{ '--stagger': index } as CSSProperties}
+                onClick={() => setSelectedAccount(account)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault();
+                    setSelectedAccount(account);
+                  }
+                }}
+                tabIndex={0}
+                className="cursor-pointer"
+              >
                 <td>
-                  <div className="font-bold">{row.fullName}</div>
-                  <div className="text-xs text-slate-500">{row.paymentLabel}</div>
-                </td>
-                <td className="font-black text-emerald-600">{formatMoney(row.ourAmount, row.currency)}</td>
-                <td className="font-black text-red-600">{formatMoney(row.theirAmount, row.currency)}</td>
-                <td className={row.net > 0 ? 'font-black text-emerald-600' : row.net < 0 ? 'font-black text-red-600' : ''}>
-                  {netLabel(row)}
-                </td>
-                <td>{row.currency.name}</td>
-                <td>{formatDateTime(row.lastMovement)}</td>
-                <td>
-                  <div className="flex flex-wrap gap-2">
-                    <button
-                      type="button"
-                      onClick={() => setSelectedRow(row)}
-                      className="inline-flex items-center gap-2 rounded-lg bg-slate-100 px-3 py-2 text-sm font-bold text-slate-700 dark:bg-slate-800 dark:text-slate-100"
-                    >
-                      <Eye size={16} />
-                      تفاصيل الحساب
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => openAdd(row)}
-                      className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-3 py-2 text-sm font-bold text-white"
-                    >
-                      <Plus size={16} />
-                      إضافة
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => openRepayment(row)}
-                      className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-3 py-2 text-sm font-bold text-white"
-                    >
-                      <Plus size={16} />
-                      تم السداد
-                    </button>
+                  <div className="min-w-0">
+                    <div className="truncate font-black">{account.fullName}</div>
+                    <div className="mt-1 truncate text-xs font-bold text-slate-500">{account.customerNo || '—'}</div>
                   </div>
+                </td>
+                <td className="align-top">
+                  <AmountStack totals={account.ourTotals} tone="green" />
+                </td>
+                <td className="align-top">
+                  <AmountStack totals={account.theirTotals} tone="red" />
                 </td>
               </tr>
             ))}
-            {!filteredRows.length ? (
+            {!filteredAccounts.length ? (
               <tr>
-                <td colSpan={8} className="text-center text-slate-500">
+                <td colSpan={3} className="text-center text-slate-500">
                   لا توجد حسابات مطابقة.
                 </td>
               </tr>
             ) : null}
           </tbody>
         </table>
-      </div>
-
-      <div className="stagger-list mt-5 grid gap-3 md:hidden">
-        {filteredRows.map((row, index) => (
-          <article
-            key={`${row.personId}-${row.currency.id}-${row.paymentMethod}`}
-            style={{ '--stagger': index } as CSSProperties}
-            className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900"
-          >
-            <div className="flex items-start justify-between gap-3">
-              <div className="min-w-0">
-                <div className="text-xs font-bold text-slate-500">{row.customerNo || '—'}</div>
-                <h2 className="mt-1 truncate font-black">{row.fullName}</h2>
-                <div className="mt-1 text-xs text-slate-500">{row.paymentLabel} · {row.currency.name}</div>
-              </div>
-              <span className={row.net > 0 ? 'text-sm font-black text-emerald-600' : row.net < 0 ? 'text-sm font-black text-red-600' : 'text-sm font-bold text-slate-500'}>
-                {row.net > 0 ? 'لنا' : row.net < 0 ? 'علينا' : 'مصفّى'}
-              </span>
-            </div>
-            <div className="mt-4 grid grid-cols-2 gap-2 text-sm">
-              <div className="rounded-lg bg-emerald-50 p-3 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-200">
-                <div className="text-xs">لنا</div>
-                <div className="mt-1 font-black">{formatMoney(row.ourAmount, row.currency)}</div>
-              </div>
-              <div className="rounded-lg bg-red-50 p-3 text-red-700 dark:bg-red-950 dark:text-red-200">
-                <div className="text-xs">علينا</div>
-                <div className="mt-1 font-black">{formatMoney(row.theirAmount, row.currency)}</div>
-              </div>
-            </div>
-            <div className="mt-3 text-sm font-bold">{netLabel(row)}</div>
-            <div className="mt-1 text-xs text-slate-500">آخر حركة: {formatDateTime(row.lastMovement)}</div>
-            <button
-              type="button"
-              onClick={() => setSelectedRow(row)}
-              className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-lg bg-indigo-600 px-3 py-2 text-sm font-bold text-white"
-            >
-              <Eye size={16} />
-              عرض الحساب
-            </button>
-            <div className="mt-2 grid grid-cols-2 gap-2">
-              <button
-                type="button"
-                onClick={() => openAdd(row)}
-                className="inline-flex items-center justify-center gap-2 rounded-lg bg-indigo-600 px-3 py-2 text-sm font-bold text-white"
-              >
-                <Plus size={16} />
-                إضافة
-              </button>
-              <button
-                type="button"
-                onClick={() => openRepayment(row)}
-                className="inline-flex items-center justify-center gap-2 rounded-lg bg-emerald-600 px-3 py-2 text-sm font-bold text-white"
-              >
-                <Plus size={16} />
-                تم السداد
-              </button>
-            </div>
-          </article>
-        ))}
-        {!filteredRows.length ? (
-          <div className="rounded-lg border border-dashed border-slate-300 p-6 text-center text-slate-500 dark:border-slate-700">
-            لا توجد حسابات مطابقة.
-          </div>
-        ) : null}
-      </div>
+      </section>
 
       {(openForm || editing) ? (
         <MovementModal
@@ -509,19 +475,19 @@ export default function AccountsClient({
         />
       ) : null}
 
-      {selectedRow ? (
-        <ModalLayer name="account-details" onClose={() => setSelectedRow(null)} className="md:items-stretch md:justify-start">
-          <ModalBackdrop className="bg-slate-950/45" aria-label="إغلاق التفاصيل" onClick={() => setSelectedRow(null)} />
+      {selectedAccount ? (
+        <ModalLayer name="account-details" onClose={() => setSelectedAccount(null)} className="md:items-stretch md:justify-start">
+          <ModalBackdrop className="bg-slate-950/45" aria-label="إغلاق التفاصيل" onClick={() => setSelectedAccount(null)} />
           <aside className="modal-panel modal-panel--drawer sheet-panel max-w-4xl dark:bg-slate-950 md:w-[78vw]">
             <div className="modal-header flex items-start justify-between gap-4">
-              <div>
-                <div className="text-sm font-bold text-indigo-600">{selectedRow.customerNo || '—'}</div>
-                <h2 className="text-2xl font-black">{selectedRow.fullName}</h2>
-                <p className="mt-1 text-sm text-slate-500">{selectedRow.paymentLabel} · {selectedRow.currency.name}</p>
+              <div className="min-w-0">
+                <div className="text-xs font-bold text-indigo-600">{selectedAccount.customerNo || '—'}</div>
+                <h2 className="truncate text-xl font-black md:text-2xl">{selectedAccount.fullName}</h2>
+                <p className="mt-1 truncate text-xs text-slate-500 md:text-sm">آخر حركة: {formatDateTime(selectedAccount.lastMovement)}</p>
               </div>
               <button
                 type="button"
-                onClick={() => setSelectedRow(null)}
+                onClick={() => setSelectedAccount(null)}
                 className="modal-close text-slate-500 hover:bg-slate-100 hover:text-slate-900 dark:hover:bg-slate-800 dark:hover:text-slate-100"
                 aria-label="إغلاق"
               >
@@ -530,141 +496,117 @@ export default function AccountsClient({
             </div>
 
             <div className="modal-body p-4 md:p-5" data-modal-scroll-body>
-            <div className="mb-5 grid gap-3 md:grid-cols-3">
-              <AccountPanel
-                title="لنا"
-                amount={selectedRow.ourAmount}
-                currency={selectedRow.currency}
-                status={selectedRow.ourAmount > 0 ? 'نشط' : 'مصفّى'}
-                tone="green"
-                actionLabel="تم السداد"
-                onAction={() => openRepayment(selectedRow)}
-              />
-              <AccountPanel
-                title="علينا"
-                amount={selectedRow.theirAmount}
-                currency={selectedRow.currency}
-                status={selectedRow.theirAmount > 0 ? 'نشط' : 'مصفّى'}
-                tone="red"
-                actionLabel="إضافة"
-                onAction={() => openCreditAdd(selectedRow)}
-              />
-              <NetPanel row={selectedRow} />
-            </div>
+              <div className="accounts-detail-strip mb-4">
+                <span className="accounts-detail-strip__green">
+                  لنا <b><AmountInline totals={selectedAccount.ourTotals} /></b>
+                </span>
+                <span className="accounts-detail-strip__red">
+                  علينا <b><AmountInline totals={selectedAccount.theirTotals} /></b>
+                </span>
+              </div>
 
-            <div className="stagger-list grid gap-3 md:hidden">
-              {selectedSettlements.map((settlement, index) => (
-                <article
-                  key={settlement.id}
-                  style={{ '--stagger': index } as CSSProperties}
-                  className="relative overflow-hidden rounded-lg border border-slate-200 bg-slate-50 p-3 pr-5 text-sm dark:border-slate-800 dark:bg-slate-900"
+              <div className="mb-4 flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() => openAdd(firstUsefulRow(selectedAccount), selectedAccount.personId)}
+                  className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-bold text-white"
                 >
-                  <span className={`absolute right-0 top-0 h-full w-1.5 ${settlement.accountType === 'DEBT' ? 'bg-emerald-500' : 'bg-red-500'}`} />
-                  <div className="flex items-start justify-between gap-3">
-                    <div className={settlement.accountType === 'DEBT' ? 'font-black text-emerald-600' : 'font-black text-red-600'}>
-                      {settlement.accountType === 'DEBT' ? 'لنا' : 'علينا'} · {walletSettlementDirectionLabels[settlement.direction]}
-                    </div>
-                    <div className="num text-xs text-slate-500">{formatDateTime(settlement.occurredAt)}</div>
-                  </div>
-                  <div className="mt-3 grid grid-cols-3 gap-2 text-xs">
-                    <span className="rounded-lg bg-white p-2 dark:bg-slate-950">قبل <b className="num block">{formatMoney(settlement.balanceBefore, settlement.currency)}</b></span>
-                    <span className="rounded-lg bg-white p-2 dark:bg-slate-950">القيمة <b className="num block">{formatMoney(settlement.amount, settlement.currency)}</b></span>
-                    <span className="rounded-lg bg-white p-2 dark:bg-slate-950">بعد <b className="num block">{formatMoney(settlement.balanceAfter, settlement.currency)}</b></span>
-                  </div>
-                  <div className="mt-2 text-xs text-slate-500">{movementEffectLabel(settlement)} · {settlement.username || 'system'}</div>
-                  <div className="mt-2">{settlement.note || settlement.reason}</div>
-                  <div className="mt-3 flex gap-2">
-                    <button
-                      type="button"
-                      onClick={() => openEdit(settlement)}
-                      className="inline-flex items-center gap-2 rounded-lg bg-slate-100 px-3 py-2 text-xs font-bold text-slate-700 dark:bg-slate-800 dark:text-slate-100"
-                    >
-                      <Edit3 size={15} />
-                      تعديل
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => deleteSettlement(settlement)}
-                      className="inline-flex items-center gap-2 rounded-lg bg-red-50 px-3 py-2 text-xs font-bold text-red-700 dark:bg-red-950 dark:text-red-200"
-                    >
-                      <Trash2 size={15} />
-                      حذف
-                    </button>
-                  </div>
-                </article>
-              ))}
-              {!selectedSettlements.length ? (
-                <div className="rounded-lg border border-dashed border-slate-300 p-5 text-center text-sm text-slate-500 dark:border-slate-700">
-                  لا توجد حركات مالية لهذا الحساب.
-                </div>
-              ) : null}
-            </div>
+                  <Plus size={16} />
+                  إضافة حركة
+                </button>
+                {firstUsefulRow(selectedAccount) ? (
+                  <button
+                    type="button"
+                    onClick={() => openRepayment(firstUsefulRow(selectedAccount) as AccountRow)}
+                    className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2.5 text-sm font-bold text-white"
+                  >
+                    <Plus size={16} />
+                    تم السداد
+                  </button>
+                ) : null}
+              </div>
 
-            <div className="table-wrap hidden md:block">
-              <table>
-                <thead>
-                  <tr>
-                    <th>التاريخ</th>
-                    <th>المستخدم</th>
-                    <th>الحساب</th>
-                    <th>العملية</th>
-                    <th>طريقة التأثير</th>
-                    <th>المبلغ</th>
-                    <th>قبل</th>
-                    <th>بعد</th>
-                    <th>ملاحظة</th>
-                    <th>خيارات</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {selectedSettlements.map((settlement) => (
-                    <tr key={settlement.id}>
-                      <td>{formatDateTime(settlement.occurredAt)}</td>
-                      <td>{settlement.username || 'system'}</td>
-                      <td className={settlement.accountType === 'DEBT' ? 'font-bold text-emerald-600' : 'font-bold text-red-600'}>
-                        {settlement.accountType === 'DEBT' ? 'لنا' : 'علينا'}
-                      </td>
-                      <td>
-                        {walletSettlementDirectionLabels[settlement.direction]}
-                        {settlement.movementKind === 'REPAYMENT' ? <span className="ms-2 rounded-md bg-emerald-50 px-2 py-1 text-xs font-bold text-emerald-700">تم سداد</span> : null}
-                      </td>
-                      <td>{movementEffectLabel(settlement)}</td>
-                      <td>{formatMoney(settlement.amount, settlement.currency)}</td>
-                      <td>{formatMoney(settlement.balanceBefore, settlement.currency)}</td>
-                      <td>{formatMoney(settlement.balanceAfter, settlement.currency)}</td>
-                      <td>{settlement.note || settlement.reason}</td>
-                      <td>
-                        <div className="flex gap-2">
-                          <button
-                            type="button"
-                            onClick={() => openEdit(settlement)}
-                            className="rounded-lg bg-slate-100 p-2 text-slate-700 dark:bg-slate-800 dark:text-slate-100"
-                            aria-label="تعديل الحركة"
-                          >
-                            <Edit3 size={16} />
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => deleteSettlement(settlement)}
-                            className="rounded-lg bg-red-50 p-2 text-red-700 dark:bg-red-950 dark:text-red-200"
-                            aria-label="حذف الحركة"
-                          >
-                            <Trash2 size={16} />
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                  {!selectedSettlements.length ? (
+              <div className="accounts-movements-table table-wrap">
+                <table>
+                  <thead>
                     <tr>
-                      <td colSpan={10} className="text-center text-slate-500">
-                        لا توجد حركات مالية لهذا الحساب.
-                      </td>
+                      <th>التاريخ</th>
+                      <th>الحساب</th>
+                      <th>المبلغ</th>
+                      <th>العملة</th>
+                      <th>ملاحظة</th>
+                      <th>مدفوع</th>
+                      <th>المتبقي</th>
+                      <th>الحالة</th>
+                      <th>خيارات</th>
                     </tr>
-                  ) : null}
-                </tbody>
-              </table>
-            </div>
+                  </thead>
+                  <tbody>
+                    {selectedSettlements.map((settlement) => (
+                      <tr key={settlement.id}>
+                        <td>{formatDateTime(settlement.occurredAt)}</td>
+                        <td className={settlement.accountType === 'DEBT' ? 'font-bold text-emerald-600' : 'font-bold text-red-600'}>
+                          {settlement.accountType === 'DEBT' ? 'لنا' : 'علينا'}
+                        </td>
+                        <td className="font-black">{formatMoney(settlement.amount, settlement.currency)}</td>
+                        <td>{settlement.currency.code}</td>
+                        <td>
+                          <div className="max-w-[16rem] whitespace-normal text-sm">{settlement.note || settlement.reason || '—'}</div>
+                          <div className="mt-1 text-xs text-slate-500">
+                            {walletSettlementDirectionLabels[settlement.direction]} · {movementEffectLabel(settlement)}
+                          </div>
+                        </td>
+                        <td>
+                          {settlement.direction === 'SUBTRACT' ? (
+                            <span className="font-bold text-emerald-600">{formatMoney(settlement.amount, settlement.currency)}</span>
+                          ) : (
+                            <span className="text-slate-400">—</span>
+                          )}
+                        </td>
+                        <td className="font-bold">{formatMoney(settlement.balanceAfter, settlement.currency)}</td>
+                        <td>
+                          <span
+                            className={`rounded-md px-2 py-1 text-xs font-black ${
+                              numeric(settlement.balanceAfter) > 0
+                                ? 'bg-orange-50 text-orange-700 dark:bg-orange-950 dark:text-orange-200'
+                                : 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-200'
+                            }`}
+                          >
+                            {settlementStatus(settlement)}
+                          </span>
+                        </td>
+                        <td>
+                          <div className="flex gap-2">
+                            <button
+                              type="button"
+                              onClick={() => openEdit(settlement)}
+                              className="rounded-lg bg-slate-100 p-2 text-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                              aria-label="تعديل الحركة"
+                            >
+                              <Edit3 size={16} />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => deleteSettlement(settlement)}
+                              className="rounded-lg bg-red-50 p-2 text-red-700 dark:bg-red-950 dark:text-red-200"
+                              aria-label="حذف الحركة"
+                            >
+                              <Trash2 size={16} />
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                    {!selectedSettlements.length ? (
+                      <tr>
+                        <td colSpan={9} className="text-center text-slate-500">
+                          لا توجد حركات مالية لهذا الزبون.
+                        </td>
+                      </tr>
+                    ) : null}
+                  </tbody>
+                </table>
+              </div>
             </div>
           </aside>
         </ModalLayer>
@@ -673,77 +615,22 @@ export default function AccountsClient({
   );
 }
 
-function Summary({ title, value, tone }: { title: string; value: React.ReactNode; tone?: 'green' | 'red' }) {
-  return (
-    <div className="card p-3 md:p-5">
-      <div className="text-xs text-slate-500 md:text-sm">{title}</div>
-      <div className={`mt-2 text-xl font-black md:text-2xl ${tone === 'green' ? 'text-emerald-600' : tone === 'red' ? 'text-red-600' : ''}`}>
-        {value}
-      </div>
-    </div>
-  );
+function AmountInline({ totals }: { totals: CurrencyTotal[] }) {
+  if (!totals.length) return <>—</>;
+  return <>{totals.map((total) => formatMoney(total.amount, total.currency)).join(' • ')}</>;
 }
 
-function NetPanel({ row }: { row: AccountRow }) {
-  const positive = row.net >= 0;
-  return (
-    <div className="card p-5">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <div className="text-sm text-slate-500">صافي الحساب</div>
-          <div className={`num mt-2 text-2xl font-black ${positive ? 'text-emerald-600' : 'text-red-600'}`}>
-            {formatMoney(Math.abs(row.net), row.currency)}
-          </div>
-        </div>
-        <span className="rounded-md bg-slate-100 px-2 py-1 text-xs font-bold text-slate-600 dark:bg-slate-800 dark:text-slate-200">
-          {positive ? 'لنا' : 'علينا'}
-        </span>
-      </div>
-      <div className="mt-3 text-sm text-slate-500">{netLabel(row)}</div>
-    </div>
-  );
-}
-
-function AccountPanel({
-  title,
-  amount,
-  currency,
-  status,
-  tone,
-  actionLabel,
-  onAction,
-}: {
-  title: string;
-  amount: number;
-  currency: CurrencyOption;
-  status: string;
-  tone: 'green' | 'red';
-  actionLabel: string;
-  onAction: () => void;
-}) {
+function AmountStack({ totals, tone }: { totals: CurrencyTotal[]; tone: 'green' | 'red' }) {
+  if (!totals.length) return <span className="text-slate-400">—</span>;
   const color = tone === 'green' ? 'text-emerald-600' : 'text-red-600';
-  const buttonColor = tone === 'green' ? 'bg-emerald-600 hover:bg-emerald-500' : 'bg-indigo-600 hover:bg-indigo-500';
 
   return (
-    <div className="card p-5">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <div className="text-sm text-slate-500">{title}</div>
-          <div className={`mt-2 text-2xl font-black ${color}`}>{formatMoney(amount, currency)}</div>
-        </div>
-        <span className="rounded-md bg-slate-100 px-2 py-1 text-xs font-bold text-slate-600 dark:bg-slate-800 dark:text-slate-200">
-          {status}
+    <div className={`grid gap-1 ${color}`}>
+      {totals.map((total) => (
+        <span key={total.currency.id} className="num font-black">
+          {formatMoney(total.amount, total.currency)}
         </span>
-      </div>
-      <div className="mt-3 text-sm text-slate-500">العملة: {currency.name}</div>
-      <button
-        type="button"
-        onClick={onAction}
-        className={`mt-4 inline-flex w-full items-center justify-center gap-2 rounded-lg px-4 py-3 font-bold text-white ${buttonColor}`}
-      >
-        <Plus size={16} />
-        {actionLabel}
-      </button>
+      ))}
     </div>
   );
 }
@@ -767,7 +654,7 @@ function MovementModal({
   preview: ReturnType<typeof previewMovement> | null;
   saving: boolean;
   onClose: () => void;
-  onSubmit: (event: React.FormEvent) => void;
+  onSubmit: (event: FormEvent) => void;
   onChange: (form: MovementForm) => void;
   onCurrencyChange: (currencyId: string) => void;
 }) {
@@ -857,18 +744,18 @@ function MovementModal({
           </div>
 
           {preview ? (
-          <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm dark:border-slate-800 dark:bg-slate-950 md:col-span-2">
-            <div className="mb-3 font-black">معاينة الأرصدة قبل الحفظ</div>
-            <div className="grid gap-2 sm:grid-cols-2">
-              <span>لنا قبل العملية: <b>{formatMoney(preview.ourAmount, currencies.find((currency) => currency.id === form.currencyId))}</b></span>
-              <span>علينا قبل العملية: <b>{formatMoney(preview.theirAmount, currencies.find((currency) => currency.id === form.currencyId))}</b></span>
-              <span>قيمة العملية: <b>{formatMoney(preview.amount, currencies.find((currency) => currency.id === form.currencyId))}</b></span>
-              <span>طريقة التأثير: <b>{form.effectMode === 'OFFSET' ? 'خصم من الإجمالي' : 'إضافة عادية'}</b></span>
-              <span>لنا بعد العملية: <b>{formatMoney(preview.ourAfter, currencies.find((currency) => currency.id === form.currencyId))}</b></span>
-              <span>علينا بعد العملية: <b>{formatMoney(preview.theirAfter, currencies.find((currency) => currency.id === form.currencyId))}</b></span>
-              {!preview.valid ? <span className="font-bold text-red-600 sm:col-span-2">{preview.message}</span> : null}
+            <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm dark:border-slate-800 dark:bg-slate-950 md:col-span-2">
+              <div className="mb-3 font-black">معاينة الأرصدة قبل الحفظ</div>
+              <div className="grid gap-2 sm:grid-cols-2">
+                <span>لنا قبل العملية: <b>{formatMoney(preview.ourAmount, currencies.find((currency) => currency.id === form.currencyId))}</b></span>
+                <span>علينا قبل العملية: <b>{formatMoney(preview.theirAmount, currencies.find((currency) => currency.id === form.currencyId))}</b></span>
+                <span>قيمة العملية: <b>{formatMoney(preview.amount, currencies.find((currency) => currency.id === form.currencyId))}</b></span>
+                <span>طريقة التأثير: <b>{form.effectMode === 'OFFSET' ? 'خصم من الإجمالي' : 'إضافة عادية'}</b></span>
+                <span>لنا بعد العملية: <b>{formatMoney(preview.ourAfter, currencies.find((currency) => currency.id === form.currencyId))}</b></span>
+                <span>علينا بعد العملية: <b>{formatMoney(preview.theirAfter, currencies.find((currency) => currency.id === form.currencyId))}</b></span>
+                {!preview.valid ? <span className="font-bold text-red-600 sm:col-span-2">{preview.message}</span> : null}
+              </div>
             </div>
-          </div>
           ) : null}
         </div>
 

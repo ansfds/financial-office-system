@@ -72,10 +72,10 @@ export async function processCardImageFile(file: File): Promise<ProcessedCardIma
   if (!file.type.startsWith('image/')) throw new Error('INVALID_IMAGE_TYPE');
 
   const image = await loadImage(file);
-  const fullCanvas = renderImage(image, 1440, 920);
-  const thumbCanvas = renderImage(image, 560, 360);
-  const cardImageDataUrl = canvasToCompressedDataUrl(fullCanvas, maxImageBytes, 0.84);
-  const cardThumbnailDataUrl = canvasToCompressedDataUrl(thumbCanvas, 220_000, 0.76);
+  const fullCanvas = renderImage(image, 1920, 1220);
+  const thumbCanvas = renderImage(image, 680, 430);
+  const cardImageDataUrl = canvasToCompressedDataUrl(fullCanvas, maxImageBytes, 0.9);
+  const cardThumbnailDataUrl = canvasToCompressedDataUrl(thumbCanvas, 300_000, 0.82);
   const cardImageSize = dataUrlByteSize(cardImageDataUrl);
 
   if (cardImageSize > maxImageBytes) throw new Error('IMAGE_TOO_LARGE');

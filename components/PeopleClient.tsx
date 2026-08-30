@@ -5,6 +5,7 @@ import type { CSSProperties } from 'react';
 import dynamic from 'next/dynamic';
 import {
   Archive,
+  Banknote,
   Camera,
   Check,
   CheckCircle2,
@@ -12,19 +13,26 @@ import {
   ChevronLeft,
   ChevronRight,
   ChevronUp,
+  CircleDollarSign,
   Edit3,
   Eye,
+  HandCoins,
   ImagePlus,
   Loader2,
+  Maximize2,
+  Minus,
   Plus,
   RotateCcw,
   Save,
   Search,
   Sparkles,
   Trash2,
+  WalletCards,
   UserPlus,
   X,
   XCircle,
+  ZoomIn,
+  ZoomOut,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { formatDate, formatDateTime, formatMoney, numberValue } from '@/lib/format';
@@ -72,6 +80,19 @@ type CardDraft = {
   cardThumbnailDataUrl?: string | null;
   cardImageMimeType?: ProcessedCardImage['cardImageMimeType'] | null;
   cardImageSize?: number | null;
+};
+
+type StageUndoAction = {
+  cardId: string;
+  cardLabel: string;
+  stage: number;
+  previousStage: number;
+  operationId?: string;
+};
+
+type ImageViewerState = {
+  src: string;
+  label: string;
 };
 
 const blankForm: PersonForm = {
@@ -150,6 +171,10 @@ function displayLast4(card: any, draft: CardDraft = {}) {
 
 function cardImageSrc(card: any, draft: CardDraft = {}) {
   return draft.cardThumbnailDataUrl || card.cardThumbnailDataUrl || draft.cardImageDataUrl || card.cardImageDataUrl || '';
+}
+
+function cardFullImageSrc(card: any, draft: CardDraft = {}) {
+  return draft.cardImageDataUrl || card.cardImageDataUrl || cardImageSrc(card, draft);
 }
 
 function isCardSettled(card: any, draft: CardDraft = {}) {
@@ -325,6 +350,26 @@ function cardPayload(card: any, draft: CardDraft) {
   return payload;
 }
 
+function updateCardInPerson(person: any, updated: any) {
+  return {
+    ...person,
+    cardBatches: (person.cardBatches || []).map((batch: any) =>
+      batch.id === updated.batchId || batch.id === updated.batch?.id
+        ? {
+            ...batch,
+            cards: (batch.cards || []).map((card: any) => (card.id === updated.id ? { ...card, ...updated } : card)),
+          }
+        : batch,
+    ),
+  };
+}
+
+function addBatchToPerson(person: any, batch: any) {
+  const existingBatches = person.cardBatches || [];
+  const withoutDuplicate = existingBatches.filter((item: any) => item.id !== batch.id);
+  return { ...person, cardBatches: [batch, ...withoutDuplicate] };
+}
+
 export default function PeopleClient({
   initialPeople,
   currencies,
@@ -347,10 +392,16 @@ export default function PeopleClient({
   const [selectedCards, setSelectedCards] = useState<Set<string>>(new Set());
   const [expandedCardIds, setExpandedCardIds] = useState<Set<string>>(new Set());
   const [stageAnimations, setStageAnimations] = useState<Record<string, boolean>>({});
+  const [stageHolds, setStageHolds] = useState<Record<string, boolean>>({});
+  const [optimisticStages, setOptimisticStages] = useState<Record<string, number>>({});
+  const [stageUndo, setStageUndo] = useState<StageUndoAction | null>(null);
   const [celebration, setCelebration] = useState<{ cardId: string; label: string } | null>(null);
+  const [imageViewer, setImageViewer] = useState<ImageViewerState | null>(null);
+  const [imageZoom, setImageZoom] = useState(1);
   const [processingCardImageId, setProcessingCardImageId] = useState('');
   const [statusFilter, setStatusFilter] = useState('ALL');
   const [mobileAddOpen, setMobileAddOpen] = useState(false);
+  const [toolbarHidden, setToolbarHidden] = useState(false);
   const [batchForm, setBatchForm] = useState({
     cardCount: '1',
     valueUsdPerCard: defaultOriginalCardValue,
@@ -365,6 +416,9 @@ export default function PeopleClient({
   const detailAbortRef = useRef<AbortController | null>(null);
   const searchAbortRef = useRef<AbortController | null>(null);
   const loadingDetailRef = useRef('');
+  const stageHoldTimersRef = useRef<Record<string, number>>({});
+  const stageUndoTimerRef = useRef<number | null>(null);
+  const activeStageSaveRef = useRef<Record<string, boolean>>({});
 
   const selectedPerson = useMemo(
     () => detailCache[selectedPersonId] || items.find((person) => person.id === selectedPersonId) || null,
@@ -379,6 +433,14 @@ export default function PeopleClient({
   const selectedDeliveryRows = useMemo(
     () => (selectedPerson ? customerDeliverySummary(selectedPerson, currencies) : []),
     [currencies, selectedPerson],
+  );
+  const selectedDeliveryRemaining = useMemo(
+    () =>
+      selectedDeliveryRows
+        .filter((row: { remaining: number }) => row.remaining > 0)
+        .map((row: { currency: CurrencyOption; remaining: number }) => formatMoney(row.remaining, row.currency))
+        .join(' • ') || '—',
+    [selectedDeliveryRows],
   );
   const selectedPersonHasDetails = Boolean(selectedPersonId && detailCache[selectedPersonId]);
 
@@ -419,6 +481,7 @@ export default function PeopleClient({
     setDeliveryOpen(false);
     setExpandedCardIds(new Set());
     setSelectedCards(new Set());
+    setStageUndo(null);
   }, []);
 
   const openCustomerCardsDrawer = useCallback((personId: string) => {
@@ -443,10 +506,40 @@ export default function PeopleClient({
   }, [q]);
 
   useEffect(() => {
+    const stageHoldTimers = stageHoldTimersRef.current;
     return () => {
       detailAbortRef.current?.abort();
       searchAbortRef.current?.abort();
+      Object.values(stageHoldTimers).forEach((timer) => window.clearTimeout(timer));
+      if (stageUndoTimerRef.current) window.clearTimeout(stageUndoTimerRef.current);
     };
+  }, []);
+
+  useEffect(() => {
+    let lastScrollY = window.scrollY;
+    let ticking = false;
+
+    function syncToolbarVisibility() {
+      const nextScrollY = window.scrollY;
+      if (nextScrollY < 72) {
+        setToolbarHidden(false);
+      } else if (nextScrollY > lastScrollY + 12) {
+        setToolbarHidden(true);
+      } else if (nextScrollY < lastScrollY - 12) {
+        setToolbarHidden(false);
+      }
+      lastScrollY = nextScrollY;
+      ticking = false;
+    }
+
+    function onScroll() {
+      if (ticking) return;
+      ticking = true;
+      window.requestAnimationFrame(syncToolbarVisibility);
+    }
+
+    window.addEventListener('scroll', onScroll, { passive: true });
+    return () => window.removeEventListener('scroll', onScroll);
   }, []);
 
   async function load(search = q) {
@@ -574,6 +667,13 @@ export default function PeopleClient({
     }
   }
 
+  function openCardImageViewer(card: any, draft: CardDraft = {}) {
+    const src = cardFullImageSrc(card, draft);
+    if (!src) return;
+    setImageZoom(1);
+    setImageViewer({ src, label: `**** ${displayLast4(card, draft)}` });
+  }
+
   function animationKey(cardId: string, stage: number) {
     return `${cardId}-${stage}`;
   }
@@ -582,21 +682,9 @@ export default function PeopleClient({
     const personId = updated.batch?.personId;
     if (!personId) return load(q);
 
-    setItems((current) =>
-      current.map((person) => {
-        if (person.id !== personId) return person;
-        return {
-          ...person,
-          cardBatches: (person.cardBatches || []).map((batch: any) =>
-            batch.id === updated.batchId || batch.id === updated.batch?.id
-              ? {
-                  ...batch,
-                  cards: (batch.cards || []).map((card: any) => (card.id === updated.id ? { ...card, ...updated } : card)),
-                }
-              : batch,
-          ),
-        };
-      }),
+    setItems((current) => current.map((person) => (person.id === personId ? updateCardInPerson(person, updated) : person)));
+    setDetailCache((current) =>
+      current[personId] ? { ...current, [personId]: updateCardInPerson(current[personId], updated) } : current,
     );
   }
 
@@ -608,11 +696,12 @@ export default function PeopleClient({
       }
 
       return sortByCustomerCode(
-        current.map((person) =>
-          person.id === batch.personId ? { ...person, cardBatches: [batch, ...(person.cardBatches || [])] } : person,
-        ),
+        current.map((person) => (person.id === batch.personId ? addBatchToPerson(person, batch) : person)),
       );
     });
+    setDetailCache((current) =>
+      current[batch.personId] ? { ...current, [batch.personId]: addBatchToPerson(current[batch.personId], batch) } : current,
+    );
     openCustomerCardsDrawer(batch.personId);
   }
 
@@ -653,20 +742,122 @@ export default function PeopleClient({
     toast.success('تم حفظ البطاقة');
   }
 
+  function clearStageHold(key: string) {
+    const timer = stageHoldTimersRef.current[key];
+    if (timer) window.clearTimeout(timer);
+    delete stageHoldTimersRef.current[key];
+    setStageHolds((current) => {
+      if (!current[key]) return current;
+      const next = { ...current };
+      delete next[key];
+      return next;
+    });
+  }
+
+  function beginStageHold(card: any, stage: number, enabled: boolean) {
+    if (!enabled) return;
+    const key = animationKey(card.id, stage);
+    if (stageHoldTimersRef.current[key]) return;
+
+    haptic(8);
+    setStageHolds((current) => ({ ...current, [key]: true }));
+    stageHoldTimersRef.current[key] = window.setTimeout(() => {
+      clearStageHold(key);
+      void advanceCardStage(card, stage);
+    }, 420);
+  }
+
+  function cancelStageHold(cardId: string, stage: number) {
+    clearStageHold(animationKey(cardId, stage));
+  }
+
+  function clearOptimisticStage(cardId: string) {
+    setOptimisticStages((current) => {
+      if (current[cardId] === undefined) return current;
+      const next = { ...current };
+      delete next[cardId];
+      return next;
+    });
+  }
+
+  function queueStageUndo(action: StageUndoAction) {
+    if (stageUndoTimerRef.current) window.clearTimeout(stageUndoTimerRef.current);
+    setStageUndo(action);
+    stageUndoTimerRef.current = window.setTimeout(() => {
+      setStageUndo((current) => (current?.cardId === action.cardId && current.stage === action.stage ? null : current));
+    }, 6000);
+  }
+
+  async function undoStageAction() {
+    const action = stageUndo;
+    if (!action || savingCards[action.cardId]) return;
+
+    if (stageUndoTimerRef.current) window.clearTimeout(stageUndoTimerRef.current);
+    setStageUndo(null);
+    setSavingCards((current) => ({ ...current, [action.cardId]: true }));
+    setOptimisticStages((current) => ({ ...current, [action.cardId]: action.previousStage }));
+
+    try {
+      let result: any = null;
+      if (action.operationId) {
+        const deleteResponse = await fetch(`/api/inventory/received-cards/${action.cardId}/operations/${action.operationId}`, {
+          method: 'DELETE',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ reason: `تراجع سريع عن ${stageLabel(action.stage)}` }),
+        });
+        result = await deleteResponse.json().catch(() => ({}));
+        if (!deleteResponse.ok) {
+          clearOptimisticStage(action.cardId);
+          toast.error(result.error || 'تعذر التراجع عن التصفية');
+          return;
+        }
+        replaceCard(result);
+      }
+
+      const response = await fetch(`/api/inventory/received-cards/${action.cardId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          currentStage: action.previousStage,
+          stageAmount: 0,
+          stageNote: `تراجع عن ${stageLabel(action.stage)}`,
+        }),
+      });
+      result = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        clearOptimisticStage(action.cardId);
+        toast.error(result.error || 'تعذر تثبيت التراجع');
+        return;
+      }
+
+      replaceCard(result);
+      clearOptimisticStage(action.cardId);
+      toast.success('تم التراجع');
+    } catch {
+      clearOptimisticStage(action.cardId);
+      toast.error('تعذر الاتصال بالخادم أثناء التراجع');
+    } finally {
+      setSavingCards((current) => ({ ...current, [action.cardId]: false }));
+    }
+  }
+
   async function advanceCardStage(card: any, targetStage: number) {
     const draft = drafts[card.id] || {};
-    const currentStage = Math.max(0, Math.min(Number(draft.currentStage ?? card.currentStage ?? 0), 5));
+    const currentStage = Math.max(0, Math.min(Number(optimisticStages[card.id] ?? draft.currentStage ?? card.currentStage ?? 0), 5));
     const terminal = isCardSettled(card, draft) || isCardStopped(card, draft);
     const key = animationKey(card.id, targetStage);
+    const previousStage = currentStage;
 
     if (terminal) return;
     if (targetStage !== currentStage + 1) {
       return toast.error('نفّذ المراحل بالترتيب');
     }
-    if (savingCards[card.id]) return;
+    if (savingCards[card.id] || activeStageSaveRef.current[card.id]) return;
 
+    activeStageSaveRef.current[card.id] = true;
     haptic(targetStage === 5 ? [20, 35, 24] : 18);
     setStageAnimations((current) => ({ ...current, [key]: true }));
+    setOptimisticStages((current) => ({ ...current, [card.id]: targetStage }));
     setSavingCards((current) => ({ ...current, [card.id]: true }));
 
     try {
@@ -694,20 +885,33 @@ export default function PeopleClient({
 
       if (!response.ok) {
         toast.error(result.error || 'تعذر تنفيذ المرحلة');
+        clearOptimisticStage(card.id);
         return;
       }
 
       replaceCard(result);
+      clearOptimisticStage(card.id);
       setDrafts((current) => ({ ...current, [card.id]: {} }));
       if (result.cashboxWarning) toast.warning(result.cashboxWarning);
+      queueStageUndo({
+        cardId: card.id,
+        cardLabel: displayLast4(result),
+        stage: targetStage,
+        previousStage,
+        operationId:
+          targetStage === 5
+            ? (result.operations || []).find((operation: any) => operation.operationType === 'FINAL_SETTLEMENT' && !operation.deletedAt)?.id
+            : undefined,
+      });
       if (targetStage === 5) {
         setCelebration({ cardId: card.id, label: displayLast4(result) });
         window.setTimeout(() => setCelebration((current) => (current?.cardId === card.id ? null : current)), 2600);
         toast.success('مبروك، تمت تصفية البطاقة بالكامل');
       } else {
-        toast.success(`تم تنفيذ ${stageLabel(targetStage)}`);
+        toast.success(`تم تنفيذ ${stageLabel(targetStage)} - يمكنك التراجع خلال لحظات`);
       }
     } catch {
+      clearOptimisticStage(card.id);
       toast.error('تعذر الاتصال بالخادم أثناء تنفيذ المرحلة');
     } finally {
       window.setTimeout(() => {
@@ -716,7 +920,8 @@ export default function PeopleClient({
           delete next[key];
           return next;
         });
-      }, 620);
+      }, 360);
+      delete activeStageSaveRef.current[card.id];
       setSavingCards((current) => ({ ...current, [card.id]: false }));
     }
   }
@@ -751,10 +956,9 @@ export default function PeopleClient({
     const result = await response.json().catch(() => ({}));
     if (!response.ok) return toast.error(result.error || 'تعذر إضافة البطاقات');
 
-    setItems((current) =>
-      current.map((person) =>
-        person.id === selectedPerson.id ? { ...person, cardBatches: [result, ...(person.cardBatches || [])] } : person,
-      ),
+    setItems((current) => current.map((person) => (person.id === selectedPerson.id ? addBatchToPerson(person, result) : person)));
+    setDetailCache((current) =>
+      current[selectedPerson.id] ? { ...current, [selectedPerson.id]: addBatchToPerson(current[selectedPerson.id], result) } : current,
     );
     setBatchForm({
       cardCount: '1',
@@ -867,11 +1071,11 @@ export default function PeopleClient({
       </form>
 
       <section className="card p-3 md:p-5">
-        <div className="sticky top-2 z-20 mb-4 grid gap-2 rounded-lg bg-white/92 p-2 shadow-sm backdrop-blur dark:bg-[#0d1d33]/92 md:static md:grid-cols-[1fr_auto_auto] md:bg-transparent md:p-0 md:shadow-none md:backdrop-blur-0">
+        <div className={`people-toolbar mb-3 grid gap-2 md:mb-4 md:grid-cols-[1fr_auto_auto] ${toolbarHidden ? 'people-toolbar--hidden' : ''}`}>
           <div className="relative">
-            <Search className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
+            <Search className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
             <input
-              className="pr-10"
+              className="h-10 pr-9 text-sm md:h-auto md:text-base"
               value={q}
               onChange={(event) => setQ(event.target.value)}
               placeholder="بحث فوري بالاسم، رقم الزبون، الهاتف أو آخر 4 أرقام من البطاقة"
@@ -880,18 +1084,20 @@ export default function PeopleClient({
           <button
             type="button"
             onClick={() => load()}
-            className="inline-flex items-center justify-center gap-2 rounded-lg bg-slate-900 px-5 py-2.5 font-bold text-white dark:bg-slate-100 dark:text-slate-950"
+            className="inline-flex min-h-10 items-center justify-center gap-2 rounded-lg bg-slate-900 px-3 text-sm font-bold text-white dark:bg-slate-100 dark:text-slate-950 md:px-5 md:text-base"
+            aria-label="بحث"
           >
-            {loading ? <Loader2 className="animate-spin" size={18} /> : <Search size={18} />}
-            بحث
+            {loading ? <Loader2 className="animate-spin" size={17} /> : <Search size={17} />}
+            <span className="hidden sm:inline">بحث</span>
           </button>
           <button
             type="button"
             onClick={() => setFastEntryOpen(true)}
-            className="inline-flex items-center justify-center gap-2 rounded-lg bg-emerald-600 px-5 py-2.5 font-bold text-white"
+            className="inline-flex min-h-10 items-center justify-center gap-2 rounded-lg bg-emerald-600 px-3 text-sm font-bold text-white md:px-5 md:text-base"
           >
-            <Plus size={18} />
-            إضافة بطاقة جديدة
+            <Plus size={17} />
+            <span className="hidden sm:inline">إضافة بطاقة جديدة</span>
+            <span className="sm:hidden">بطاقة</span>
           </button>
         </div>
 
@@ -917,6 +1123,9 @@ export default function PeopleClient({
                   <tr
                     key={person.id}
                     onClick={() => openCustomerCardsDrawer(person.id)}
+                    onMouseEnter={() => {
+                      if (!detailCache[person.id]) void loadPersonDetails(person.id);
+                    }}
                     className="cursor-pointer"
                   >
                     <td className="font-black text-slate-500">{person.customerNo || '—'}</td>
@@ -994,37 +1203,35 @@ export default function PeopleClient({
               <article
                 key={person.id}
                 style={{ '--stagger': index } as CSSProperties}
-                className="rounded-lg border border-slate-200 bg-white p-4 text-right shadow-sm dark:border-slate-800 dark:bg-slate-900"
+                className="customer-compact-row rounded-lg border border-slate-200 bg-white text-right shadow-sm dark:border-slate-800 dark:bg-slate-900"
               >
-                <div className="flex items-start justify-between gap-3">
+                <button
+                  type="button"
+                  onClick={() => openCustomerCardsDrawer(person.id)}
+                  onPointerEnter={() => {
+                    if (!detailCache[person.id]) void loadPersonDetails(person.id);
+                  }}
+                  className="grid w-full grid-cols-[1fr_auto] items-center gap-2 px-3 py-2 text-right"
+                >
                   <div className="min-w-0">
-                    <div className="text-xs font-black text-indigo-600">{person.customerNo || '—'}</div>
-                    <div className="font-black">{person.fullName}</div>
-                    <div className="mt-1 truncate text-xs text-slate-500">{person.phone || 'لا يوجد هاتف'}</div>
+                    <div className="flex items-center gap-2">
+                      <span className="shrink-0 text-[11px] font-black text-indigo-600">{person.customerNo || '—'}</span>
+                      <span className="truncate text-sm font-black">{person.fullName}</span>
+                    </div>
+                    <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px] font-bold text-slate-500">
+                      <span>{summary.totalCards} بطاقة</span>
+                      <span>نشطة {summary.active}</span>
+                      <span>مصفاة {summary.completed}</span>
+                      <span>متبقي <b className="num text-slate-800 dark:text-slate-100">{formatMoney(remaining, '$')}</b></span>
+                    </div>
                   </div>
-                  <span className="shrink-0 rounded-md bg-indigo-50 px-2 py-1 text-xs font-bold text-indigo-700 dark:bg-indigo-950 dark:text-indigo-200">
-                    {summary.totalCards} بطاقة
-                  </span>
-                </div>
-                <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
-                  <span className="rounded-lg bg-slate-50 p-2 dark:bg-slate-950">المتفق: <b className="num">{formatMoney(summary.agreedTotal, '$')}</b></span>
-                  <span className="rounded-lg bg-slate-50 p-2 dark:bg-slate-950">المسلّم: <b className="num">{formatMoney(delivered, '$')}</b></span>
-                  <span className="rounded-lg bg-slate-50 p-2 dark:bg-slate-950">المتبقي: <b className="num">{formatMoney(remaining, '$')}</b></span>
-                  <span className="rounded-lg bg-slate-50 p-2 dark:bg-slate-950">آخر تحديث: <b className="num">{formatDate(summary.lastUpdate)}</b></span>
-                </div>
-                <div className="mt-3 flex flex-wrap gap-1 text-xs font-bold">
-                  <span className="rounded-md bg-blue-50 px-2 py-1 text-blue-700 dark:bg-blue-950 dark:text-blue-200">نشطة {summary.active}</span>
-                  <span className="rounded-md bg-emerald-50 px-2 py-1 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-200">مكتملة {summary.completed}</span>
-                </div>
-                <div className="mt-3 grid grid-cols-[1fr_auto_auto] gap-2">
-                  <button
-                    type="button"
-                    onClick={() => openCustomerCardsDrawer(person.id)}
-                    className="inline-flex items-center justify-center gap-2 rounded-lg bg-indigo-600 px-3 py-2 text-sm font-bold text-white"
-                  >
-                    <Eye size={16} />
-                    عرض البطاقات
-                  </button>
+                  <ChevronLeft className="text-slate-400" size={18} />
+                </button>
+                <div className="grid grid-cols-[1fr_auto_auto] gap-2 border-t border-slate-100 px-3 py-2 dark:border-slate-800">
+                  <div className="truncate text-[11px] font-bold text-slate-500">
+                    آخر تحديث: <span className="num">{formatDate(summary.lastUpdate)}</span>
+                    {delivered > 0 ? <span className="ms-2">مسلّم: <b className="num">{formatMoney(delivered, '$')}</b></span> : null}
+                  </div>
                   <button
                     type="button"
                     onClick={() => openEdit(person)}
@@ -1086,14 +1293,18 @@ export default function PeopleClient({
             data-customer-cards-drawer="panel"
             className="modal-panel modal-panel--drawer sheet-panel max-w-5xl dark:bg-slate-950 md:w-[86vw]"
           >
-            <div className="modal-header flex items-start justify-between gap-4">
-              <div>
-                <div className="text-sm font-bold text-indigo-600">{selectedPerson.customerNo || 'زبون بدون رقم'}</div>
-                <h2 id="customer-cards-drawer-title" className="mt-1 text-2xl font-black">{selectedPerson.fullName}</h2>
-                <p className="mt-1 text-sm text-slate-500">{selectedPerson.phone || 'لا يوجد رقم هاتف'}</p>
-                <p className="mt-1 text-sm font-bold text-slate-600 dark:text-slate-300">
-                  عدد البطاقات: {selectedPersonSummary?.totalCards || selectedPersonCards.length}
-                </p>
+            <div className="modal-header flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <div className="text-xs font-bold text-indigo-600">{selectedPerson.customerNo || 'زبون بدون رقم'}</div>
+                <h2 id="customer-cards-drawer-title" className="mt-1 truncate text-xl font-black md:text-2xl">{selectedPerson.fullName}</h2>
+                <p className="mt-1 truncate text-xs text-slate-500 md:text-sm">{selectedPerson.phone || 'لا يوجد رقم هاتف'}</p>
+                <div className="customer-summary-strip mt-3">
+                  <span>{selectedPersonSummary?.totalCards || selectedPersonCards.length} بطاقات</span>
+                  <span>{selectedPersonSummary?.active || 0} نشطة</span>
+                  <span>{selectedPersonSummary?.completed || 0} مصفاة</span>
+                  <span>{selectedPersonSummary?.rejected || 0} متوقفة</span>
+                  <span>المتبقي: <b className="num">{selectedDeliveryRemaining}</b></span>
+                </div>
               </div>
               <button
                 type="button"
@@ -1125,19 +1336,16 @@ export default function PeopleClient({
               </button>
             </div>
 
-            <section className="mb-4 grid gap-3 md:grid-cols-3">
+            <section className="customer-delivery-inline mb-4">
               {selectedDeliveryRows.map((row: { currency: CurrencyOption; agreed: number; delivered: number; remaining: number }) => (
-                <div key={row.currency.id} className="rounded-lg border border-slate-200 p-3 dark:border-slate-800">
-                  <div className="text-xs font-bold text-slate-500">{row.currency.name}</div>
-                  <div className="mt-2 grid gap-1 text-sm">
-                    <span>المتفق: <b>{formatMoney(row.agreed, row.currency)}</b></span>
-                    <span>المسلّم: <b>{formatMoney(row.delivered, row.currency)}</b></span>
-                    <span>المتبقي للتسليم: <b>{formatMoney(row.remaining, row.currency)}</b></span>
-                  </div>
-                </div>
+                <span key={row.currency.id} title={row.currency.name}>
+                  {row.currency.code}: متفق <b className="num">{formatMoney(row.agreed, row.currency)}</b>
+                  <span>مسلم <b className="num">{formatMoney(row.delivered, row.currency)}</b></span>
+                  <span>متبقي <b className="num">{formatMoney(row.remaining, row.currency)}</b></span>
+                </span>
               ))}
               {!selectedDeliveryRows.length ? (
-                <div className="rounded-lg border border-dashed border-slate-300 p-3 text-sm text-slate-500 dark:border-slate-700">
+                <div className="rounded-lg border border-dashed border-slate-300 px-3 py-2 text-xs font-bold text-slate-500 dark:border-slate-700">
                   لا توجد مبالغ تسليم مرتبطة ببطاقات هذا الزبون.
                 </div>
               ) : null}
@@ -1220,6 +1428,19 @@ export default function PeopleClient({
               </div>
             </div>
 
+            {stageUndo ? (
+              <div className="stage-undo-banner" role="status" aria-live="polite">
+                <span>
+                  تم تنفيذ {stageLabel(stageUndo.stage)} ✓
+                  <b className="num"> {stageUndo.cardLabel}</b>
+                </span>
+                <button type="button" onClick={undoStageAction} disabled={savingCards[stageUndo.cardId]}>
+                  {savingCards[stageUndo.cardId] ? <Loader2 className="animate-spin" size={15} /> : <RotateCcw size={15} />}
+                  تراجع
+                </button>
+              </div>
+            ) : null}
+
             <div className="stagger-list grid gap-4 safe-bottom">
               {loadingPersonId === selectedPersonId && !selectedPersonHasDetails ? (
                 <div className="grid gap-3">
@@ -1234,13 +1455,16 @@ export default function PeopleClient({
               {selectedPersonHasDetails ? visibleCards.map((card: any, index: number) => {
                 const draft = drafts[card.id] || {};
                 const expanded = expandedCardIds.has(card.id);
-                const currentStage = Math.max(0, Math.min(Number(draft.currentStage ?? card.currentStage ?? 0), 5));
+                const optimisticStage = optimisticStages[card.id];
+                const currentStage = Math.max(0, Math.min(Number(optimisticStage ?? draft.currentStage ?? card.currentStage ?? 0), 5));
                 const currency = card.currency || card.batch?.currency || '$';
                 const original = cardOriginal({ ...card, ...draft });
-                const remainingAmount = cardDraftRemaining(card, draft);
-                const deductedAmount = Math.min(cardDeducted(card, draft), original);
-                const progress = cardProgressPercent(card, draft);
-                const settled = isCardSettled(card, draft);
+                const optimisticFinal = currentStage >= 5 && optimisticStage !== undefined;
+                const remainingAmount = optimisticFinal ? 0 : cardDraftRemaining(card, draft);
+                const deductedAmount = optimisticFinal ? original : Math.min(cardDeducted(card, draft), original);
+                const progress = optimisticFinal ? 100 : cardProgressPercent(card, draft);
+                const statusKey = optimisticFinal ? 'SETTLED' : draft.status ?? card.status;
+                const settled = optimisticFinal || isCardSettled(card, draft);
                 const stopped = isCardStopped(card, draft);
                 const terminal = settled || stopped;
                 const imageSrc = cardImageSrc(card, draft);
@@ -1255,12 +1479,22 @@ export default function PeopleClient({
                   >
                     <div className="customer-card-image-wrap">
                       {imageSrc ? (
-                        <img
-                          src={imageSrc}
-                          alt={`صورة البطاقة ${last4}`}
-                          loading="lazy"
-                          className="customer-card-image"
-                        />
+                        <button
+                          type="button"
+                          className="customer-card-image-button"
+                          onClick={() => openCardImageViewer(card, draft)}
+                          aria-label={`فتح صورة البطاقة ${last4}`}
+                        >
+                          <img
+                            src={imageSrc}
+                            alt={`صورة البطاقة ${last4}`}
+                            loading="lazy"
+                            className="customer-card-image"
+                          />
+                          <span className="customer-card-image-action" aria-hidden="true">
+                            <Maximize2 size={16} />
+                          </span>
+                        </button>
                       ) : (
                         <div className="customer-card-placeholder">
                           <ImagePlus size={38} />
@@ -1290,23 +1524,27 @@ export default function PeopleClient({
                               **** {last4}
                             </span>
                           </div>
-                          <div className="mt-3 grid gap-2 text-sm sm:grid-cols-2 lg:grid-cols-4">
-                            <span className="rounded-lg bg-slate-50 p-3 dark:bg-slate-950">
-                              قيمة البطاقة <b className="num mt-1 block text-xl text-slate-950 dark:text-white">{formatMoney(original, currency)}</b>
+                          <div className="card-metric-row mt-3">
+                            <span className="card-metric-chip" title="قيمة البطاقة" aria-label={`قيمة البطاقة ${formatMoney(original, currency)}`}>
+                              <WalletCards size={14} />
+                              <b className="num">{formatMoney(original, currency)}</b>
                             </span>
-                            <span className="rounded-lg bg-slate-50 p-3 dark:bg-slate-950">
-                              المتفق عليه <b className="num mt-1 block text-xl text-slate-950 dark:text-white">{formatMoney(draft.agreedAmount ?? card.agreedAmount, currency)}</b>
+                            <span className="card-metric-chip" title="المتفق عليه" aria-label={`المتفق عليه ${formatMoney(draft.agreedAmount ?? card.agreedAmount, currency)}`}>
+                              <HandCoins size={14} />
+                              <b className="num">{formatMoney(draft.agreedAmount ?? card.agreedAmount, currency)}</b>
                             </span>
-                            <span className="rounded-lg bg-slate-50 p-3 dark:bg-slate-950">
-                              المستلم/المسحوب <b className="num mt-1 block text-xl text-slate-950 dark:text-white">{formatMoney(deductedAmount, currency)}</b>
+                            <span className="card-metric-chip" title="المستلم أو المسحوب" aria-label={`المستلم أو المسحوب ${formatMoney(deductedAmount, currency)}`}>
+                              <Banknote size={14} />
+                              <b className="num">{formatMoney(deductedAmount, currency)}</b>
                             </span>
-                            <span className="rounded-lg bg-slate-50 p-3 dark:bg-slate-950">
-                              المتبقي <b className="num mt-1 block text-xl text-emerald-700 dark:text-emerald-300">{formatMoney(remainingAmount, currency)}</b>
+                            <span className="card-metric-chip card-metric-chip--remaining" title="المتبقي" aria-label={`المتبقي ${formatMoney(remainingAmount, currency)}`}>
+                              <CircleDollarSign size={14} />
+                              <b className="num">{formatMoney(remainingAmount, currency)}</b>
                             </span>
                           </div>
                         </div>
-                        <span className={`inline-flex w-fit rounded-full px-3 py-1 text-xs font-black ring-1 ${statusClasses[draft.status ?? card.status] || statusClasses.RECEIVED}`}>
-                          {statusLabels[draft.status ?? card.status] || draft.status || card.status}
+                        <span className={`inline-flex w-fit rounded-full px-3 py-1 text-xs font-black ring-1 ${statusClasses[statusKey] || statusClasses.RECEIVED}`}>
+                          {statusLabels[statusKey] || statusKey}
                         </span>
                       </div>
 
@@ -1320,11 +1558,11 @@ export default function PeopleClient({
                       <div className="grid gap-2">
                         <div className="relative h-9 overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800">
                           <div
-                            className={`absolute inset-y-0 right-0 rounded-full transition-all duration-300 ${cardProgressClass(card, draft)}`}
+                            className={`absolute inset-y-0 right-0 rounded-full transition-all duration-300 ${optimisticFinal ? 'bg-emerald-500' : cardProgressClass(card, draft)}`}
                             style={{ width: `${progress}%` }}
                           />
                           <div className="absolute inset-0 flex items-center justify-center text-sm font-black text-slate-900 mix-blend-multiply dark:text-white dark:mix-blend-normal">
-                            {cardProgressLabel(card, draft)}
+                            {optimisticFinal ? '100%' : cardProgressLabel(card, draft)}
                           </div>
                         </div>
                       </div>
@@ -1334,18 +1572,33 @@ export default function PeopleClient({
                           const done = settled || currentStage >= stage;
                           const next = stage === currentStage + 1;
                           const final = stage === 5;
-                          const running = stageAnimations[animationKey(card.id, stage)];
+                          const key = animationKey(card.id, stage);
+                          const running = stageAnimations[key];
+                          const holding = stageHolds[key];
+                          const enabled = !terminal && !savingCards[card.id] && next;
                           return (
                             <button
                               type="button"
                               key={stage}
-                              onClick={() => advanceCardStage(card, stage)}
-                              disabled={terminal || savingCards[card.id] || !next}
+                              onPointerDown={(event) => {
+                                event.preventDefault();
+                                beginStageHold(card, stage, enabled);
+                              }}
+                              onPointerUp={() => cancelStageHold(card.id, stage)}
+                              onPointerCancel={() => cancelStageHold(card.id, stage)}
+                              onPointerLeave={() => cancelStageHold(card.id, stage)}
+                              onKeyDown={(event) => {
+                                if ((event.key === 'Enter' || event.key === ' ') && enabled) {
+                                  event.preventDefault();
+                                  void advanceCardStage(card, stage);
+                                }
+                              }}
+                              disabled={!enabled}
                               aria-label={`تنفيذ ${stageLabel(stage)}`}
-                              title={stageLabel(stage)}
+                              title={next && !done ? `اضغط مطولًا لتنفيذ ${stageLabel(stage)}` : stageLabel(stage)}
                               className={`card-stage-tile ${final ? 'card-stage-final' : 'card-stage-normal'} ${
                                 done ? 'card-stage-done' : ''
-                              } ${running ? 'card-stage-animating' : ''}`}
+                              } ${running ? 'card-stage-animating' : ''} ${holding ? 'card-stage-holding' : ''}`}
                             >
                               {done ? <Check size={22} /> : stage}
                             </button>
@@ -1391,7 +1644,14 @@ export default function PeopleClient({
                         <div className="mb-4 grid gap-3 rounded-lg border border-slate-200 bg-slate-50 p-3 dark:border-slate-800 dark:bg-slate-950 md:grid-cols-[minmax(12rem,18rem)_1fr] md:items-center">
                           <div className="relative aspect-[16/10] overflow-hidden rounded-lg bg-slate-200 dark:bg-slate-800">
                             {imageSrc ? (
-                              <img src={imageSrc} alt={`صورة البطاقة ${last4}`} className="h-full w-full object-cover" loading="lazy" />
+                              <button
+                                type="button"
+                                onClick={() => openCardImageViewer(card, draft)}
+                                className="h-full w-full"
+                                aria-label={`فتح صورة البطاقة ${last4}`}
+                              >
+                                <img src={imageSrc} alt={`صورة البطاقة ${last4}`} className="h-full w-full object-contain" loading="lazy" />
+                              </button>
                             ) : (
                               <div className="flex h-full flex-col items-center justify-center gap-2 text-slate-500">
                                 <ImagePlus size={30} />
@@ -1556,7 +1816,10 @@ export default function PeopleClient({
                       </button>
                       <button
                         type="button"
-                        onClick={() => advanceCardStage(card, currentStage + 1)}
+                        onClick={() => {
+                          const nextStage = currentStage + 1;
+                          if (window.confirm(`تنفيذ ${stageLabel(nextStage)}؟`)) void advanceCardStage(card, nextStage);
+                        }}
                         disabled={savingCards[card.id] || terminal || currentStage >= 5}
                         className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-3 py-2 text-sm font-bold text-white disabled:cursor-not-allowed disabled:bg-indigo-400"
                       >
@@ -1631,6 +1894,38 @@ export default function PeopleClient({
             </div>
             </div>
           </aside>
+        </ModalLayer>
+      ) : null}
+
+      {imageViewer ? (
+        <ModalLayer name="card-image-viewer" onClose={() => setImageViewer(null)} className="items-stretch justify-stretch">
+          <ModalBackdrop className="bg-slate-950/80" onClick={() => setImageViewer(null)} aria-label="إغلاق صورة البطاقة" />
+          <div className="card-image-viewer" role="dialog" aria-modal="true" aria-label={`صورة البطاقة ${imageViewer.label}`}>
+            <div className="card-image-viewer-toolbar">
+              <span className="num">{imageViewer.label}</span>
+              <div className="flex items-center gap-2">
+                <button type="button" onClick={() => setImageZoom((value) => Math.max(1, value - 0.25))} aria-label="تصغير الصورة">
+                  <ZoomOut size={18} />
+                </button>
+                <button type="button" onClick={() => setImageZoom(1)} aria-label="إعادة حجم الصورة">
+                  <Minus size={18} />
+                </button>
+                <button type="button" onClick={() => setImageZoom((value) => Math.min(3, value + 0.25))} aria-label="تكبير الصورة">
+                  <ZoomIn size={18} />
+                </button>
+                <button type="button" onClick={() => setImageViewer(null)} aria-label="إغلاق">
+                  <X size={18} />
+                </button>
+              </div>
+            </div>
+            <div className="card-image-viewer-stage">
+              <img
+                src={imageViewer.src}
+                alt={`صورة البطاقة ${imageViewer.label}`}
+                style={{ width: `${imageZoom * 100}%` }}
+              />
+            </div>
+          </div>
         </ModalLayer>
       ) : null}
 
