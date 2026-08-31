@@ -209,6 +209,12 @@ function firstUsefulRow(account: AccountSummary | null) {
   return account?.rows.find((row) => row.ourAmount > 0 || row.theirAmount > 0) || account?.rows[0] || null;
 }
 
+function accountCurrencies(account: AccountSummary) {
+  const currencies = new Map<string, CurrencyOption>();
+  for (const row of account.rows) currencies.set(row.currency.id, row.currency);
+  return Array.from(currencies.values()).sort((left, right) => left.code.localeCompare(right.code, 'en'));
+}
+
 function settlementStatus(settlement: Settlement) {
   return numeric(settlement.balanceAfter) > 0 ? 'نشط' : 'مصفّى';
 }
@@ -439,10 +445,10 @@ export default function AccountsClient({
                   </div>
                 </td>
                 <td className="align-top">
-                  <AmountStack totals={account.ourTotals} tone="green" />
+                  <AmountStack totals={account.ourTotals} currencies={accountCurrencies(account)} tone="green" />
                 </td>
                 <td className="align-top">
-                  <AmountStack totals={account.theirTotals} tone="red" />
+                  <AmountStack totals={account.theirTotals} currencies={accountCurrencies(account)} tone="red" />
                 </td>
               </tr>
             ))}
@@ -498,10 +504,10 @@ export default function AccountsClient({
             <div className="modal-body p-4 md:p-5" data-modal-scroll-body>
               <div className="accounts-detail-strip mb-4">
                 <span className="accounts-detail-strip__green">
-                  لنا <b><AmountInline totals={selectedAccount.ourTotals} /></b>
+                  لنا <b><AmountInline totals={selectedAccount.ourTotals} currencies={accountCurrencies(selectedAccount)} /></b>
                 </span>
                 <span className="accounts-detail-strip__red">
-                  علينا <b><AmountInline totals={selectedAccount.theirTotals} /></b>
+                  علينا <b><AmountInline totals={selectedAccount.theirTotals} currencies={accountCurrencies(selectedAccount)} /></b>
                 </span>
               </div>
 
@@ -560,7 +566,7 @@ export default function AccountsClient({
                           {settlement.direction === 'SUBTRACT' ? (
                             <span className="font-bold text-emerald-600">{formatMoney(settlement.amount, settlement.currency)}</span>
                           ) : (
-                            <span className="text-slate-400">—</span>
+                            <span className="font-bold text-emerald-600/55">{formatMoney(0, settlement.currency)}</span>
                           )}
                         </td>
                         <td className="font-bold">{formatMoney(settlement.balanceAfter, settlement.currency)}</td>
@@ -615,19 +621,27 @@ export default function AccountsClient({
   );
 }
 
-function AmountInline({ totals }: { totals: CurrencyTotal[] }) {
-  if (!totals.length) return <>—</>;
-  return <>{totals.map((total) => formatMoney(total.amount, total.currency)).join(' • ')}</>;
+function displayTotals(totals: CurrencyTotal[], currencies: CurrencyOption[]) {
+  if (!currencies.length) return totals;
+  const byCurrency = new Map(totals.map((total) => [total.currency.id, total]));
+  return currencies.map((currency) => byCurrency.get(currency.id) || { currency, amount: 0 });
 }
 
-function AmountStack({ totals, tone }: { totals: CurrencyTotal[]; tone: 'green' | 'red' }) {
-  if (!totals.length) return <span className="text-slate-400">—</span>;
+function AmountInline({ totals, currencies }: { totals: CurrencyTotal[]; currencies: CurrencyOption[] }) {
+  const values = displayTotals(totals, currencies);
+  if (!values.length) return <>{formatMoney(0, '$')}</>;
+  return <>{values.map((total) => formatMoney(total.amount, total.currency)).join(' • ')}</>;
+}
+
+function AmountStack({ totals, currencies, tone }: { totals: CurrencyTotal[]; currencies: CurrencyOption[]; tone: 'green' | 'red' }) {
+  const values = displayTotals(totals, currencies);
+  if (!values.length) return <span className={tone === 'green' ? 'text-emerald-600/55' : 'text-red-600/55'}>{formatMoney(0, '$')}</span>;
   const color = tone === 'green' ? 'text-emerald-600' : 'text-red-600';
 
   return (
     <div className={`grid gap-1 ${color}`}>
-      {totals.map((total) => (
-        <span key={total.currency.id} className="num font-black">
+      {values.map((total) => (
+        <span key={total.currency.id} className={`num font-black ${total.amount === 0 ? 'opacity-55' : ''}`}>
           {formatMoney(total.amount, total.currency)}
         </span>
       ))}

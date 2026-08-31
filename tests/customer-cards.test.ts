@@ -55,7 +55,7 @@ describe('customer card helpers', () => {
 
   it('calculates gift-card deductions from the configured category and quantity', () => {
     const category = defaultCardDiscountCategories.find((item) => item.code === '100');
-    expect(cardOperationAmount({ operationType: 'GIFT_CARD', quantity: 2, category }).toString()).toBe('202');
+    expect(cardOperationAmount({ operationType: 'GIFT_CARD', quantity: 2, category }).toString()).toBe('200');
   });
 
   it('uses invoice amount and full remaining amount for final settlement', () => {
@@ -68,7 +68,7 @@ describe('customer card helpers', () => {
     expect(cardProgressPercent(500, 250).toString()).toBe('50');
     expect(cardProgressPercent(500, 900).toString()).toBe('100');
     expect(cardStatusForBalance(500, 0)).toBe('RECEIVED');
-    expect(cardStatusForBalance(500, 101)).toBe('IN_SETTLEMENT');
+    expect(cardStatusForBalance(500, 100)).toBe('IN_SETTLEMENT');
     expect(cardStatusForBalance(500, 500)).toBe('SETTLED');
   });
 

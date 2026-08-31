@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { CSSProperties } from 'react';
+import type { CSSProperties, UIEvent } from 'react';
 import dynamic from 'next/dynamic';
 import {
   Archive,
@@ -402,6 +402,7 @@ export default function PeopleClient({
   const [statusFilter, setStatusFilter] = useState('ALL');
   const [mobileAddOpen, setMobileAddOpen] = useState(false);
   const [toolbarHidden, setToolbarHidden] = useState(false);
+  const [customerHeaderHidden, setCustomerHeaderHidden] = useState(false);
   const [batchForm, setBatchForm] = useState({
     cardCount: '1',
     valueUsdPerCard: defaultOriginalCardValue,
@@ -419,6 +420,8 @@ export default function PeopleClient({
   const stageHoldTimersRef = useRef<Record<string, number>>({});
   const stageUndoTimerRef = useRef<number | null>(null);
   const activeStageSaveRef = useRef<Record<string, boolean>>({});
+  const customerHeaderScrollRef = useRef(0);
+  const customerHeaderTickingRef = useRef(false);
 
   const selectedPerson = useMemo(
     () => detailCache[selectedPersonId] || items.find((person) => person.id === selectedPersonId) || null,
@@ -439,7 +442,7 @@ export default function PeopleClient({
       selectedDeliveryRows
         .filter((row: { remaining: number }) => row.remaining > 0)
         .map((row: { currency: CurrencyOption; remaining: number }) => formatMoney(row.remaining, row.currency))
-        .join(' • ') || '—',
+        .join(' • ') || '0',
     [selectedDeliveryRows],
   );
   const selectedPersonHasDetails = Boolean(selectedPersonId && detailCache[selectedPersonId]);
@@ -482,11 +485,14 @@ export default function PeopleClient({
     setExpandedCardIds(new Set());
     setSelectedCards(new Set());
     setStageUndo(null);
+    setCustomerHeaderHidden(false);
   }, []);
 
   const openCustomerCardsDrawer = useCallback((personId: string) => {
     if (!personId) return;
     setStatusFilter('ALL');
+    setCustomerHeaderHidden(false);
+    customerHeaderScrollRef.current = 0;
     setSelectedPersonId(personId);
     void loadPersonDetails(personId);
   }, [loadPersonDetails]);
@@ -541,6 +547,28 @@ export default function PeopleClient({
     window.addEventListener('scroll', onScroll, { passive: true });
     return () => window.removeEventListener('scroll', onScroll);
   }, []);
+
+  function handleCustomerDrawerScroll(event: UIEvent<HTMLDivElement>) {
+    const target = event.currentTarget;
+    if (customerHeaderTickingRef.current) return;
+
+    customerHeaderTickingRef.current = true;
+    window.requestAnimationFrame(() => {
+      const nextScrollTop = target.scrollTop;
+      const lastScrollTop = customerHeaderScrollRef.current;
+
+      if (nextScrollTop < 24) {
+        setCustomerHeaderHidden(false);
+      } else if (nextScrollTop > lastScrollTop + 16) {
+        setCustomerHeaderHidden(true);
+      } else if (nextScrollTop < lastScrollTop - 16) {
+        setCustomerHeaderHidden(false);
+      }
+
+      customerHeaderScrollRef.current = nextScrollTop;
+      customerHeaderTickingRef.current = false;
+    });
+  }
 
   async function load(search = q) {
     searchAbortRef.current?.abort();
@@ -1293,12 +1321,12 @@ export default function PeopleClient({
             data-customer-cards-drawer="panel"
             className="modal-panel modal-panel--drawer sheet-panel max-w-5xl dark:bg-slate-950 md:w-[86vw]"
           >
-            <div className="modal-header flex items-start justify-between gap-3">
+            <div className={`modal-header customer-drawer-header flex items-start justify-between gap-2 ${customerHeaderHidden ? 'customer-drawer-header--hidden' : ''}`}>
               <div className="min-w-0">
                 <div className="text-xs font-bold text-indigo-600">{selectedPerson.customerNo || 'زبون بدون رقم'}</div>
-                <h2 id="customer-cards-drawer-title" className="mt-1 truncate text-xl font-black md:text-2xl">{selectedPerson.fullName}</h2>
-                <p className="mt-1 truncate text-xs text-slate-500 md:text-sm">{selectedPerson.phone || 'لا يوجد رقم هاتف'}</p>
-                <div className="customer-summary-strip mt-3">
+                <h2 id="customer-cards-drawer-title" className="mt-0.5 truncate text-base font-black md:text-lg">{selectedPerson.fullName}</h2>
+                <p className="mt-0.5 truncate text-[11px] font-bold text-slate-500 md:text-xs">{selectedPerson.phone || 'لا يوجد رقم هاتف'}</p>
+                <div className="customer-summary-strip mt-1.5">
                   <span>{selectedPersonSummary?.totalCards || selectedPersonCards.length} بطاقات</span>
                   <span>{selectedPersonSummary?.active || 0} نشطة</span>
                   <span>{selectedPersonSummary?.completed || 0} مصفاة</span>
@@ -1316,7 +1344,7 @@ export default function PeopleClient({
               </button>
             </div>
 
-            <div className="modal-body p-4 md:p-5" data-modal-scroll-body>
+            <div className="modal-body p-3 md:p-4" data-modal-scroll-body onScroll={handleCustomerDrawerScroll}>
             <div className="mb-4 flex flex-wrap gap-2">
               <button
                 type="button"

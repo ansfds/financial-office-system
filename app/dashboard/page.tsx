@@ -1,25 +1,129 @@
 import Link from 'next/link';
 import Page from '@/components/Page';
+import DashboardAccountingSection from '@/components/DashboardAccountingSection';
 import { db } from '@/lib/db';
-import { buildWalletSnapshot } from '@/lib/customer-wallet';
-import { formatDateTime, formatMoney, formatNumber } from '@/lib/format';
+import { getDashboardAccountingSummary, parseDashboardAccountingPeriod } from '@/lib/dashboard-accounting';
+import { formatDateTime, formatMoney, formatNumber, numberValue } from '@/lib/format';
+import { Prisma } from '@prisma/client';
 import type { ReactNode } from 'react';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 export const fetchCache = 'force-no-store';
 
-export default async function Dashboard() {
+type DashboardProps = {
+  searchParams?: Promise<{ accountingPeriod?: string | string[] }>;
+};
+
+type CurrencyTotalRow = {
+  currencyId: string | null;
+  currencyCode: string | null;
+  currencyName: string | null;
+  currencySymbol: string | null;
+  original?: unknown;
+  deducted?: unknown;
+  remaining?: unknown;
+  agreed?: unknown;
+  delivered?: unknown;
+};
+
+async function getAccountPeopleStats() {
+  const rows = await db.$queryRaw<Array<{ our: unknown; their: unknown }>>(Prisma.sql`
+    WITH latest AS (
+      SELECT DISTINCT ON ("personId", "currencyId", "paymentMethod", "accountType")
+        "personId",
+        "accountType",
+        "balanceAfter",
+        "occurredAt",
+        "createdAt"
+      FROM "CustomerWalletSettlement"
+      WHERE "deletedAt" IS NULL
+      ORDER BY "personId", "currencyId", "paymentMethod", "accountType", "occurredAt" DESC, "createdAt" DESC
+    )
+    SELECT
+      COUNT(DISTINCT latest."personId") FILTER (
+        WHERE latest."accountType" = 'DEBT' AND latest."balanceAfter" > 0
+      ) AS "our",
+      COUNT(DISTINCT latest."personId") FILTER (
+        WHERE latest."accountType" = 'CREDIT' AND latest."balanceAfter" > 0
+      ) AS "their"
+    FROM latest
+    JOIN "Person" person_row ON person_row."id" = latest."personId"
+    WHERE person_row."deletedAt" IS NULL
+      AND person_row."status" = 'ACTIVE'
+  `);
+
+  return {
+    our: numberValue(rows[0]?.our),
+    their: numberValue(rows[0]?.their),
+  };
+}
+
+async function getCardCurrencyTotals() {
+  return db.$queryRaw<CurrencyTotalRow[]>(Prisma.sql`
+    SELECT
+      COALESCE(settlement_currency."id", batch_currency."id") AS "currencyId",
+      COALESCE(settlement_currency."code", batch_currency."code", 'USD') AS "currencyCode",
+      COALESCE(settlement_currency."name", batch_currency."name", 'USD') AS "currencyName",
+      COALESCE(settlement_currency."symbol", batch_currency."symbol", '$') AS "currencySymbol",
+      COALESCE(SUM(card_row."valueUsd"), 0) AS "original",
+      COALESCE(SUM(COALESCE(card_row."totalDeducted", card_row."receivedAmount", 0)), 0) AS "deducted",
+      COALESCE(SUM(COALESCE(card_row."remainingAmount", GREATEST(card_row."valueUsd" - card_row."receivedAmount", 0))), 0) AS "remaining",
+      COALESCE(SUM(card_row."agreedAmount"), 0) AS "agreed"
+    FROM "ReceivedCustomerCard" card_row
+    JOIN "ReceivedCardBatch" batch ON batch."id" = card_row."batchId"
+    LEFT JOIN "Currency" batch_currency ON batch_currency."id" = batch."currencyId"
+    LEFT JOIN "Currency" settlement_currency ON settlement_currency."id" = card_row."settlementCurrencyId"
+    WHERE card_row."deletedAt" IS NULL
+      AND card_row."status" <> 'CANCELLED'
+    GROUP BY
+      COALESCE(settlement_currency."id", batch_currency."id"),
+      COALESCE(settlement_currency."code", batch_currency."code", 'USD'),
+      COALESCE(settlement_currency."name", batch_currency."name", 'USD'),
+      COALESCE(settlement_currency."symbol", batch_currency."symbol", '$')
+    ORDER BY "currencyCode" ASC
+  `);
+}
+
+async function getDeliveryCurrencyTotals() {
+  return db.$queryRaw<CurrencyTotalRow[]>(Prisma.sql`
+    SELECT
+      currency_row."id" AS "currencyId",
+      currency_row."code" AS "currencyCode",
+      currency_row."name" AS "currencyName",
+      currency_row."symbol" AS "currencySymbol",
+      COALESCE(SUM(delivery."amount"), 0) AS "delivered"
+    FROM "CustomerCardDelivery" delivery
+    JOIN "Currency" currency_row ON currency_row."id" = delivery."currencyId"
+    WHERE delivery."deletedAt" IS NULL
+    GROUP BY currency_row."id", currency_row."code", currency_row."name", currency_row."symbol"
+    ORDER BY currency_row."code" ASC
+  `);
+}
+
+function currencyFromRow(row: CurrencyTotalRow) {
+  const code = row.currencyCode || 'USD';
+  return {
+    id: row.currencyId || code,
+    code,
+    name: row.currencyName || code,
+    symbol: row.currencySymbol || code,
+  };
+}
+
+export default async function Dashboard({ searchParams }: DashboardProps) {
+  const params = searchParams ? await searchParams : {};
+  const accountingPeriod = parseDashboardAccountingPeriod(params.accountingPeriod);
   const [
     customers,
     totalCards,
     newCards,
     drawingCards,
     settledCards,
-    currencies,
-    peopleWithAccounts,
-    cardsForTotals,
-    deliveriesForTotals,
+    accountPeopleStats,
+    cardTotalsRows,
+    deliveryTotalsRows,
+    accountingSummary,
     recentCards,
     recentCardOperations,
     recentSettlements,
@@ -29,22 +133,10 @@ export default async function Dashboard() {
     db.receivedCustomerCard.count({ where: { deletedAt: null, status: 'RECEIVED' } }),
     db.receivedCustomerCard.count({ where: { deletedAt: null, status: { in: ['IN_SETTLEMENT', 'PARTIAL'] } } }),
     db.receivedCustomerCard.count({ where: { deletedAt: null, status: { in: ['SETTLED', 'COMPLETED'] } } }),
-    db.currency.findMany({ where: { isActive: true }, orderBy: { code: 'asc' } }),
-    db.person.findMany({
-      where: { deletedAt: null, status: 'ACTIVE' },
-      include: {
-        transactions: { where: { deletedAt: null }, include: { currency: true } },
-        walletSettlements: { where: { deletedAt: null }, include: { currency: true } },
-      },
-    }),
-    db.receivedCustomerCard.findMany({
-      where: { deletedAt: null },
-      include: { batch: { include: { currency: true } }, settlementCurrency: true },
-    }),
-    db.customerCardDelivery.findMany({
-      where: { deletedAt: null },
-      include: { currency: true },
-    }),
+    getAccountPeopleStats(),
+    getCardCurrencyTotals(),
+    getDeliveryCurrencyTotals(),
+    getDashboardAccountingSummary(accountingPeriod),
     db.receivedCustomerCard.findMany({
       where: { deletedAt: null },
       include: {
@@ -68,39 +160,30 @@ export default async function Dashboard() {
     }),
   ]);
 
-  const accountRows = peopleWithAccounts.flatMap((person) => {
-    const snapshot = buildWalletSnapshot(person.transactions, person.walletSettlements, currencies);
-    return snapshot.rows
-      .map((row) => ({ net: row.debt - row.credit, row }))
-      .filter((item) => item.net !== 0);
-  });
-
   const cardTotalsByCurrency = new Map<
     string,
     { currency: any; original: number; deducted: number; remaining: number; agreed: number; delivered: number }
   >();
 
-  for (const card of cardsForTotals) {
-    if (card.status === 'CANCELLED') continue;
-    const currency = card.settlementCurrency || card.batch.currency;
-    if (!currency?.id) continue;
+  for (const row of cardTotalsRows) {
+    const currency = currencyFromRow(row);
     const current =
       cardTotalsByCurrency.get(currency.id) ||
       { currency, original: 0, deducted: 0, remaining: 0, agreed: 0, delivered: 0 };
-    const original = Number(card.valueUsd || 0) > 0 ? Number(card.valueUsd || 0) : 0;
-    current.original += original;
-    current.deducted += Number(card.totalDeducted ?? card.receivedAmount ?? 0);
-    current.remaining += Number(card.remainingAmount ?? Math.max(original - Number(card.receivedAmount || 0), 0));
-    current.agreed += Number(card.agreedAmount || 0);
+    current.original += numberValue(row.original);
+    current.deducted += numberValue(row.deducted);
+    current.remaining += numberValue(row.remaining);
+    current.agreed += numberValue(row.agreed);
     cardTotalsByCurrency.set(currency.id, current);
   }
 
-  for (const delivery of deliveriesForTotals) {
+  for (const delivery of deliveryTotalsRows) {
+    const currency = currencyFromRow(delivery);
     const current =
-      cardTotalsByCurrency.get(delivery.currencyId) ||
-      { currency: delivery.currency, original: 0, deducted: 0, remaining: 0, agreed: 0, delivered: 0 };
-    current.delivered += Number(delivery.amount || 0);
-    cardTotalsByCurrency.set(delivery.currencyId, current);
+      cardTotalsByCurrency.get(currency.id) ||
+      { currency, original: 0, deducted: 0, remaining: 0, agreed: 0, delivered: 0 };
+    current.delivered += numberValue(delivery.delivered);
+    cardTotalsByCurrency.set(currency.id, current);
   }
 
   const cardCurrencyTotals = Array.from(cardTotalsByCurrency.values());
@@ -113,10 +196,12 @@ export default async function Dashboard() {
         <Stat title="البطاقات الجديدة" value={formatNumber(newCards)} href="/people" />
         <Stat title="قيد السحب" value={formatNumber(drawingCards)} href="/people" />
         <Stat title="البطاقات المصفاة" value={formatNumber(settledCards)} href="/people" />
-        <Stat title="حسابات لنا" value={formatNumber(accountRows.filter((item) => item.net > 0).length)} href="/accounts" tone="green" />
-        <Stat title="حسابات علينا" value={formatNumber(accountRows.filter((item) => item.net < 0).length)} href="/accounts" tone="red" />
+        <Stat title="حسابات لنا" value={formatNumber(accountPeopleStats.our)} href="/accounts" tone="green" />
+        <Stat title="حسابات علينا" value={formatNumber(accountPeopleStats.their)} href="/accounts" tone="red" />
         <Stat title="آخر تحديث" value={formatNumber(recentCards.length + recentSettlements.length)} href="/audit" />
       </div>
+
+      <DashboardAccountingSection summary={accountingSummary} />
 
       <section className="mt-5 card p-4 md:mt-6 md:p-5">
         <h2 className="mb-4 font-black">مجاميع البطاقات حسب العملة</h2>

@@ -291,18 +291,39 @@ tbody tr {
   gap: 0.35rem;
 }
 
+.customer-drawer-header {
+  max-height: 6.8rem;
+  overflow: hidden;
+  padding: 0.6rem 0.75rem;
+  transition:
+    max-height 170ms ease,
+    padding 170ms ease,
+    opacity 140ms ease,
+    border-color 170ms ease;
+  will-change: max-height, opacity;
+}
+
+.customer-drawer-header--hidden {
+  max-height: 0;
+  border-bottom-color: transparent;
+  opacity: 0;
+  padding-bottom: 0;
+  padding-top: 0;
+  pointer-events: none;
+}
+
 .customer-summary-strip span,
 .customer-delivery-inline > span {
   display: inline-flex;
-  min-height: 1.8rem;
+  min-height: 1.55rem;
   align-items: center;
   gap: 0.35rem;
   border-radius: 0.5rem;
   border: 1px solid rgb(226 232 240);
   background: rgb(248 250 252);
-  padding: 0.3rem 0.55rem;
+  padding: 0.22rem 0.45rem;
   color: rgb(71 85 105);
-  font-size: 0.75rem;
+  font-size: 0.7rem;
   font-weight: 800;
 }
 
@@ -335,6 +356,24 @@ tbody tr {
 .accounts-simple-table th:first-child,
 .accounts-simple-table td:first-child {
   width: 44%;
+}
+
+.accounts-simple-table th:nth-child(2),
+.accounts-simple-table td:nth-child(2),
+.accounts-simple-table th:nth-child(3),
+.accounts-simple-table td:nth-child(3) {
+  width: 28%;
+  text-align: center;
+}
+
+.accounts-simple-table th:nth-child(3),
+.accounts-simple-table td:nth-child(3) {
+  border-inline-start: 2px solid rgb(226 232 240);
+}
+
+.dark .accounts-simple-table th:nth-child(3),
+.dark .accounts-simple-table td:nth-child(3) {
+  border-inline-start-color: rgb(51 65 85);
 }
 
 .accounts-detail-strip {
@@ -376,6 +415,245 @@ tbody tr {
 
 .accounts-movements-table table {
   min-width: 760px;
+}
+
+.dashboard-accounting {
+  overflow: hidden;
+}
+
+.accounting-periods {
+  display: inline-flex;
+  min-height: 2.25rem;
+  overflow: hidden;
+  border-radius: 0.5rem;
+  border: 1px solid rgb(226 232 240);
+  background: rgb(248 250 252);
+  padding: 0.15rem;
+}
+
+.accounting-periods a {
+  display: inline-flex;
+  min-height: 1.9rem;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0.4rem;
+  padding: 0.25rem 0.55rem;
+  color: rgb(71 85 105);
+  font-size: 0.75rem;
+  font-weight: 900;
+}
+
+.accounting-periods__active {
+  background: white;
+  color: rgb(67 56 202) !important;
+  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.1);
+}
+
+.dark .accounting-periods {
+  border-color: rgb(30 41 59);
+  background: rgb(15 23 42);
+}
+
+.dark .accounting-periods__active {
+  background: rgb(30 41 59);
+  color: rgb(191 219 254) !important;
+}
+
+.accounting-total-strip {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 0.45rem;
+}
+
+.accounting-total-strip__item {
+  display: grid;
+  min-height: 3.4rem;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 0.4rem 0.55rem;
+  border-radius: 0.5rem;
+  border: 1px solid rgb(226 232 240);
+  background: rgb(248 250 252);
+  padding: 0.55rem 0.65rem;
+  text-align: start;
+}
+
+.accounting-total-strip__item span {
+  color: rgb(71 85 105);
+  font-size: 0.78rem;
+  font-weight: 900;
+}
+
+.accounting-total-strip__item b {
+  color: rgb(15 23 42);
+  font-size: 1.25rem;
+}
+
+.accounting-total-strip__item em {
+  grid-column: 2 / 4;
+  color: rgb(71 85 105);
+  font-size: 0.75rem;
+  font-style: normal;
+  font-weight: 800;
+}
+
+.dark .accounting-total-strip__item {
+  border-color: rgb(30 41 59);
+  background: rgb(15 23 42);
+}
+
+.dark .accounting-total-strip__item span,
+.dark .accounting-total-strip__item em {
+  color: rgb(203 213 225);
+}
+
+.dark .accounting-total-strip__item b {
+  color: white;
+}
+
+.accounting-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.45rem;
+}
+
+.accounting-tile {
+  position: relative;
+  display: grid;
+  min-height: 5.2rem;
+  align-content: center;
+  gap: 0.1rem;
+  overflow: hidden;
+  border-radius: 0.5rem;
+  border: 1px solid rgb(226 232 240);
+  background: white;
+  padding: 0.65rem;
+  text-align: start;
+}
+
+.accounting-tile span {
+  color: rgb(71 85 105);
+  font-size: 0.75rem;
+  font-weight: 900;
+}
+
+.accounting-tile b {
+  color: rgb(15 23 42);
+  font-size: 1.55rem;
+  line-height: 1.1;
+}
+
+.accounting-tile em {
+  color: rgb(71 85 105);
+  font-size: 0.75rem;
+  font-style: normal;
+  font-weight: 800;
+}
+
+.accounting-tile__loader {
+  position: absolute;
+  inset-block-start: 0.55rem;
+  inset-inline-start: 0.55rem;
+  color: rgb(100 116 139);
+}
+
+.accounting-tile--green {
+  background: rgb(236 253 245);
+  border-color: rgb(167 243 208);
+}
+
+.accounting-tile--green b,
+.accounting-tile--green .accounting-tile__loader {
+  color: rgb(4 120 87);
+}
+
+.accounting-tile--red {
+  background: rgb(254 242 242);
+  border-color: rgb(254 202 202);
+}
+
+.accounting-tile--red b,
+.accounting-tile--red .accounting-tile__loader {
+  color: rgb(185 28 28);
+}
+
+.accounting-tile--blue {
+  background: rgb(239 246 255);
+  border-color: rgb(191 219 254);
+}
+
+.accounting-tile--blue b,
+.accounting-tile--blue .accounting-tile__loader {
+  color: rgb(29 78 216);
+}
+
+.dark .accounting-tile {
+  border-color: rgb(30 41 59);
+  background: rgb(15 23 42);
+}
+
+.dark .accounting-tile span,
+.dark .accounting-tile em {
+  color: rgb(203 213 225);
+}
+
+.dark .accounting-tile b {
+  color: white;
+}
+
+.dark .accounting-tile--green {
+  background: rgba(6, 78, 59, 0.45);
+  border-color: rgba(52, 211, 153, 0.28);
+}
+
+.dark .accounting-tile--green b,
+.dark .accounting-tile--green .accounting-tile__loader {
+  color: rgb(167 243 208);
+}
+
+.dark .accounting-tile--red {
+  background: rgba(127, 29, 29, 0.45);
+  border-color: rgba(248, 113, 113, 0.3);
+}
+
+.dark .accounting-tile--red b,
+.dark .accounting-tile--red .accounting-tile__loader {
+  color: rgb(254 202 202);
+}
+
+.dark .accounting-tile--blue {
+  background: rgba(30, 64, 175, 0.35);
+  border-color: rgba(96, 165, 250, 0.28);
+}
+
+.dark .accounting-tile--blue b,
+.dark .accounting-tile--blue .accounting-tile__loader {
+  color: rgb(191 219 254);
+}
+
+.accounting-details-table table {
+  min-width: 860px;
+}
+
+.accounting-details-table th,
+.accounting-details-table td {
+  padding: 0.7rem;
+}
+
+@media (min-width: 640px) {
+  .accounting-total-strip {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (min-width: 768px) {
+  .accounting-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  .accounting-grid--statuses {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 .customer-card-card {

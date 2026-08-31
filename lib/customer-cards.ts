@@ -4,7 +4,7 @@ export const CUSTOMER_CARD_MAX_STAGE = 5;
 export const STANDARD_CUSTOMER_CARD_VALUE_USD = 2000;
 
 export const defaultCardDiscountCategories = [
-  { code: '100', name: 'كرت 100', faceValue: 100, deductionAmount: 101 },
+  { code: '100', name: 'كرت 100', faceValue: 100, deductionAmount: 100 },
   { code: '300', name: 'كرت 300', faceValue: 300, deductionAmount: 292 },
   { code: '500', name: 'كرت 500', faceValue: 500, deductionAmount: 476 },
 ] as const;
