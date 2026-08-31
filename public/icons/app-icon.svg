@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Financial office app icon">
+  <rect width="512" height="512" rx="108" fill="#0f172a"/>
+  <path d="M128 154c0-24 20-44 44-44h168c24 0 44 20 44 44v204c0 24-20 44-44 44H172c-24 0-44-20-44-44V154z" fill="#f8fafc"/>
+  <path d="M178 174h156v40H178v-40zm0 72h156v32H178v-32zm0 62h96v32h-96v-32z" fill="#2563eb"/>
+  <path d="M306 316c0-28 22-50 50-50h28v92c0 24-20 44-44 44h-34v-86z" fill="#16a34a"/>
+  <path d="M326 328l22 22 44-52" fill="none" stroke="#fff" stroke-width="24" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

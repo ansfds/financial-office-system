@@ -3,6 +3,7 @@ import CustomerWalletClient from '@/components/CustomerWalletClient';
 import { db } from '@/lib/db';
 import { formatDate, formatMoney, formatNumber } from '@/lib/format';
 import { buildWalletSnapshot } from '@/lib/customer-wallet';
+import { currencySelect, personBasicSelect } from '@/lib/received-card-selects';
 import { notFound } from 'next/navigation';
 
 export const dynamic = 'force-dynamic';
@@ -19,35 +20,73 @@ export default async function PersonPage({ params }: { params: Promise<{ id: str
   const [person, currencies] = await Promise.all([
     db.person.findUnique({
       where: { id },
-      include: {
+      select: {
+        ...personBasicSelect,
         transactions: {
           where: { deletedAt: null },
-          include: { currency: true, type: true },
+          select: {
+            id: true,
+            number: true,
+            personId: true,
+            currencyId: true,
+            operationKind: true,
+            operationDetails: true,
+            sheinPaymentMethod: true,
+            agreedAmount: true,
+            receivedAmount: true,
+            paidAmount: true,
+            status: true,
+            deletedAt: true,
+            currency: { select: currencySelect },
+          },
           orderBy: { transactionAt: 'desc' },
         },
         cardBatches: {
-          include: {
+          select: {
+            id: true,
+            receivedAt: true,
+            agreedAmountPerCard: true,
+            currency: { select: currencySelect },
             cards: {
               where: { deletedAt: null },
-              include: {
-                settlementCurrency: true,
-                operations: { where: { deletedAt: null }, orderBy: { occurredAt: 'desc' }, take: 12 },
-                stageLogs: { orderBy: { createdAt: 'desc' }, take: 8 },
+              select: {
+                id: true,
+                publicCode: true,
+                sequence: true,
+                cardLast4: true,
+                status: true,
+                receivedAmount: true,
+                valueUsd: true,
+                agreedAmount: true,
+                remainingAmount: true,
               },
               orderBy: { sequence: 'asc' },
             },
-            currency: true,
           },
           orderBy: { receivedAt: 'desc' },
         },
         walletSettlements: {
           where: { deletedAt: null },
-          include: { currency: true },
-          orderBy: { occurredAt: 'desc' },
-        },
-        cardDeliveries: {
-          where: { deletedAt: null },
-          include: { currency: true },
+          select: {
+            id: true,
+            personId: true,
+            currencyId: true,
+            paymentMethod: true,
+            accountType: true,
+            direction: true,
+            amount: true,
+            balanceBefore: true,
+            balanceAfter: true,
+            reason: true,
+            note: true,
+            movementKind: true,
+            linkedSettlementId: true,
+            settlementMethod: true,
+            username: true,
+            deletedAt: true,
+            occurredAt: true,
+            currency: { select: currencySelect },
+          },
           orderBy: { occurredAt: 'desc' },
         },
       },

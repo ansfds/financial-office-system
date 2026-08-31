@@ -41,6 +41,13 @@ import ModalLayer, { ModalBackdrop } from '@/components/ModalLayer';
 import { STANDARD_CUSTOMER_CARD_VALUE_USD, cardOperationTypeLabels } from '@/lib/customer-cards';
 import { compareCardsBySequence, sortByCustomerCode } from '@/lib/customer-code-sort';
 import { processCardImageFile, type ProcessedCardImage } from '@/components/card-image-tools';
+import {
+  announceSyncEnd,
+  announceSyncStart,
+  readClientCache,
+  runWhenIdle,
+  writeClientCache,
+} from '@/lib/client-cache';
 
 const FastCardEntryModal = dynamic(() => import('@/components/FastCardEntryModal'), { ssr: false });
 const CardOperationModal = dynamic(() => import('@/components/CardOperationModal'), { ssr: false });
@@ -137,6 +144,31 @@ const statusOptions = [
 const settlementMethods = ['USD_CASH', 'USD_TRANSFER', 'USD_CARD', 'LYD_CASH', 'LYD_TRANSFER', 'LYD_OFFICE_TRANSFER', 'LYD_CARD'];
 const defaultOriginalCardValue = String(STANDARD_CUSTOMER_CARD_VALUE_USD);
 const workflowStages = [1, 2, 3, 4, 5] as const;
+const listCacheMaxAgeMs = 1000 * 60 * 60 * 12;
+const detailCacheMaxAgeMs = 1000 * 60 * 60 * 24 * 7;
+const detailCacheFreshMs = 1000 * 60 * 2;
+const cardImageCacheMaxAgeMs = 1000 * 60 * 60 * 24 * 14;
+const initialPeopleRenderLimit = 36;
+const peopleRenderStep = 24;
+const initialCardRenderLimit = 18;
+const cardRenderStep = 12;
+
+function peopleListCacheKey(search: string) {
+  const key = search.trim().toLowerCase() || 'all';
+  return `people:list:${key}`;
+}
+
+function personDetailCacheKey(personId: string) {
+  return `people:detail:${personId}`;
+}
+
+function cardImageCacheKey(cardId: string) {
+  return `received-card:image:${cardId}`;
+}
+
+function capRenderLimit(current: number, total: number, step: number) {
+  return Math.min(Math.max(current + step, current), total);
+}
 
 function formFromPerson(person: any): PersonForm {
   return {
@@ -370,6 +402,74 @@ function addBatchToPerson(person: any, batch: any) {
   return { ...person, cardBatches: [batch, ...withoutDuplicate] };
 }
 
+function removeCardFromPerson(person: any, cardId: string) {
+  return {
+    ...person,
+    cardBatches: (person.cardBatches || []).map((batch: any) => ({
+      ...batch,
+      cards: (batch.cards || []).filter((card: any) => card.id !== cardId),
+    })),
+  };
+}
+
+function stageStatus(stage: number, fallback: string) {
+  if (fallback === 'CANCELLED') return fallback;
+  if (stage >= 5) return 'SETTLED';
+  if (stage >= 1) return 'IN_SETTLEMENT';
+  return 'RECEIVED';
+}
+
+function optimisticCardUpdate(card: any, draft: CardDraft = {}, extra: Record<string, unknown> = {}) {
+  const currentStage = Math.max(0, Math.min(Number(card.currentStage || 0), 5));
+  const nextStage =
+    extra.stageAction === 'NEXT'
+      ? Math.min(currentStage + 1, 5)
+      : extra.stageAction === 'PREVIOUS'
+        ? Math.max(currentStage - 1, 0)
+        : extra.currentStage !== undefined
+          ? Math.max(0, Math.min(Number(extra.currentStage || 0), 5))
+          : Number(draft.currentStage ?? card.currentStage ?? 0);
+  const valueUsd = Number(draft.valueUsd ?? extra.valueUsd ?? numberValue(card.valueUsd));
+  const agreedAmount = Number(draft.agreedAmount ?? extra.agreedAmount ?? numberValue(card.agreedAmount));
+  const stageAmount = Number(extra.stageAmount || 0);
+  const receivedAmount =
+    extra.stageAction === 'NEXT'
+      ? numberValue(card.receivedAmount) + stageAmount
+      : Number(draft.receivedAmount ?? extra.receivedAmount ?? numberValue(card.receivedAmount));
+  const base = valueUsd > 0 ? valueUsd : 0;
+  const totalDeducted = Math.min(Math.max(receivedAmount, 0), base);
+  const remainingAmount = Math.max(base - totalDeducted, 0);
+  const status =
+    (extra.status as string | undefined) ||
+    draft.status ||
+    (extra.stageAction || extra.currentStage !== undefined ? stageStatus(nextStage, card.status) : card.status);
+
+  return {
+    ...card,
+    bankName: draft.bankName ?? card.bankName,
+    cardLast4: draft.cardLast4 ?? card.cardLast4,
+    valueUsd,
+    agreedAmount,
+    receivedAmount: totalDeducted,
+    totalDeducted,
+    remainingAmount,
+    progressPercent: base > 0 ? Math.min((totalDeducted / base) * 100, 100) : 0,
+    settlementAmount:
+      draft.settlementAmount !== undefined ? Number(draft.settlementAmount || 0) : card.settlementAmount,
+    settlementPaymentMethod: draft.settlementPaymentMethod ?? card.settlementPaymentMethod,
+    status,
+    currentStage: nextStage,
+    rejectReason: draft.rejectReason ?? card.rejectReason,
+    notes: draft.notes ?? card.notes,
+    cardImageDataUrl: draft.cardImageDataUrl !== undefined ? draft.cardImageDataUrl : card.cardImageDataUrl,
+    cardThumbnailDataUrl:
+      draft.cardThumbnailDataUrl !== undefined ? draft.cardThumbnailDataUrl : card.cardThumbnailDataUrl,
+    cardImageMimeType: draft.cardImageMimeType !== undefined ? draft.cardImageMimeType : card.cardImageMimeType,
+    cardImageSize: draft.cardImageSize !== undefined ? draft.cardImageSize : card.cardImageSize,
+    updatedAt: new Date().toISOString(),
+  };
+}
+
 export default function PeopleClient({
   initialPeople,
   currencies,
@@ -383,6 +483,8 @@ export default function PeopleClient({
   const [loading, setLoading] = useState(false);
   const [loadingPersonId, setLoadingPersonId] = useState('');
   const [savingPerson, setSavingPerson] = useState(false);
+  const [peopleRenderLimit, setPeopleRenderLimit] = useState(initialPeopleRenderLimit);
+  const [cardRenderLimit, setCardRenderLimit] = useState(initialCardRenderLimit);
   const [form, setForm] = useState<PersonForm>(blankForm);
   const [editingPerson, setEditingPerson] = useState<any | null>(null);
   const [editForm, setEditForm] = useState<PersonForm>(blankForm);
@@ -416,6 +518,9 @@ export default function PeopleClient({
   const [deliveryOpen, setDeliveryOpen] = useState(false);
   const detailAbortRef = useRef<AbortController | null>(null);
   const searchAbortRef = useRef<AbortController | null>(null);
+  const peopleLoadMoreRef = useRef<HTMLDivElement | null>(null);
+  const cardLoadMoreRef = useRef<HTMLDivElement | null>(null);
+  const prefetchedPeopleRef = useRef<Set<string>>(new Set());
   const loadingDetailRef = useRef('');
   const stageHoldTimersRef = useRef<Record<string, number>>({});
   const stageUndoTimerRef = useRef<number | null>(null);
@@ -433,6 +538,11 @@ export default function PeopleClient({
     () => selectedPersonCards.filter((card: any) => statusFilter === 'ALL' || card.status === statusFilter),
     [selectedPersonCards, statusFilter],
   );
+  const selectedPersonHasDetails = Boolean(selectedPersonId && detailCache[selectedPersonId]);
+  const renderedMobilePeople = useMemo(() => items.slice(0, peopleRenderLimit), [items, peopleRenderLimit]);
+  const renderedCards = useMemo(() => visibleCards.slice(0, cardRenderLimit), [cardRenderLimit, visibleCards]);
+  const hasMoreMobilePeople = peopleRenderLimit < items.length;
+  const hasMoreCards = selectedPersonHasDetails && cardRenderLimit < visibleCards.length;
   const selectedDeliveryRows = useMemo(
     () => (selectedPerson ? customerDeliverySummary(selectedPerson, currencies) : []),
     [currencies, selectedPerson],
@@ -445,17 +555,54 @@ export default function PeopleClient({
         .join(' • ') || '0',
     [selectedDeliveryRows],
   );
-  const selectedPersonHasDetails = Boolean(selectedPersonId && detailCache[selectedPersonId]);
+  const cachePeopleList = useCallback((people: any[], search = q) => {
+    const sorted = sortByCustomerCode(people);
+    void writeClientCache(peopleListCacheKey(search), sorted);
+    if (!search.trim()) void writeClientCache(peopleListCacheKey(''), sorted);
+    return sorted;
+  }, [q]);
 
-  const loadPersonDetails = useCallback(async (personId: string) => {
+  const commitPersonDetails = useCallback((personId: string, person: any) => {
+    setDetailCache((current) => ({ ...current, [personId]: person }));
+    setItems((current) => {
+      const next = current.some((item) => item.id === personId)
+        ? current.map((item) => (item.id === personId ? { ...item, ...person } : item))
+        : [person, ...current];
+
+      return sortByCustomerCode(next);
+    });
+    void writeClientCache(personDetailCacheKey(personId), person);
+  }, []);
+
+  const updatePersonEverywhere = useCallback((personId: string, updater: (person: any) => any) => {
+    setItems((current) => cachePeopleList(current.map((person) => (person.id === personId ? updater(person) : person))));
+    setDetailCache((current) => {
+      if (!current[personId]) return current;
+
+      const updated = updater(current[personId]);
+      void writeClientCache(personDetailCacheKey(personId), updated);
+      return { ...current, [personId]: updated };
+    });
+  }, [cachePeopleList]);
+
+  const loadPersonDetails = useCallback(async (personId: string, options: { prefetch?: boolean; force?: boolean } = {}) => {
     if (!personId) return;
     if (loadingDetailRef.current === personId) return;
+    if (options.prefetch && loadingDetailRef.current) return;
+
+    const cached = await readClientCache<any>(personDetailCacheKey(personId), { maxAgeMs: detailCacheMaxAgeMs });
+    const hasFreshCache = cached && cached.ageMs <= detailCacheFreshMs;
+    if (cached) {
+      commitPersonDetails(personId, cached.data);
+      if (hasFreshCache && !options.force) return;
+    }
+    if (cached && typeof navigator !== 'undefined' && !navigator.onLine) return;
 
     detailAbortRef.current?.abort();
     const controller = new AbortController();
     detailAbortRef.current = controller;
     loadingDetailRef.current = personId;
-    setLoadingPersonId(personId);
+    if (!cached && !options.prefetch) setLoadingPersonId(personId);
 
     try {
       const response = await fetch(`/api/people/${personId}`, {
@@ -464,20 +611,21 @@ export default function PeopleClient({
       });
       const result = await response.json().catch(() => ({}));
       if (!response.ok) {
-        toast.error(result.error || 'تعذر تحميل تفاصيل الزبون');
+        if (!cached && !options.prefetch) toast.error(result.error || 'تعذر تحميل تفاصيل الزبون');
         return;
       }
 
-      setDetailCache((current) => ({ ...current, [personId]: result }));
-      setItems((current) => sortByCustomerCode(current.map((person) => (person.id === personId ? { ...person, ...result } : person))));
+      commitPersonDetails(personId, result);
     } catch (error) {
-      if ((error as Error).name !== 'AbortError') toast.error('تعذر الاتصال بالخادم أثناء تحميل تفاصيل الزبون');
+      if ((error as Error).name !== 'AbortError' && !cached && !options.prefetch) {
+        toast.error('تعذر الاتصال بالخادم أثناء تحميل تفاصيل الزبون');
+      }
     } finally {
       if (detailAbortRef.current === controller) detailAbortRef.current = null;
       if (loadingDetailRef.current === personId) loadingDetailRef.current = '';
       setLoadingPersonId((current) => (current === personId ? '' : current));
     }
-  }, []);
+  }, [commitPersonDetails]);
 
   const closeCustomerCardsDrawer = useCallback(() => {
     setSelectedPersonId('');
@@ -491,6 +639,7 @@ export default function PeopleClient({
   const openCustomerCardsDrawer = useCallback((personId: string) => {
     if (!personId) return;
     setStatusFilter('ALL');
+    setCardRenderLimit(initialCardRenderLimit);
     setCustomerHeaderHidden(false);
     customerHeaderScrollRef.current = 0;
     setSelectedPersonId(personId);
@@ -498,8 +647,58 @@ export default function PeopleClient({
   }, [loadPersonDetails]);
 
   useEffect(() => {
-    setItems(sortByCustomerCode(initialPeople));
+    const sorted = sortByCustomerCode(initialPeople);
+    setItems(sorted);
+    void writeClientCache(peopleListCacheKey(''), sorted);
   }, [initialPeople]);
+
+  useEffect(() => {
+    setPeopleRenderLimit(initialPeopleRenderLimit);
+  }, [q]);
+
+  useEffect(() => {
+    setCardRenderLimit(initialCardRenderLimit);
+  }, [selectedPersonId, statusFilter]);
+
+  useEffect(() => {
+    if (!hasMoreMobilePeople || !peopleLoadMoreRef.current || typeof IntersectionObserver === 'undefined') return;
+
+    const observer = new IntersectionObserver((entries) => {
+      if (entries.some((entry) => entry.isIntersecting)) {
+        setPeopleRenderLimit((current) => capRenderLimit(current, items.length, peopleRenderStep));
+      }
+    }, { rootMargin: '280px' });
+
+    observer.observe(peopleLoadMoreRef.current);
+    return () => observer.disconnect();
+  }, [hasMoreMobilePeople, items.length]);
+
+  useEffect(() => {
+    if (!hasMoreCards || !cardLoadMoreRef.current || typeof IntersectionObserver === 'undefined') return;
+
+    const observer = new IntersectionObserver((entries) => {
+      if (entries.some((entry) => entry.isIntersecting)) {
+        setCardRenderLimit((current) => capRenderLimit(current, visibleCards.length, cardRenderStep));
+      }
+    }, { rootMargin: '420px' });
+
+    observer.observe(cardLoadMoreRef.current);
+    return () => observer.disconnect();
+  }, [hasMoreCards, visibleCards.length]);
+
+  useEffect(() => {
+    const candidates = items
+      .slice(0, 5)
+      .filter((person) => person.id && !detailCache[person.id] && !prefetchedPeopleRef.current.has(person.id));
+    if (!candidates.length) return;
+
+    runWhenIdle(() => {
+      for (const person of candidates.slice(0, 1)) {
+        prefetchedPeopleRef.current.add(person.id);
+        void loadPersonDetails(person.id, { prefetch: true });
+      }
+    }, 1400);
+  }, [detailCache, items, loadPersonDetails]);
 
   // The debounced loader receives q as an argument, so adding the function itself would re-run every render.
   useEffect(() => {
@@ -574,17 +773,36 @@ export default function PeopleClient({
     searchAbortRef.current?.abort();
     const controller = new AbortController();
     searchAbortRef.current = controller;
-    setLoading(true);
+    const cacheKey = peopleListCacheKey(search);
+    const cached = await readClientCache<any[]>(cacheKey, { maxAgeMs: listCacheMaxAgeMs });
+    if (cached) {
+      setItems(sortByCustomerCode(Array.isArray(cached.data) ? cached.data : []));
+    }
+    setLoading(!cached);
+
+    if (cached && typeof navigator !== 'undefined' && !navigator.onLine) {
+      searchAbortRef.current = null;
+      setLoading(false);
+      return;
+    }
+
     try {
-    const response = await fetch(`/api/people?q=${encodeURIComponent(search)}`, {
-      cache: 'no-store',
-      signal: controller.signal,
-    });
-    const data = await response.json().catch(() => []);
-    if (!response.ok) return toast.error(data.error || 'تعذر تحميل الزبائن');
-    setItems(sortByCustomerCode(Array.isArray(data) ? data : []));
+      const response = await fetch(`/api/people?q=${encodeURIComponent(search)}`, {
+        cache: 'no-store',
+        signal: controller.signal,
+      });
+      const data = await response.json().catch(() => []);
+      if (!response.ok) {
+        if (!cached) toast.error(data.error || 'تعذر تحميل الزبائن');
+        return;
+      }
+
+      const next = cachePeopleList(Array.isArray(data) ? data : [], search);
+      setItems(next);
     } catch (error) {
-      if ((error as Error).name !== 'AbortError') toast.error('تعذر الاتصال بالخادم أثناء تحميل الزبائن');
+      if ((error as Error).name !== 'AbortError' && !cached) {
+        toast.error('تعذر الاتصال بالخادم أثناء تحميل الزبائن');
+      }
     } finally {
       if (searchAbortRef.current === controller) {
         searchAbortRef.current = null;
@@ -597,19 +815,41 @@ export default function PeopleClient({
     event.preventDefault();
     if (!form.fullName.trim()) return toast.error('أدخل اسم الزبون');
 
-    const response = await fetch('/api/people', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(form),
-    });
-    const result = await response.json().catch(() => ({}));
+    try {
+      announceSyncStart();
+      const response = await fetch('/api/people', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(form),
+      });
+      const result = await response.json().catch(() => ({}));
 
-    if (!response.ok) return toast.error(result.error || 'تعذر إضافة الزبون');
+      if (!response.ok) return toast.error(result.error || 'تعذر إضافة الزبون');
 
-    toast.success('تمت إضافة الزبون');
-    setForm(blankForm);
-    setMobileAddOpen(false);
-    await load('');
+      const created = {
+        ...result,
+        cardSummary: {
+          totalCards: 0,
+          originalTotal: 0,
+          agreedTotal: 0,
+          active: 0,
+          completed: 0,
+          rejected: 0,
+          lastUpdate: result.updatedAt || result.createdAt || new Date().toISOString(),
+        },
+        deliverySummary: [],
+        cardBatches: [],
+        cardDeliveries: [],
+      };
+      setItems((current) => cachePeopleList([created, ...current.filter((person) => person.id !== result.id)], ''));
+      toast.success('تمت إضافة الزبون');
+      setForm(blankForm);
+      setMobileAddOpen(false);
+    } catch {
+      toast.error('تعذر الاتصال بالخادم أثناء إضافة الزبون');
+    } finally {
+      announceSyncEnd();
+    }
   }
 
   function openEdit(person: any) {
@@ -621,9 +861,23 @@ export default function PeopleClient({
     event.preventDefault();
     if (!editingPerson) return;
 
+    const personId = editingPerson.id;
+    const optimisticPerson = {
+      ...editingPerson,
+      fullName: editForm.fullName,
+      phone: editForm.phone || null,
+      address: editForm.address || null,
+      notes: editForm.notes || null,
+      externalId: editForm.externalId || null,
+      category: editForm.category,
+      updatedAt: new Date().toISOString(),
+    };
+
+    updatePersonEverywhere(personId, (person) => ({ ...person, ...optimisticPerson }));
     setSavingPerson(true);
     try {
-      const response = await fetch(`/api/people/${editingPerson.id}`, {
+      announceSyncStart();
+      const response = await fetch(`/api/people/${personId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -637,26 +891,44 @@ export default function PeopleClient({
       });
       const result = await response.json().catch(() => ({}));
 
-      if (!response.ok) return toast.error(result.error || 'تعذر تعديل الزبون');
+      if (!response.ok) {
+        updatePersonEverywhere(personId, (person) => ({ ...person, ...editingPerson }));
+        return toast.error(result.error || 'تعذر تعديل الزبون');
+      }
 
-      setItems((current) => sortByCustomerCode(current.map((person) => (person.id === result.id ? result : person))));
+      commitPersonDetails(personId, result);
       setEditingPerson(null);
       toast.success('تم تعديل بيانات الزبون');
     } catch {
+      updatePersonEverywhere(personId, (person) => ({ ...person, ...editingPerson }));
       toast.error('تعذر الاتصال بالخادم أثناء تعديل الزبون');
     } finally {
+      announceSyncEnd();
       setSavingPerson(false);
     }
   }
 
   async function archivePerson(person: any) {
     if (!window.confirm(`هل تريد أرشفة الزبون ${person.fullName}؟ لن يتم حذف بياناته نهائيًا.`)) return;
-    const response = await fetch(`/api/people/${person.id}`, { method: 'DELETE' });
-    const result = await response.json().catch(() => ({}));
-    if (!response.ok) return toast.error(result.error || 'تعذر أرشفة الزبون');
-    setItems((current) => current.filter((item) => item.id !== person.id));
+    const previousItems = items;
+    setItems((current) => cachePeopleList(current.filter((item) => item.id !== person.id)));
     if (selectedPersonId === person.id) closeCustomerCardsDrawer();
-    toast.success('تمت أرشفة الزبون');
+
+    try {
+      announceSyncStart();
+      const response = await fetch(`/api/people/${person.id}`, { method: 'DELETE' });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        setItems(cachePeopleList(previousItems));
+        return toast.error(result.error || 'تعذر أرشفة الزبون');
+      }
+      toast.success('تمت أرشفة الزبون');
+    } catch {
+      setItems(cachePeopleList(previousItems));
+      toast.error('تعذر الاتصال بالخادم أثناء أرشفة الزبون');
+    } finally {
+      announceSyncEnd();
+    }
   }
 
   function setCardDraft(cardId: string, patch: CardDraft) {
@@ -695,11 +967,35 @@ export default function PeopleClient({
     }
   }
 
-  function openCardImageViewer(card: any, draft: CardDraft = {}) {
-    const src = cardFullImageSrc(card, draft);
-    if (!src) return;
+  async function openCardImageViewer(card: any, draft: CardDraft = {}) {
+    const label = `**** ${displayLast4(card, draft)}`;
+    const immediateSrc = cardFullImageSrc(card, draft);
+    if (!immediateSrc) return;
+
     setImageZoom(1);
-    setImageViewer({ src, label: `**** ${displayLast4(card, draft)}` });
+    setImageViewer({ src: immediateSrc, label });
+
+    if (draft.cardImageDataUrl || card.cardImageDataUrl) return;
+
+    const imageKey = cardImageCacheKey(card.id);
+    const cached = await readClientCache<{ cardImageDataUrl: string }>(imageKey, { maxAgeMs: cardImageCacheMaxAgeMs });
+    if (cached?.data.cardImageDataUrl) {
+      setImageViewer((current) => (current?.label === label ? { src: cached.data.cardImageDataUrl, label } : current));
+      return;
+    }
+
+    if (typeof navigator !== 'undefined' && !navigator.onLine) return;
+
+    try {
+      const response = await fetch(`/api/inventory/received-cards/${card.id}/image`, { cache: 'no-store' });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok || !result.cardImageDataUrl) return;
+
+      await writeClientCache(imageKey, { cardImageDataUrl: result.cardImageDataUrl });
+      setImageViewer((current) => (current?.label === label ? { src: result.cardImageDataUrl, label } : current));
+    } catch {
+      // Thumbnail stays visible; the full image can be retried next time.
+    }
   }
 
   function animationKey(cardId: string, stage: number) {
@@ -708,27 +1004,33 @@ export default function PeopleClient({
 
   function replaceCard(updated: any) {
     const personId = updated.batch?.personId;
-    if (!personId) return load(q);
+    if (!personId) {
+      void load(q);
+      return;
+    }
 
-    setItems((current) => current.map((person) => (person.id === personId ? updateCardInPerson(person, updated) : person)));
-    setDetailCache((current) =>
-      current[personId] ? { ...current, [personId]: updateCardInPerson(current[personId], updated) } : current,
-    );
+    updatePersonEverywhere(personId, (person) => updateCardInPerson(person, updated));
   }
 
   function handleFastEntrySaved(batch: any) {
     setItems((current) => {
       const exists = current.some((person) => person.id === batch.personId);
       if (!exists) {
-        return sortByCustomerCode([{ ...batch.person, cardBatches: [batch], cardDeliveries: [] }, ...current]);
+        return cachePeopleList([{ ...batch.person, cardBatches: [batch], cardDeliveries: [] }, ...current]);
       }
 
-      return sortByCustomerCode(
+      return cachePeopleList(
         current.map((person) => (person.id === batch.personId ? addBatchToPerson(person, batch) : person)),
       );
     });
     setDetailCache((current) =>
-      current[batch.personId] ? { ...current, [batch.personId]: addBatchToPerson(current[batch.personId], batch) } : current,
+      current[batch.personId] || items.find((person) => person.id === batch.personId)
+        ? (() => {
+            const updated = addBatchToPerson(current[batch.personId] || items.find((person) => person.id === batch.personId), batch);
+            void writeClientCache(personDetailCacheKey(batch.personId), updated);
+            return { ...current, [batch.personId]: updated };
+          })()
+        : current,
     );
     openCustomerCardsDrawer(batch.personId);
   }
@@ -755,19 +1057,34 @@ export default function PeopleClient({
       return toast.error('اكتب سبب إيقاف أو رفض البطاقة قبل الحفظ');
     }
     setSavingCards((current) => ({ ...current, [card.id]: true }));
-    const response = await fetch(`/api/inventory/received-cards/${card.id}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ...cardPayload(card, draft), ...extra }),
-    });
-    const result = await response.json().catch(() => ({}));
-    setSavingCards((current) => ({ ...current, [card.id]: false }));
+    const optimisticCard = optimisticCardUpdate(card, draft, extra);
+    replaceCard(optimisticCard);
 
-    if (!response.ok) return toast.error(result.error || 'تعذر حفظ البطاقة');
-    replaceCard(result);
-    setDrafts((current) => ({ ...current, [card.id]: {} }));
-    if (result.cashboxWarning) toast.warning(result.cashboxWarning);
-    toast.success('تم حفظ البطاقة');
+    try {
+      announceSyncStart();
+      const response = await fetch(`/api/inventory/received-cards/${card.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...cardPayload(card, draft), ...extra }),
+      });
+      const result = await response.json().catch(() => ({}));
+
+      if (!response.ok) {
+        replaceCard(card);
+        return toast.error(result.error || 'تعذر حفظ البطاقة');
+      }
+
+      replaceCard(result);
+      setDrafts((current) => ({ ...current, [card.id]: {} }));
+      if (result.cashboxWarning) toast.warning(result.cashboxWarning);
+      toast.success('تم حفظ البطاقة');
+    } catch {
+      replaceCard(card);
+      toast.error('تعذر الاتصال بالخادم أثناء حفظ البطاقة');
+    } finally {
+      announceSyncEnd();
+      setSavingCards((current) => ({ ...current, [card.id]: false }));
+    }
   }
 
   function clearStageHold(key: string) {
@@ -826,6 +1143,7 @@ export default function PeopleClient({
     setOptimisticStages((current) => ({ ...current, [action.cardId]: action.previousStage }));
 
     try {
+      announceSyncStart();
       let result: any = null;
       if (action.operationId) {
         const deleteResponse = await fetch(`/api/inventory/received-cards/${action.cardId}/operations/${action.operationId}`, {
@@ -865,6 +1183,7 @@ export default function PeopleClient({
       clearOptimisticStage(action.cardId);
       toast.error('تعذر الاتصال بالخادم أثناء التراجع');
     } finally {
+      announceSyncEnd();
       setSavingCards((current) => ({ ...current, [action.cardId]: false }));
     }
   }
@@ -889,6 +1208,7 @@ export default function PeopleClient({
     setSavingCards((current) => ({ ...current, [card.id]: true }));
 
     try {
+      announceSyncStart();
       const response =
         targetStage === 5
           ? await fetch(`/api/inventory/received-cards/${card.id}/operations`, {
@@ -942,6 +1262,7 @@ export default function PeopleClient({
       clearOptimisticStage(card.id);
       toast.error('تعذر الاتصال بالخادم أثناء تنفيذ المرحلة');
     } finally {
+      announceSyncEnd();
       window.setTimeout(() => {
         setStageAnimations((current) => {
           const next = { ...current };
@@ -956,11 +1277,25 @@ export default function PeopleClient({
 
   async function deleteCard(card: any) {
     if (!window.confirm(`هل تريد حذف البطاقة ${cardCode(card)}؟ سيتم أرشفتها فقط.`)) return;
-    const response = await fetch(`/api/inventory/received-cards/${card.id}`, { method: 'DELETE' });
-    const result = await response.json().catch(() => ({}));
-    if (!response.ok) return toast.error(result.error || 'تعذر حذف البطاقة');
-    await load(q);
-    toast.success('تم حذف البطاقة منطقيًا');
+    const personId = card.batch?.personId || selectedPersonId;
+    const previousPerson = personId ? detailCache[personId] : null;
+    if (personId) updatePersonEverywhere(personId, (person) => removeCardFromPerson(person, card.id));
+
+    try {
+      announceSyncStart();
+      const response = await fetch(`/api/inventory/received-cards/${card.id}`, { method: 'DELETE' });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        if (personId && previousPerson) commitPersonDetails(personId, previousPerson);
+        return toast.error(result.error || 'تعذر حذف البطاقة');
+      }
+      toast.success('تم حذف البطاقة منطقيًا');
+    } catch {
+      if (personId && previousPerson) commitPersonDetails(personId, previousPerson);
+      toast.error('تعذر الاتصال بالخادم أثناء حذف البطاقة');
+    } finally {
+      announceSyncEnd();
+    }
   }
 
   async function addCards(event: React.FormEvent) {
@@ -968,41 +1303,52 @@ export default function PeopleClient({
     if (!selectedPerson) return;
     if (!batchForm.agreedAmountPerCard) return toast.error('أدخل السعر المتفق عليه');
 
-    const response = await fetch('/api/inventory/received-cards', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        personId: selectedPerson.id,
-        currencyId: batchForm.currencyId || null,
-        cardCount: Number(batchForm.cardCount || 1),
-        valueUsdPerCard: Number(batchForm.valueUsdPerCard || defaultOriginalCardValue),
-        agreedAmountPerCard: Number(batchForm.agreedAmountPerCard),
-        commonBankName: batchForm.commonBankName || undefined,
-        notes: batchForm.notes || undefined,
-      }),
-    });
-    const result = await response.json().catch(() => ({}));
-    if (!response.ok) return toast.error(result.error || 'تعذر إضافة البطاقات');
+    try {
+      announceSyncStart();
+      const response = await fetch('/api/inventory/received-cards', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          personId: selectedPerson.id,
+          currencyId: batchForm.currencyId || null,
+          cardCount: Number(batchForm.cardCount || 1),
+          valueUsdPerCard: Number(batchForm.valueUsdPerCard || defaultOriginalCardValue),
+          agreedAmountPerCard: Number(batchForm.agreedAmountPerCard),
+          commonBankName: batchForm.commonBankName || undefined,
+          notes: batchForm.notes || undefined,
+        }),
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) return toast.error(result.error || 'تعذر إضافة البطاقات');
 
-    setItems((current) => current.map((person) => (person.id === selectedPerson.id ? addBatchToPerson(person, result) : person)));
-    setDetailCache((current) =>
-      current[selectedPerson.id] ? { ...current, [selectedPerson.id]: addBatchToPerson(current[selectedPerson.id], result) } : current,
-    );
-    setBatchForm({
-      cardCount: '1',
-      valueUsdPerCard: defaultOriginalCardValue,
-      agreedAmountPerCard: '',
-      currencyId: defaultCurrencyId(currencies),
-      commonBankName: '',
-      notes: '',
-    });
-    toast.success('تمت إضافة البطاقات وربطها بالزبون');
+      updatePersonEverywhere(selectedPerson.id, (person) => addBatchToPerson(person, result));
+      setBatchForm({
+        cardCount: '1',
+        valueUsdPerCard: defaultOriginalCardValue,
+        agreedAmountPerCard: '',
+        currencyId: defaultCurrencyId(currencies),
+        commonBankName: '',
+        notes: '',
+      });
+      toast.success('تمت إضافة البطاقات وربطها بالزبون');
+    } catch {
+      toast.error('تعذر الاتصال بالخادم أثناء إضافة البطاقات');
+    } finally {
+      announceSyncEnd();
+    }
   }
 
-  async function handleDeliverySaved() {
+  async function handleDeliverySaved(delivery?: any) {
     setDeliveryOpen(false);
-    if (selectedPersonId) await loadPersonDetails(selectedPersonId);
-    await load(q);
+    if (delivery && selectedPersonId) {
+      updatePersonEverywhere(selectedPersonId, (person) => ({
+        ...person,
+        cardDeliveries: [delivery, ...(person.cardDeliveries || []).filter((item: any) => item.id !== delivery.id)],
+      }));
+      return;
+    }
+
+    if (selectedPersonId) await loadPersonDetails(selectedPersonId, { force: true });
   }
 
   function toggleCard(cardId: string) {
@@ -1028,18 +1374,38 @@ export default function PeopleClient({
     if (!ids.length) return toast.error('حدد بطاقة واحدة على الأقل');
     if (!window.confirm(`سيتم نقل ${ids.length} بطاقة إلى المرحلة التالية. هل تريد المتابعة؟`)) return;
 
-    await Promise.all(
-      ids.map((id) =>
-        fetch(`/api/inventory/received-cards/${id}`, {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ stageAction: 'NEXT', stageAmount: 0 }),
+    for (const id of ids) {
+      const card = selectedPersonCards.find((item: any) => item.id === id);
+      if (card) replaceCard(optimisticCardUpdate(card, {}, { stageAction: 'NEXT', stageAmount: 0 }));
+    }
+
+    try {
+      announceSyncStart();
+      const responses = await Promise.all(
+        ids.map(async (id) => {
+          const response = await fetch(`/api/inventory/received-cards/${id}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ stageAction: 'NEXT', stageAmount: 0 }),
+          });
+          const result = await response.json().catch(() => ({}));
+          if (response.ok) replaceCard(result);
+          return response.ok;
         }),
-      ),
-    );
-    setSelectedCards(new Set());
-    await load(q);
-    toast.success('تم تحديث البطاقات المحددة');
+      );
+      setSelectedCards(new Set());
+      const failed = responses.filter((ok) => !ok).length;
+      if (failed) {
+        if (selectedPersonId) await loadPersonDetails(selectedPersonId, { force: true });
+        return toast.error(`تعذر تحديث ${failed} بطاقة`);
+      }
+      toast.success('تم تحديث البطاقات المحددة');
+    } catch {
+      if (selectedPersonId) await loadPersonDetails(selectedPersonId, { force: true });
+      toast.error('تعذر الاتصال بالخادم أثناء تحديث البطاقات المحددة');
+    } finally {
+      announceSyncEnd();
+    }
   }
 
   async function bulkReject() {
@@ -1049,18 +1415,38 @@ export default function PeopleClient({
     const reason = window.prompt('اكتب سبب إيقاف أو رفض البطاقات المحددة');
     if (!reason?.trim()) return toast.error('سبب الإيقاف مطلوب');
 
-    await Promise.all(
-      ids.map((id) =>
-        fetch(`/api/inventory/received-cards/${id}`, {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ status: 'CANCELLED', rejectReason: reason.trim() }),
+    for (const id of ids) {
+      const card = selectedPersonCards.find((item: any) => item.id === id);
+      if (card) replaceCard(optimisticCardUpdate(card, { status: 'CANCELLED', rejectReason: reason.trim() }));
+    }
+
+    try {
+      announceSyncStart();
+      const responses = await Promise.all(
+        ids.map(async (id) => {
+          const response = await fetch(`/api/inventory/received-cards/${id}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ status: 'CANCELLED', rejectReason: reason.trim() }),
+          });
+          const result = await response.json().catch(() => ({}));
+          if (response.ok) replaceCard(result);
+          return response.ok;
         }),
-      ),
-    );
-    setSelectedCards(new Set());
-    await load(q);
-    toast.success('تم تحديث البطاقات المحددة');
+      );
+      setSelectedCards(new Set());
+      const failed = responses.filter((ok) => !ok).length;
+      if (failed) {
+        if (selectedPersonId) await loadPersonDetails(selectedPersonId, { force: true });
+        return toast.error(`تعذر تحديث ${failed} بطاقة`);
+      }
+      toast.success('تم تحديث البطاقات المحددة');
+    } catch {
+      if (selectedPersonId) await loadPersonDetails(selectedPersonId, { force: true });
+      toast.error('تعذر الاتصال بالخادم أثناء تحديث البطاقات المحددة');
+    } finally {
+      announceSyncEnd();
+    }
   }
 
   return (
@@ -1152,7 +1538,7 @@ export default function PeopleClient({
                     key={person.id}
                     onClick={() => openCustomerCardsDrawer(person.id)}
                     onMouseEnter={() => {
-                      if (!detailCache[person.id]) void loadPersonDetails(person.id);
+                      if (!detailCache[person.id]) void loadPersonDetails(person.id, { prefetch: true });
                     }}
                     className="cursor-pointer"
                   >
@@ -1222,7 +1608,7 @@ export default function PeopleClient({
         </div>
 
         <div className="stagger-list grid gap-3 md:hidden">
-          {items.map((person, index) => {
+          {renderedMobilePeople.map((person, index) => {
             const summary = personSummary(person);
             const deliveryRows = customerDeliverySummary(person, currencies);
             const delivered = deliveryRows.reduce((sum: number, row: { delivered: number }) => sum + row.delivered, 0);
@@ -1237,7 +1623,7 @@ export default function PeopleClient({
                   type="button"
                   onClick={() => openCustomerCardsDrawer(person.id)}
                   onPointerEnter={() => {
-                    if (!detailCache[person.id]) void loadPersonDetails(person.id);
+                    if (!detailCache[person.id]) void loadPersonDetails(person.id, { prefetch: true });
                   }}
                   className="grid w-full grid-cols-[1fr_auto] items-center gap-2 px-3 py-2 text-right"
                 >
@@ -1280,6 +1666,17 @@ export default function PeopleClient({
               </article>
             );
           })}
+          {hasMoreMobilePeople ? (
+            <div ref={peopleLoadMoreRef} className="grid place-items-center py-2">
+              <button
+                type="button"
+                onClick={() => setPeopleRenderLimit((current) => capRenderLimit(current, items.length, peopleRenderStep))}
+                className="rounded-lg border border-slate-200 px-4 py-2 text-sm font-black text-slate-600 dark:border-slate-700 dark:text-slate-200"
+              >
+                عرض المزيد
+              </button>
+            </div>
+          ) : null}
         </div>
       </section>
 
@@ -1480,7 +1877,7 @@ export default function PeopleClient({
                   ))}
                 </div>
               ) : null}
-              {selectedPersonHasDetails ? visibleCards.map((card: any, index: number) => {
+              {selectedPersonHasDetails ? renderedCards.map((card: any, index: number) => {
                 const draft = drafts[card.id] || {};
                 const expanded = expandedCardIds.has(card.id);
                 const optimisticStage = optimisticStages[card.id];
@@ -1510,13 +1907,14 @@ export default function PeopleClient({
                         <button
                           type="button"
                           className="customer-card-image-button"
-                          onClick={() => openCardImageViewer(card, draft)}
+                          onClick={() => void openCardImageViewer(card, draft)}
                           aria-label={`فتح صورة البطاقة ${last4}`}
                         >
                           <img
                             src={imageSrc}
                             alt={`صورة البطاقة ${last4}`}
                             loading="lazy"
+                            decoding="async"
                             className="customer-card-image"
                           />
                           <span className="customer-card-image-action" aria-hidden="true">
@@ -1674,11 +2072,11 @@ export default function PeopleClient({
                             {imageSrc ? (
                               <button
                                 type="button"
-                                onClick={() => openCardImageViewer(card, draft)}
+                                onClick={() => void openCardImageViewer(card, draft)}
                                 className="h-full w-full"
                                 aria-label={`فتح صورة البطاقة ${last4}`}
                               >
-                                <img src={imageSrc} alt={`صورة البطاقة ${last4}`} className="h-full w-full object-contain" loading="lazy" />
+                                <img src={imageSrc} alt={`صورة البطاقة ${last4}`} className="h-full w-full object-contain" loading="lazy" decoding="async" />
                               </button>
                             ) : (
                               <div className="flex h-full flex-col items-center justify-center gap-2 text-slate-500">
@@ -1914,6 +2312,17 @@ export default function PeopleClient({
                   </article>
                 );
               }) : null}
+              {hasMoreCards ? (
+                <div ref={cardLoadMoreRef} className="grid place-items-center py-2">
+                  <button
+                    type="button"
+                    onClick={() => setCardRenderLimit((current) => capRenderLimit(current, visibleCards.length, cardRenderStep))}
+                    className="rounded-lg border border-slate-200 px-4 py-2 text-sm font-black text-slate-600 dark:border-slate-700 dark:text-slate-200"
+                  >
+                    عرض المزيد
+                  </button>
+                </div>
+              ) : null}
               {selectedPersonHasDetails && !visibleCards.length ? (
                 <div className="rounded-lg border border-dashed border-slate-300 p-8 text-center text-slate-500 dark:border-slate-700">
                   لا توجد بطاقات بهذه الحالة.
@@ -1950,6 +2359,7 @@ export default function PeopleClient({
               <img
                 src={imageViewer.src}
                 alt={`صورة البطاقة ${imageViewer.label}`}
+                decoding="async"
                 style={{ width: `${imageZoom * 100}%` }}
               />
             </div>
@@ -2058,6 +2468,7 @@ export default function PeopleClient({
           operation={operationModal.operation}
           initialType={operationModal.initialType}
           onClose={() => setOperationModal(null)}
+          onOptimistic={replaceCard}
           onSaved={(card) => {
             replaceCard(card);
             setOperationModal(null);

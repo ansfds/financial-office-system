@@ -2,7 +2,7 @@ import { audit, requireSession } from '@/lib/auth';
 import { db } from '@/lib/db';
 import { apiError, fail, ok } from '@/lib/http';
 import { D } from '@/lib/money';
-import { revalidateFinancePaths } from '@/lib/revalidate';
+import { revalidatePaths } from '@/lib/revalidate';
 import { z } from 'zod';
 
 const deliverySchema = z.object({
@@ -89,7 +89,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       newValue: created as any,
       description: 'تسجيل تسليم مبلغ للزبون مستقل عن رصيد البطاقة',
     });
-    revalidateFinancePaths(['/people', `/people/${id}`]);
+    revalidatePaths(['/people', `/people/${id}`]);
 
     return ok(created, 201);
   } catch (error) {

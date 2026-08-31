@@ -173,6 +173,8 @@ model Person {
   @@index([category])
   @@index([createdAt])
   @@index([status, deletedAt])
+  @@index([status, deletedAt, customerNo], map: "Person_status_deleted_customerNo_idx")
+  @@index([status, deletedAt, createdAt], map: "Person_status_deleted_created_idx")
 }
 
 model Currency {
@@ -267,6 +269,9 @@ model FinancialTransaction {
   @@index([txId])
   @@index([cardNumber])
   @@index([bankName])
+  @@index([personId, deletedAt, transactionAt], map: "FT_person_deleted_txAt_idx")
+  @@index([deletedAt, status, transactionAt], map: "FT_deleted_status_txAt_idx")
+  @@index([deletedAt, operationKind, transactionAt], map: "FT_deleted_kind_txAt_idx")
 }
 
 model TransactionMovement {
@@ -430,6 +435,8 @@ model CustomerWalletSettlement {
   @@index([userId])
   @@index([username])
   @@index([deletedAt])
+  @@index([personId, deletedAt, occurredAt], map: "CWS_person_deleted_occ_idx")
+  @@index([personId, currencyId, paymentMethod, accountType, deletedAt, occurredAt], map: "CWS_person_currency_method_type_deleted_occ_idx")
 }
 
 model TransactionExecutionItem {
@@ -587,6 +594,7 @@ model ReceivedCardBatch {
   @@index([entryTransactionId])
   @@index([receivedAt])
   @@index([createdAt])
+  @@index([personId, receivedAt], map: "RCB_person_receivedAt_idx")
 }
 
 model ReceivedCustomerCard {
@@ -640,6 +648,9 @@ model ReceivedCustomerCard {
   @@index([batchId])
   @@index([settlementCurrencyId])
   @@index([settlementPaymentMethod])
+  @@index([batchId, deletedAt, sequence], map: "RCC_batch_deleted_sequence_idx")
+  @@index([status, deletedAt, updatedAt], map: "RCC_status_deleted_updated_idx")
+  @@index([settlementCurrencyId, deletedAt, status], map: "RCC_settlementCurrency_deleted_status_idx")
 }
 
 model ReceivedCardStageLog {
@@ -657,6 +668,7 @@ model ReceivedCardStageLog {
   @@index([cardId])
   @@index([stage])
   @@index([createdAt])
+  @@index([cardId, createdAt], map: "RCSL_card_created_idx")
 }
 
 model CustomerCardEntryTransaction {
@@ -734,6 +746,8 @@ model ReceivedCardOperation {
   @@index([deletedAt])
   @@index([userId])
   @@index([username])
+  @@index([cardId, deletedAt, occurredAt], map: "RCO_card_deleted_occurred_idx")
+  @@index([operationType, deletedAt, occurredAt], map: "RCO_type_deleted_occurred_idx")
 }
 
 model CustomerCardDelivery {
@@ -765,6 +779,7 @@ model CustomerCardDelivery {
   @@index([deletedAt])
   @@index([userId])
   @@index([username])
+  @@index([personId, currencyId, deletedAt, occurredAt], map: "CCD_person_currency_deleted_occurred_idx")
 }
 
 model CustomerAccountRepayment {

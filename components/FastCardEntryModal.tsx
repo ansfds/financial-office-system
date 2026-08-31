@@ -432,7 +432,7 @@ export default function FastCardEntryModal({ people, selectedPerson, currencies,
                     <td>
                       <div className="grid min-w-36 gap-2">
                         {row.cardThumbnailDataUrl ? (
-                          <img src={row.cardThumbnailDataUrl} alt="معاينة البطاقة" className="h-20 w-full rounded-lg object-cover" />
+                          <img src={row.cardThumbnailDataUrl} alt="معاينة البطاقة" className="h-20 w-full rounded-lg object-cover" decoding="async" />
                         ) : (
                           <div className="flex h-20 items-center justify-center rounded-lg border border-dashed border-slate-300 text-slate-400 dark:border-slate-700">
                             <ImagePlus size={20} />
@@ -555,7 +555,7 @@ export default function FastCardEntryModal({ people, selectedPerson, currencies,
                         <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 dark:border-slate-800 dark:bg-slate-950">
                           <div className="relative aspect-[16/10] overflow-hidden rounded-lg bg-slate-200 dark:bg-slate-800">
                             {row.cardThumbnailDataUrl ? (
-                              <img src={row.cardThumbnailDataUrl} alt="معاينة البطاقة" className="h-full w-full object-cover" />
+                              <img src={row.cardThumbnailDataUrl} alt="معاينة البطاقة" className="h-full w-full object-cover" decoding="async" />
                             ) : (
                               <div className="flex h-full flex-col items-center justify-center gap-2 text-slate-500">
                                 <ImagePlus size={34} />

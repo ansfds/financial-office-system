@@ -6,6 +6,7 @@ import {
   isCardDeductionOperation,
 } from './customer-cards';
 import { D } from './money';
+import { receivedCardResponseSelect } from './received-card-selects';
 
 type OperationRow = {
   id: string;
@@ -18,16 +19,6 @@ type OperationRow = {
   createdAt: Date;
   deletedAt?: Date | null;
 };
-
-export const receivedCardDetailsInclude = {
-  settlementCurrency: true,
-  operations: {
-    orderBy: [{ occurredAt: 'desc' }, { createdAt: 'desc' }],
-    take: 30,
-  },
-  batch: { include: { person: true, currency: true } },
-  stageLogs: { orderBy: { createdAt: 'desc' }, take: 8 },
-} satisfies Prisma.ReceivedCustomerCardInclude;
 
 function compareOperations(left: OperationRow, right: OperationRow) {
   const occurred = new Date(left.occurredAt).getTime() - new Date(right.occurredAt).getTime();
@@ -120,6 +111,6 @@ export async function recalculateReceivedCard(tx: Prisma.TransactionClient, card
 
   return tx.receivedCustomerCard.findUniqueOrThrow({
     where: { id: cardId },
-    include: receivedCardDetailsInclude,
+    select: receivedCardResponseSelect,
   });
 }

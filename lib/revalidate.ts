@@ -13,6 +13,12 @@ const financePaths = [
   '/settings',
 ];
 
+export function revalidatePaths(paths: string[] = []) {
+  for (const path of new Set(paths.filter(Boolean))) {
+    revalidatePath(path);
+  }
+}
+
 export function revalidateFinancePaths(extraPaths: string[] = []) {
   for (const path of new Set([...financePaths, ...extraPaths])) {
     revalidatePath(path);

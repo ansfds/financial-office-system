@@ -1,6 +1,7 @@
 import Page from '@/components/Page';
 import ReceivedCardsClient from '@/components/ReceivedCardsClient';
 import { db } from '@/lib/db';
+import { receivedCardBatchResponseSelect } from '@/lib/received-card-selects';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -11,19 +12,7 @@ export default async function ReceivedCardsPage() {
     db.person.findMany({ where: { deletedAt: null, status: 'ACTIVE' }, orderBy: { createdAt: 'desc' } }),
     db.currency.findMany({ where: { isActive: true }, orderBy: { code: 'asc' } }),
     db.receivedCardBatch.findMany({
-      include: {
-        person: true,
-        currency: true,
-        cards: {
-          where: { deletedAt: null },
-          include: {
-            settlementCurrency: true,
-            operations: { where: { deletedAt: null }, orderBy: { occurredAt: 'desc' }, take: 12 },
-            stageLogs: { orderBy: { createdAt: 'desc' }, take: 8 },
-          },
-          orderBy: { sequence: 'asc' },
-        },
-      },
+      select: receivedCardBatchResponseSelect,
       orderBy: { receivedAt: 'desc' },
       take: 200,
     }),

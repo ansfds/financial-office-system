@@ -1,7 +1,6 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { useRouter } from 'next/navigation';
 import { ChevronDown, Loader2, Plus, Save } from 'lucide-react';
 import { toast } from 'sonner';
 import { formatDate, formatMoney, numberValue } from '@/lib/format';
@@ -63,7 +62,6 @@ export default function ReceivedCardsClient({
   currencies: any[];
   initialBatches: any[];
 }) {
-  const router = useRouter();
   const settlementCurrencies = useMemo(
     () => currencies.filter((currency) => ['USD', 'LYD'].includes(currency.code)),
     [currencies],
@@ -82,13 +80,6 @@ export default function ReceivedCardsClient({
     commonBankName: '',
     notes: '',
   });
-
-  async function load() {
-    const response = await fetch('/api/inventory/received-cards', { cache: 'no-store' });
-    const data = await response.json();
-    if (!response.ok) return toast.error(data.error || 'تعذر تحميل البطاقات المستلمة');
-    setBatches(data);
-  }
 
   useEffect(() => {
     setBatches(initialBatches);
@@ -131,7 +122,6 @@ export default function ReceivedCardsClient({
     });
     setOpenBatchId(data.id);
     setBatches((items) => [data, ...items.filter((item) => item.id !== data.id)]);
-    router.refresh();
   }
 
   function updateCard(batchId: string, cardId: string, patch: any) {
@@ -183,7 +173,6 @@ export default function ReceivedCardsClient({
     updateCard(batchId, card.id, data);
     if (data.cashboxWarning) toast.warning(data.cashboxWarning);
     toast.success(shouldSettle ? 'تم حفظ التصفية وتحديث الصندوق' : 'تم حفظ البطاقة بدون أثر مالي');
-    router.refresh();
   }
 
   function batchSummary(batch: any) {

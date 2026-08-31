@@ -5,6 +5,7 @@ import { useState } from 'react';
 import { toast } from 'sonner';
 import { formatMoney } from '@/lib/format';
 import ModalLayer, { ModalBackdrop } from '@/components/ModalLayer';
+import { announceSyncEnd, announceSyncStart } from '@/lib/client-cache';
 
 type CurrencyOption = {
   id: string;
@@ -25,7 +26,7 @@ type Props = {
   rows: DeliverySummaryRow[];
   currencies: CurrencyOption[];
   onClose: () => void;
-  onSaved: () => void;
+  onSaved: (delivery?: any) => void;
 };
 
 export default function CustomerDeliveryModal({ person, rows, currencies, onClose, onSaved }: Props) {
@@ -48,6 +49,7 @@ export default function CustomerDeliveryModal({ person, rows, currencies, onClos
 
     setSaving(true);
     try {
+      announceSyncStart();
       const response = await fetch(`/api/people/${person.id}/deliveries`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -61,10 +63,11 @@ export default function CustomerDeliveryModal({ person, rows, currencies, onClos
       const result = await response.json().catch(() => ({}));
       if (!response.ok) return toast.error(result.error || 'تعذر تسجيل التسليم');
       toast.success('تم تسجيل تسليم المبلغ');
-      onSaved();
+      onSaved(result);
     } catch {
       toast.error('تعذر الاتصال بالخادم أثناء تسجيل التسليم');
     } finally {
+      announceSyncEnd();
       setSaving(false);
     }
   }

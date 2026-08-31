@@ -282,6 +282,8 @@ tbody tr {
 .customer-compact-row {
   overflow: hidden;
   min-height: 4.25rem;
+  content-visibility: auto;
+  contain-intrinsic-size: 4.75rem;
 }
 
 .customer-summary-strip,
@@ -658,6 +660,8 @@ tbody tr {
 
 .customer-card-card {
   overflow: hidden;
+  content-visibility: auto;
+  contain-intrinsic-size: 32rem;
 }
 
 .customer-card-image-wrap {
@@ -741,7 +745,6 @@ tbody tr {
     radial-gradient(circle at 50% 50%, transparent 0 58%, rgba(15, 23, 42, 0.12) 100%);
   mix-blend-mode: overlay;
   opacity: 0.18;
-  animation: old-tv-noise 900ms steps(2, end) infinite;
 }
 
 .customer-card-state-overlay {
@@ -916,6 +919,63 @@ tbody tr {
   border-color: rgba(52, 211, 153, 0.24);
   background: rgba(6, 78, 59, 0.72);
   color: rgb(187 247 208);
+}
+
+.network-status {
+  position: fixed;
+  inset-inline-start: 0.75rem;
+  inset-block-end: calc(5.15rem + env(safe-area-inset-bottom));
+  z-index: 180;
+  display: inline-flex;
+  min-height: 2rem;
+  align-items: center;
+  gap: 0.4rem;
+  border-radius: 999px;
+  border: 1px solid rgb(226 232 240);
+  background: rgba(255, 255, 255, 0.94);
+  padding: 0.25rem 0.65rem;
+  color: rgb(51 65 85);
+  font-size: 0.75rem;
+  font-weight: 900;
+  box-shadow: 0 10px 28px rgba(15, 23, 42, 0.12);
+  backdrop-filter: blur(10px);
+}
+
+.network-status span {
+  height: 0.55rem;
+  width: 0.55rem;
+  border-radius: 999px;
+  background: currentColor;
+}
+
+.network-status--online {
+  color: rgb(21 128 61);
+}
+
+.network-status--syncing {
+  color: rgb(194 65 12);
+}
+
+.network-status--offline {
+  color: rgb(185 28 28);
+}
+
+.dark .network-status {
+  border-color: rgb(30 41 59);
+  background: rgba(13, 29, 51, 0.94);
+  color: rgb(203 213 225);
+}
+
+.dark .network-status--online {
+  color: rgb(134 239 172);
+}
+
+.dark .network-status--syncing {
+  color: rgb(253 186 116);
+}
+
+.dark .network-status--offline {
+  color: rgb(254 202 202);
 }
 
 .card-image-viewer {
@@ -1159,6 +1219,10 @@ tbody tr {
 }
 
 @media (max-width: 767px) {
+  .stagger-list > * {
+    animation: none;
+  }
+
   .table-wrap {
     border-radius: 0.5rem;
   }

@@ -4,8 +4,9 @@ import { balanceWarning, createCashboxMovement } from '@/lib/cashbox';
 import { apiError, fail, ok } from '@/lib/http';
 import { D } from '@/lib/money';
 import { detailedPaymentCurrencyCode, detailedPaymentLabels } from '@/lib/payment-methods';
-import { revalidateFinancePaths } from '@/lib/revalidate';
+import { revalidatePaths } from '@/lib/revalidate';
 import { cardBaseAmount, cardProgressPercent, cardStatusForStage, nextCardStage } from '@/lib/customer-cards';
+import { receivedCardResponseSelect } from '@/lib/received-card-selects';
 import { z } from 'zod';
 
 const settlementMethods = ['USD_CASH', 'USD_TRANSFER', 'USD_CARD', 'LYD_CASH', 'LYD_TRANSFER', 'LYD_OFFICE_TRANSFER', 'LYD_CARD'] as const;
@@ -288,12 +289,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
           cardImageSize: input.cardImageSize === undefined ? oldValue.cardImageSize : input.cardImageSize,
           cardImageUpdatedAt: imageChanged ? new Date() : oldValue.cardImageUpdatedAt,
         },
-        include: {
-          settlementCurrency: true,
-          batch: { include: { person: true, currency: true } },
-          operations: { where: { deletedAt: null }, orderBy: { occurredAt: 'desc' }, take: 12 },
-          stageLogs: { orderBy: { createdAt: 'desc' }, take: 8 },
-        },
+        select: receivedCardResponseSelect,
       });
     });
 
@@ -325,7 +321,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
       });
     }
 
-    revalidateFinancePaths(updated.batch?.personId ? ['/people', `/people/${updated.batch.personId}`] : ['/people']);
+    revalidatePaths(updated.batch?.personId ? ['/people', `/people/${updated.batch.personId}`] : ['/people']);
 
     return ok({
       ...updated,
@@ -394,7 +390,7 @@ export async function DELETE(_: Request, { params }: { params: Promise<{ id: str
       newValue: updated as any,
       description: 'حذف منطقي لبطاقة زبون',
     });
-    revalidateFinancePaths(['/people', `/people/${updated.batch.personId}`]);
+    revalidatePaths(['/people', `/people/${updated.batch.personId}`]);
 
     return ok({ success: true });
   } catch (error) {

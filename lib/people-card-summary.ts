@@ -1,6 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { sortByCustomerCode } from './customer-code-sort';
 import { db } from './db';
+import { currencySelect } from './received-card-selects';
 
 type FindPeopleOptions = {
   q?: string;
@@ -75,13 +76,18 @@ export async function findPeopleWithCardSummaries(options: FindPeopleOptions = {
         receivedAmount: true,
         remainingAmount: true,
         updatedAt: true,
-        batch: { select: { personId: true, currency: true } },
-        settlementCurrency: true,
+        batch: { select: { personId: true, currency: { select: currencySelect } } },
+        settlementCurrency: { select: currencySelect },
       },
     }),
     db.customerCardDelivery.findMany({
       where: { deletedAt: null, personId: { in: personIds } },
-      include: { currency: true },
+      select: {
+        personId: true,
+        currencyId: true,
+        amount: true,
+        currency: { select: currencySelect },
+      },
       orderBy: { occurredAt: 'desc' },
     }),
   ]);

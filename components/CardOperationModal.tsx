@@ -6,6 +6,7 @@ import { toast } from 'sonner';
 import { formatMoney, numberValue } from '@/lib/format';
 import { defaultCardDiscountCategories } from '@/lib/customer-cards';
 import ModalLayer, { ModalBackdrop } from '@/components/ModalLayer';
+import { announceSyncEnd, announceSyncStart } from '@/lib/client-cache';
 
 type Props = {
   card: any;
@@ -13,6 +14,7 @@ type Props = {
   initialType?: string;
   onClose: () => void;
   onSaved: (card: any) => void;
+  onOptimistic?: (card: any) => void;
 };
 
 const operationTypes = [
@@ -29,7 +31,7 @@ function currentRemaining(card: any) {
   return Math.max(base - numberValue(card.receivedAmount), 0);
 }
 
-export default function CardOperationModal({ card, operation, initialType, onClose, onSaved }: Props) {
+export default function CardOperationModal({ card, operation, initialType, onClose, onSaved, onOptimistic }: Props) {
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState({
     operationType: operation?.operationType || initialType || 'GIFT_CARD',
@@ -59,6 +61,55 @@ export default function CardOperationModal({ card, operation, initialType, onClo
       ? Math.min(Math.max(((currentDeducted + projectedAmount) / baseAmount) * 100, 0), 100)
       : currentPercent;
 
+  function optimisticOperationCard() {
+    const now = new Date().toISOString();
+    const deducting = ['GIFT_CARD', 'INVOICE', 'FINAL_SETTLEMENT'].includes(form.operationType);
+    const totalDeducted = deducting ? Math.min(currentDeducted + projectedAmount, baseAmount) : currentDeducted;
+    const remainingAmount = deducting ? Math.max(baseAmount - totalDeducted, 0) : remaining;
+    const nextStatus =
+      form.operationType === 'REJECT'
+        ? 'CANCELLED'
+        : form.operationType === 'REACTIVATE'
+          ? remainingAmount <= 0
+            ? 'SETTLED'
+            : totalDeducted > 0
+              ? 'IN_SETTLEMENT'
+              : 'RECEIVED'
+          : deducting && remainingAmount <= 0
+            ? 'SETTLED'
+            : deducting
+              ? 'IN_SETTLEMENT'
+              : card.status;
+
+    return {
+      ...card,
+      receivedAmount: totalDeducted,
+      totalDeducted,
+      remainingAmount,
+      progressPercent: baseAmount > 0 ? Math.min((totalDeducted / baseAmount) * 100, 100) : 0,
+      status: nextStatus,
+      currentStage: nextStatus === 'SETTLED' ? 5 : card.currentStage,
+      rejectReason: form.operationType === 'REJECT' ? form.reason || form.note : form.operationType === 'REACTIVATE' ? null : card.rejectReason,
+      rejectedAt: form.operationType === 'REJECT' ? now : form.operationType === 'REACTIVATE' ? null : card.rejectedAt,
+      updatedAt: now,
+      operations: [
+        {
+          id: `optimistic-${now}`,
+          cardId: card.id,
+          operationType: form.operationType,
+          categoryCode: form.operationType === 'GIFT_CARD' ? form.categoryCode : null,
+          quantity: form.operationType === 'GIFT_CARD' ? Number(form.quantity || 1) : 1,
+          amount: projectedAmount,
+          note: form.note || null,
+          reason: form.reason || null,
+          occurredAt: now,
+          createdAt: now,
+        },
+        ...(card.operations || []),
+      ],
+    };
+  }
+
   async function submit(event: React.FormEvent) {
     event.preventDefault();
     if (saving) return;
@@ -71,7 +122,9 @@ export default function CardOperationModal({ card, operation, initialType, onClo
     }
 
     setSaving(true);
+    if (!operation) onOptimistic?.(optimisticOperationCard());
     try {
+      announceSyncStart();
       const response = await fetch(
         operation
           ? `/api/inventory/received-cards/${card.id}/operations/${operation.id}`
@@ -93,12 +146,17 @@ export default function CardOperationModal({ card, operation, initialType, onClo
         },
       );
       const result = await response.json().catch(() => ({}));
-      if (!response.ok) return toast.error(result.error || 'تعذر حفظ عملية البطاقة');
+      if (!response.ok) {
+        if (!operation) onOptimistic?.(card);
+        return toast.error(result.error || 'تعذر حفظ عملية البطاقة');
+      }
       toast.success(operation ? 'تم تعديل العملية وإعادة حساب الرصيد' : 'تم تسجيل عملية البطاقة');
       onSaved(result);
     } catch {
+      if (!operation) onOptimistic?.(card);
       toast.error('تعذر الاتصال بالخادم أثناء حفظ عملية البطاقة');
     } finally {
+      announceSyncEnd();
       setSaving(false);
     }
   }

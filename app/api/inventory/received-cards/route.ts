@@ -2,7 +2,8 @@ import { db } from '@/lib/db';
 import { audit, requireSession } from '@/lib/auth';
 import { apiError, fail, ok } from '@/lib/http';
 import { D } from '@/lib/money';
-import { revalidateFinancePaths } from '@/lib/revalidate';
+import { revalidatePaths } from '@/lib/revalidate';
+import { receivedCardBatchResponseSelect } from '@/lib/received-card-selects';
 import { STANDARD_CUSTOMER_CARD_VALUE_USD, cardBaseAmount, cardProgressPercent } from '@/lib/customer-cards';
 import { Prisma } from '@prisma/client';
 import { z } from 'zod';
@@ -103,19 +104,7 @@ export async function GET() {
     await requireSession();
 
     const batches = await db.receivedCardBatch.findMany({
-      include: {
-        person: true,
-        currency: true,
-        cards: {
-          where: { deletedAt: null },
-          include: {
-            settlementCurrency: true,
-            operations: { where: { deletedAt: null }, orderBy: { occurredAt: 'desc' }, take: 12 },
-            stageLogs: { orderBy: { createdAt: 'desc' }, take: 8 },
-          },
-          orderBy: { sequence: 'asc' },
-        },
-      },
+      select: receivedCardBatchResponseSelect,
       orderBy: { receivedAt: 'desc' },
       take: 200,
     });
@@ -280,20 +269,7 @@ export async function POST(request: Request) {
 
       return tx.receivedCardBatch.findUniqueOrThrow({
         where: { id: created.id },
-        include: {
-          person: true,
-          currency: true,
-          entryTransaction: true,
-          cards: {
-            where: { deletedAt: null },
-            include: {
-              settlementCurrency: true,
-              operations: { where: { deletedAt: null }, orderBy: { occurredAt: 'desc' }, take: 12 },
-              stageLogs: { orderBy: { createdAt: 'desc' }, take: 8 },
-            },
-            orderBy: { sequence: 'asc' },
-          },
-        },
+        select: receivedCardBatchResponseSelect,
       });
     });
 
@@ -303,7 +279,7 @@ export async function POST(request: Request) {
       newValue: batch as any,
       description: 'إضافة دفعة بطاقات مستلمة بدون أثر على الصندوق',
     });
-    revalidateFinancePaths([`/people/${batch.personId}`]);
+    revalidatePaths(['/people', `/people/${batch.personId}`, '/inventory/received-cards']);
 
     return ok(batch, 201);
   } catch (error) {

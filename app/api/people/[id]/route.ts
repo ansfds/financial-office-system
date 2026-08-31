@@ -1,7 +1,8 @@
 import { db } from '@/lib/db';
 import { audit, requireSession } from '@/lib/auth';
 import { apiError, fail, ok } from '@/lib/http';
-import { revalidateFinancePaths } from '@/lib/revalidate';
+import { revalidatePaths } from '@/lib/revalidate';
+import { personDetailSelect } from '@/lib/received-card-selects';
 import { z } from 'zod';
 
 const updatePersonSchema = z.object({
@@ -20,36 +21,7 @@ export async function GET(_: Request, { params }: { params: Promise<{ id: string
     const { id } = await params;
     const person = await db.person.findUnique({
       where: { id },
-      include: {
-        transactions: {
-          where: { deletedAt: null },
-          include: { currency: true, type: true, movements: true },
-          orderBy: { transactionAt: 'desc' },
-        },
-        cardBatches: {
-          include: {
-            cards: {
-              where: { deletedAt: null },
-              include: {
-                settlementCurrency: true,
-                operations: { where: { deletedAt: null }, orderBy: { occurredAt: 'desc' }, take: 20 },
-                stageLogs: { orderBy: { createdAt: 'desc' }, take: 8 },
-              },
-              orderBy: { sequence: 'asc' },
-            },
-            currency: true,
-          },
-          orderBy: { receivedAt: 'desc' },
-        },
-        sheinSales: {
-          orderBy: { updatedAt: 'desc' },
-        },
-        cardDeliveries: {
-          where: { deletedAt: null },
-          include: { currency: true },
-          orderBy: { occurredAt: 'desc' },
-        },
-      },
+      select: personDetailSelect,
     });
 
     return ok(person);
@@ -70,28 +42,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
     const person = await db.person.update({
       where: { id },
       data: parsed.data,
-      include: {
-        cardBatches: {
-          include: {
-            currency: true,
-            cards: {
-              where: { deletedAt: null },
-              include: {
-                settlementCurrency: true,
-                operations: { where: { deletedAt: null }, orderBy: { occurredAt: 'desc' }, take: 20 },
-                stageLogs: { orderBy: { createdAt: 'desc' }, take: 8 },
-              },
-              orderBy: { sequence: 'asc' },
-            },
-          },
-          orderBy: { receivedAt: 'desc' },
-        },
-        cardDeliveries: {
-          where: { deletedAt: null },
-          include: { currency: true },
-          orderBy: { occurredAt: 'desc' },
-        },
-      },
+      select: personDetailSelect,
     });
 
     await audit('PERSON_UPDATE', {
@@ -101,7 +52,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
       newValue: person as any,
       description: 'تعديل بيانات زبون',
     });
-    revalidateFinancePaths([`/people/${id}`]);
+    revalidatePaths(['/people', `/people/${id}`]);
 
     return ok(person);
   } catch (error) {
@@ -129,7 +80,7 @@ export async function DELETE(_: Request, { params }: { params: Promise<{ id: str
       oldValue: oldValue as any,
       description: 'أرشفة زبون',
     });
-    revalidateFinancePaths(['/people', `/people/${id}`]);
+    revalidatePaths(['/people', `/people/${id}`]);
 
     return ok({ success: true });
   } catch (error) {

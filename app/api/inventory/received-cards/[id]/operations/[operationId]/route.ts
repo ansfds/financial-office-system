@@ -8,6 +8,7 @@ import {
   isCardDeductionOperation,
 } from '@/lib/customer-cards';
 import { recalculateReceivedCard } from '@/lib/customer-card-recalculation';
+import { revalidatePaths } from '@/lib/revalidate';
 import { z } from 'zod';
 
 const operationTypes = ['GIFT_CARD', 'INVOICE', 'FINAL_SETTLEMENT', 'REJECT', 'REACTIVATE', 'ADJUSTMENT'] as const;
@@ -112,6 +113,7 @@ export async function PATCH(
       newValue: updated as any,
       description: 'تعديل عملية بطاقة وإعادة حساب الرصيد',
     });
+    revalidatePaths(updated.batch?.personId ? ['/people', `/people/${updated.batch.personId}`, '/inventory/received-cards'] : ['/people']);
 
     return ok(updated);
   } catch (error) {
@@ -161,6 +163,7 @@ export async function DELETE(
       newValue: { deletedOperation: deletedSnapshot, card: updated } as any,
       description: 'حذف منطقي لعملية بطاقة وإعادة حساب الرصيد',
     });
+    revalidatePaths(updated.batch?.personId ? ['/people', `/people/${updated.batch.personId}`, '/inventory/received-cards'] : ['/people']);
 
     return ok(updated);
   } catch (error) {

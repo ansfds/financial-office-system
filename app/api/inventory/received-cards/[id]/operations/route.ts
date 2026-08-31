@@ -8,6 +8,7 @@ import {
   isCardDeductionOperation,
 } from '@/lib/customer-cards';
 import { recalculateReceivedCard } from '@/lib/customer-card-recalculation';
+import { revalidatePaths } from '@/lib/revalidate';
 import { z } from 'zod';
 
 const operationTypes = ['GIFT_CARD', 'INVOICE', 'FINAL_SETTLEMENT', 'REJECT', 'REACTIVATE', 'ADJUSTMENT'] as const;
@@ -118,6 +119,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       newValue: { operation: createdOperation, card: updated } as any,
       description: 'إضافة عملية على بطاقة زبون وإعادة حساب الرصيد',
     });
+    revalidatePaths(updated.batch?.personId ? ['/people', `/people/${updated.batch.personId}`, '/inventory/received-cards'] : ['/people']);
 
     return ok(updated, 201);
   } catch (error) {
