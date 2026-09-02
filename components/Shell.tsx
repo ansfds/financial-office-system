@@ -7,6 +7,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   LayoutDashboard,
   LogOut,
+  MessageSquareText,
   MoreHorizontal,
   Settings,
   ShieldCheck,
@@ -22,6 +23,7 @@ const logoUrl = 'https://i.postimg.cc/k4nQr4gx/680242520-122094061526346951-8726
 
 const items = [
   ['/dashboard', 'الصفحة الرئيسية', LayoutDashboard],
+  ['/instant-registration', 'التسجيل الفوري', MessageSquareText],
   ['/people', 'الزبائن والبطاقات', Users],
   ['/accounts', 'لنا وعلينا', Wallet],
   ['/audit', 'سجل العمليات', ShieldCheck],
@@ -209,7 +211,7 @@ export default function Shell({ children }: { children: React.ReactNode }) {
               openMobileMenu();
             }}
             className={`flex min-h-[48px] flex-col items-center justify-center gap-1 rounded-lg px-1 text-[11px] font-black ${
-              ['/audit', '/settings'].some((href) => pathname.startsWith(href))
+              ['/accounts', '/audit', '/settings'].some((href) => pathname.startsWith(href))
                 ? 'bg-indigo-50 text-indigo-700 dark:bg-blue-950 dark:text-blue-200'
                 : 'text-slate-500 dark:text-slate-300'
             }`}
