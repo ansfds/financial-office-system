@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { exactCustomerNameMatches } from '@/lib/customer-name-resolution';
 import { parseInstantMessage } from '@/lib/instant-registration-parser';
 
 describe('instant registration parser', () => {
@@ -38,6 +39,56 @@ describe('instant registration parser', () => {
       ['4176', 2000, 1800],
       ['1288', 2000, 1800],
     ]);
+  });
+
+  it('extracts a leading customer name from inline card entry messages', () => {
+    const parsed = parseInstantMessage('عبد الحكيم محمد بطاقة جديدة 0123 قيمة 2000$ المتفق 1810$ المستلم 0$');
+
+    expect(parsed.kind).toBe('CARD_ENTRY');
+    if (parsed.kind !== 'CARD_ENTRY') return;
+    expect(parsed.personName).toBe('عبد الحكيم محمد');
+    expect(parsed.cards[0].cardLast4).toBe('0123');
+    expect(parsed.cards[0].valueAmount?.value).toBe(2000);
+    expect(parsed.cards[0].agreedAmount?.value).toBe(1810);
+    expect(parsed.cards[0].receivedAmount?.value).toBe(0);
+    expect((parsed.cards[0].agreedAmount?.value || 0) - (parsed.cards[0].receivedAmount?.value || 0)).toBe(1810);
+  });
+
+  it('extracts a leading customer name from delivery, withdrawal, and settlement messages', () => {
+    const delivery = parseInstantMessage('عبد الحكيم محمد استلم 500$');
+    const withdrawal = parseInstantMessage('عبد الحكيم محمد بطاقة 0123 سحب 476$');
+    const settlement = parseInstantMessage('عبد الحكيم محمد 0123 صافي بالكامل');
+
+    expect(delivery.kind).toBe('CUSTOMER_DELIVERY');
+    if (delivery.kind === 'CUSTOMER_DELIVERY') {
+      expect(delivery.personName).toBe('عبد الحكيم محمد');
+      expect(delivery.amount?.value).toBe(500);
+    }
+
+    expect(withdrawal.kind).toBe('CARD_WITHDRAWAL');
+    if (withdrawal.kind === 'CARD_WITHDRAWAL') {
+      expect(withdrawal.personName).toBe('عبد الحكيم محمد');
+      expect(withdrawal.cardLast4).toBe('0123');
+      expect(withdrawal.amount?.value).toBe(476);
+    }
+
+    expect(settlement.kind).toBe('CARD_FINAL_SETTLEMENT');
+    if (settlement.kind === 'CARD_FINAL_SETTLEMENT') {
+      expect(settlement.personName).toBe('عبد الحكيم محمد');
+      expect(settlement.cardLast4).toBe('0123');
+    }
+  });
+
+  it('matches existing customers with flexible Arabic full-name normalization', () => {
+    const people = [
+      { id: 'p1', fullName: 'عبد   الحكيم محمّد' },
+      { id: 'p2', fullName: 'أحمد علي' },
+      { id: 'p3', fullName: 'هبة سالم' },
+    ];
+
+    expect(exactCustomerNameMatches('عبد الحكيم محمد', people).map((person) => person.id)).toEqual(['p1']);
+    expect(exactCustomerNameMatches('احمد علي', people).map((person) => person.id)).toEqual(['p2']);
+    expect(exactCustomerNameMatches('هبه سالم', people, { foldTaMarbuta: true }).map((person) => person.id)).toEqual(['p3']);
   });
 
   it('parses a customer delivery update', () => {

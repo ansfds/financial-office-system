@@ -11,6 +11,11 @@ import {
 } from './customer-cards';
 import { recalculateReceivedCard } from './customer-card-recalculation';
 import {
+  customerNameWords,
+  exactCustomerNameMatches,
+  leadingCustomerNameMatches,
+} from './customer-name-resolution';
+import {
   buildWalletSnapshot,
   normalizeWalletPaymentMethod,
   previewWalletOperation,
@@ -46,6 +51,27 @@ type CurrencyRow = {
   symbol: string;
 };
 
+const personLookupSelect = {
+  id: true,
+  customerNo: true,
+  fullName: true,
+  phone: true,
+  externalId: true,
+  createdAt: true,
+} satisfies Prisma.PersonSelect;
+
+type PersonLookup = Prisma.PersonGetPayload<{ select: typeof personLookupSelect }>;
+
+type PersonResolution = {
+  person: PersonLookup | null;
+  candidates: PersonLookup[];
+  ambiguous: boolean;
+};
+
+type InstantRegistrationOptions = {
+  selectedPersonId?: string | null;
+};
+
 type PreviewMatch = {
   person?: {
     id: string;
@@ -54,6 +80,12 @@ type PreviewMatch = {
     phone?: string | null;
     existing: boolean;
   } | null;
+  personCandidates?: Array<{
+    id: string;
+    customerNo?: string | null;
+    fullName: string;
+    phone?: string | null;
+  }>;
   card?: {
     id: string;
     cardLast4?: string | null;
@@ -164,6 +196,41 @@ function normalizeComparable(value?: string | null) {
     .trim();
 }
 
+function previewPerson(person: PersonLookup, existing = true) {
+  return {
+    id: person.id,
+    customerNo: person.customerNo,
+    fullName: person.fullName,
+    phone: person.phone,
+    existing,
+  };
+}
+
+function previewPersonCandidates(people: PersonLookup[]) {
+  return people.map((person) => ({
+    id: person.id,
+    customerNo: person.customerNo,
+    fullName: person.fullName,
+    phone: person.phone,
+  }));
+}
+
+function uniquePeople(people: PersonLookup[]) {
+  const seen = new Set<string>();
+  return people.filter((person) => {
+    if (seen.has(person.id)) return false;
+    seen.add(person.id);
+    return true;
+  });
+}
+
+function ambiguousPersonIssue(candidates: PersonLookup[]) {
+  const names = candidates.slice(0, 5).map(personLabel).filter(Boolean).join('، ');
+  return names
+    ? `وجدت أكثر من زبون محتمل: ${names}. اختر الزبون الصحيح قبل الحفظ.`
+    : 'وجدت أكثر من زبون محتمل. اختر الزبون الصحيح قبل الحفظ.';
+}
+
 function cardDisplay(card?: any) {
   if (!card) return '';
   return card.cardLast4 || card.publicCode || `#${card.sequence || ''}`;
@@ -245,46 +312,119 @@ async function nextCardCodes(tx: Prisma.TransactionClient, count: number) {
 async function findMatchingPerson(
   tx: Prisma.TransactionClient,
   criteria: { personName?: string | null; phone?: string | null; customerCode?: string | null },
+  options: InstantRegistrationOptions = {},
 ) {
-  const OR: Prisma.PersonWhereInput[] = [];
+  const resolution = await resolvePerson(tx, criteria, options);
+  if (resolution.ambiguous) throw new Error('PERSON_AMBIGUOUS');
+  return resolution.person;
+}
+
+async function resolvePerson(
+  tx: Prisma.TransactionClient,
+  criteria: { personName?: string | null; phone?: string | null; customerCode?: string | null },
+  options: InstantRegistrationOptions = {},
+): Promise<PersonResolution> {
+  const selectedPersonId = options.selectedPersonId?.trim();
+  if (selectedPersonId) {
+    const person = await tx.person.findFirst({
+      where: { id: selectedPersonId, deletedAt: null, status: 'ACTIVE' },
+      select: personLookupSelect,
+    });
+    if (!person) throw new Error('PERSON_NOT_FOUND');
+    return { person, candidates: [], ambiguous: false };
+  }
+
   const phone = criteria.phone?.trim();
   const customerCode = criteria.customerCode?.trim();
   const personName = criteria.personName?.trim();
 
+  const phoneOrCodeMatches = await findPeopleByPhoneOrCode(tx, phone, customerCode);
+  if (phoneOrCodeMatches.length === 1) return { person: phoneOrCodeMatches[0], candidates: [], ambiguous: false };
+  if (phoneOrCodeMatches.length > 1) return { person: null, candidates: phoneOrCodeMatches, ambiguous: true };
+
+  const nameMatches = await findPeopleByName(tx, personName);
+  if (nameMatches.length === 1) return { person: nameMatches[0], candidates: [], ambiguous: false };
+  if (nameMatches.length > 1) return { person: null, candidates: nameMatches, ambiguous: true };
+
+  return { person: null, candidates: [], ambiguous: false };
+}
+
+async function findPeopleByPhoneOrCode(
+  tx: Prisma.TransactionClient,
+  phone?: string | null,
+  customerCode?: string | null,
+) {
+  const OR: Prisma.PersonWhereInput[] = [];
   if (phone) OR.push({ phone: { contains: phone } });
   if (customerCode) {
     OR.push({ customerNo: { equals: customerCode, mode: 'insensitive' } });
     OR.push({ externalId: { equals: customerCode, mode: 'insensitive' } });
   }
-  if (personName) {
-    OR.push({ fullName: { equals: personName, mode: 'insensitive' } });
-    OR.push({ fullName: { contains: personName, mode: 'insensitive' } });
-  }
-  if (!OR.length) return null;
+  if (!OR.length) return [];
 
   const people = await tx.person.findMany({
     where: { deletedAt: null, status: 'ACTIVE', OR },
-    select: { id: true, customerNo: true, fullName: true, phone: true, externalId: true, createdAt: true },
-    take: 8,
+    select: personLookupSelect,
+    orderBy: [{ updatedAt: 'desc' }, { createdAt: 'desc' }],
+    take: 12,
   });
-  if (!people.length) return null;
-
-  const normalizedName = normalizeComparable(personName);
+  const normalizedPhone = normalizeComparable(phone);
   const normalizedCode = normalizeComparable(customerCode);
-  const exact =
-    people.find((person) => phone && normalizeComparable(person.phone) === normalizeComparable(phone)) ||
-    people.find((person) => normalizedCode && [person.customerNo, person.externalId].some((value) => normalizeComparable(value) === normalizedCode)) ||
-    people.find((person) => normalizedName && normalizeComparable(person.fullName) === normalizedName);
+  return uniquePeople(
+    people.filter(
+      (person) =>
+        (normalizedPhone && normalizeComparable(person.phone) === normalizedPhone) ||
+        (normalizedCode && [person.customerNo, person.externalId].some((value) => normalizeComparable(value) === normalizedCode)),
+    ),
+  );
+}
 
-  return exact || people[0];
+async function findPeopleByName(tx: Prisma.TransactionClient, personName?: string | null) {
+  if (!personName?.trim()) return [];
+
+  const words = customerNameWords(personName);
+  const broadPeople = words.length
+    ? await tx.person.findMany({
+        where: {
+          deletedAt: null,
+          status: 'ACTIVE',
+          OR: words.map((word) => ({ fullName: { contains: word, mode: 'insensitive' } })),
+        },
+        select: personLookupSelect,
+        orderBy: [{ updatedAt: 'desc' }, { createdAt: 'desc' }],
+        take: 80,
+      })
+    : [];
+
+  const exactMatches = exactCustomerNameMatches(personName, broadPeople);
+  if (exactMatches.length) return uniquePeople(exactMatches);
+
+  const foldedMatches = exactCustomerNameMatches(personName, broadPeople, { foldTaMarbuta: true });
+  if (foldedMatches.length) return uniquePeople(foldedMatches);
+
+  const activePeople = await tx.person.findMany({
+    where: { deletedAt: null, status: 'ACTIVE' },
+    select: personLookupSelect,
+    orderBy: [{ updatedAt: 'desc' }, { createdAt: 'desc' }],
+  });
+  const allPeople = uniquePeople([...broadPeople, ...activePeople]);
+
+  const exactAllMatches = exactCustomerNameMatches(personName, allPeople);
+  if (exactAllMatches.length) return uniquePeople(exactAllMatches);
+
+  const foldedAllMatches = exactCustomerNameMatches(personName, allPeople, { foldTaMarbuta: true });
+  if (foldedAllMatches.length) return uniquePeople(foldedAllMatches);
+
+  return uniquePeople(leadingCustomerNameMatches(personName, allPeople));
 }
 
 async function findOrCreatePerson(
   tx: Prisma.TransactionClient,
   criteria: { personName?: string | null; phone?: string | null; customerCode?: string | null; notes?: string | null },
   allowCreate: boolean,
+  options: InstantRegistrationOptions = {},
 ) {
-  const existing = await findMatchingPerson(tx, criteria);
+  const existing = await findMatchingPerson(tx, criteria, options);
   if (existing) return { person: existing, created: false };
   if (!allowCreate || !criteria.personName?.trim()) throw new Error('PERSON_NOT_FOUND');
 
@@ -297,16 +437,18 @@ async function findOrCreatePerson(
       notes: criteria.notes || null,
       category: 'REGULAR',
     },
-    select: { id: true, customerNo: true, fullName: true, phone: true, externalId: true, createdAt: true },
+    select: personLookupSelect,
   });
 
   return { person, created: true };
 }
 
-async function findCardsByLast4(tx: Prisma.TransactionClient, cardLast4?: string | null) {
+async function findCardsByLast4(tx: Prisma.TransactionClient, cardLast4?: string | null, personId?: string | null) {
   if (!cardLast4) return [];
+  const where: Prisma.ReceivedCustomerCardWhereInput = { deletedAt: null, cardLast4 };
+  if (personId) where.batch = { personId };
   return tx.receivedCustomerCard.findMany({
-    where: { deletedAt: null, cardLast4 },
+    where,
     include: {
       batch: { include: { person: true, currency: true } },
       settlementCurrency: true,
@@ -321,8 +463,8 @@ async function findCardsByLast4(tx: Prisma.TransactionClient, cardLast4?: string
   });
 }
 
-async function findSingleCard(tx: Prisma.TransactionClient, cardLast4?: string | null) {
-  const cards = await findCardsByLast4(tx, cardLast4);
+async function findSingleCard(tx: Prisma.TransactionClient, cardLast4?: string | null, personId?: string | null) {
+  const cards = await findCardsByLast4(tx, cardLast4, personId);
   if (!cards.length) throw new Error('CARD_NOT_FOUND');
   if (cards.length > 1) throw new Error('CARD_AMBIGUOUS');
   return cards[0];
@@ -740,13 +882,20 @@ async function previewRepaymentTarget(
   return { target: narrowed[0], blockingIssue: '' };
 }
 
-async function buildCardEntryPreview(tx: Prisma.TransactionClient, parsed: ParsedCardEntry, duplicate: boolean) {
-  const person = await findMatchingPerson(tx, parsed);
+async function buildCardEntryPreview(
+  tx: Prisma.TransactionClient,
+  parsed: ParsedCardEntry,
+  duplicate: boolean,
+  options: InstantRegistrationOptions = {},
+) {
+  const personResolution = await resolvePerson(tx, parsed, options);
+  const person = personResolution.person;
   const blockingIssues: string[] = [];
   const warnings = [...parsed.warnings];
   const summary: string[] = [];
   const duplicateCards: string[] = [];
 
+  if (personResolution.ambiguous) blockingIssues.push(ambiguousPersonIssue(personResolution.candidates));
   if (!parsed.personName && !person) blockingIssues.push('لم يتم تحديد اسم الزبون.');
   if (!parsed.cards.length) blockingIssues.push('لم يتم العثور على بيانات بطاقة.');
 
@@ -768,7 +917,13 @@ async function buildCardEntryPreview(tx: Prisma.TransactionClient, parsed: Parse
     if (duplicateCards.length) blockingIssues.push(`هذه البطاقة/العملية تبدو مسجلة مسبقًا: ${duplicateCards.join(', ')}.`);
   }
 
-  summary.push(person ? `تم العثور على زبون موجود: ${personLabel(person)}.` : `سيتم إنشاء زبون جديد: ${parsed.personName || 'بدون اسم'}.`);
+  summary.push(
+    person
+      ? `تم العثور على الزبون: ${person.fullName}.`
+      : personResolution.ambiguous
+        ? 'اختر الزبون الصحيح من النتائج المطابقة قبل الحفظ.'
+        : `سيتم إنشاء زبون جديد: ${parsed.personName || 'بدون اسم'}.`,
+  );
   if (parsed.phone) summary.push(`الهاتف: ${parsed.phone}.`);
   if (parsed.customerCode) summary.push(`الكود: ${parsed.customerCode}.`);
   if (parsed.bankName) summary.push(`النوع: ${parsed.bankName}.`);
@@ -798,7 +953,8 @@ async function buildCardEntryPreview(tx: Prisma.TransactionClient, parsed: Parse
     summary,
     parsed,
     matches: {
-      person: person ? { ...person, existing: true } : null,
+      person: person ? previewPerson(person) : null,
+      personCandidates: previewPersonCandidates(personResolution.candidates),
       duplicateCards,
     },
   } satisfies InstantRegistrationPreview;
@@ -808,18 +964,28 @@ async function buildCardLookupPreview(
   tx: Prisma.TransactionClient,
   parsed: ParsedCardWithdrawal | ParsedCardFinalSettlement | ParsedCardStatus,
   duplicate: boolean,
+  options: InstantRegistrationOptions = {},
 ) {
   const blockingIssues: string[] = [];
   const warnings = [...parsed.warnings];
   const summary: string[] = [];
-  const cards = await findCardsByLast4(tx, parsed.cardLast4);
+  const personResolution = parsed.personName ? await resolvePerson(tx, parsed, options) : null;
+  const person = personResolution?.person || null;
+  if (personResolution?.ambiguous) blockingIssues.push(ambiguousPersonIssue(personResolution.candidates));
+
+  const cards = personResolution?.ambiguous ? [] : await findCardsByLast4(tx, parsed.cardLast4, person?.id);
   const card = cards.length === 1 ? cards[0] : null;
 
   if (!parsed.cardLast4) blockingIssues.push('لم يتم تحديد البطاقة.');
-  if (!cards.length && parsed.cardLast4) blockingIssues.push(`لم يتم العثور على بطاقة ${parsed.cardLast4}.`);
+  if (parsed.personName && !person && !personResolution?.ambiguous) blockingIssues.push(`لم يتم العثور على الزبون: ${parsed.personName}.`);
+  if (!cards.length && parsed.cardLast4 && !personResolution?.ambiguous) {
+    blockingIssues.push(person ? `لم يتم العثور على بطاقة ${parsed.cardLast4} لهذا الزبون.` : `لم يتم العثور على بطاقة ${parsed.cardLast4}.`);
+  }
   if (cards.length > 1) blockingIssues.push(`يوجد أكثر من بطاقة بنفس آخر 4 أرقام (${parsed.cardLast4}). افتح الزبون وحدد البطاقة يدويًا.`);
   if (duplicate) blockingIssues.push('هذه الرسالة تم تنفيذها سابقًا.');
 
+  if (person) summary.push(`تم العثور على الزبون: ${person.fullName}.`);
+  if (personResolution?.ambiguous) summary.push('اختر الزبون الصحيح من النتائج المطابقة قبل الحفظ.');
   if (card) {
     summary.push(`الزبون: ${personLabel(card.batch?.person)}.`);
     summary.push(`البطاقة: ${cardDisplay(card)}.`);
@@ -869,6 +1035,8 @@ async function buildCardLookupPreview(
     summary,
     parsed,
     matches: {
+      person: person ? previewPerson(person) : null,
+      personCandidates: previewPersonCandidates(personResolution?.candidates || []),
       card: card
         ? {
             id: card.id,
@@ -883,14 +1051,22 @@ async function buildCardLookupPreview(
   } satisfies InstantRegistrationPreview;
 }
 
-async function buildDeliveryPreview(tx: Prisma.TransactionClient, parsed: ParsedCustomerDelivery, duplicate: boolean) {
+async function buildDeliveryPreview(
+  tx: Prisma.TransactionClient,
+  parsed: ParsedCustomerDelivery,
+  duplicate: boolean,
+  options: InstantRegistrationOptions = {},
+) {
   const blockingIssues: string[] = [];
   const warnings = [...parsed.warnings];
   const summary: string[] = [];
-  let person = parsed.personName ? await findMatchingPerson(tx, parsed) : null;
+  const personResolution = parsed.personName ? await resolvePerson(tx, parsed, options) : null;
+  let person = personResolution?.person || null;
   let card: any = null;
 
-  if (!person && parsed.cardLast4) {
+  if (personResolution?.ambiguous) blockingIssues.push(ambiguousPersonIssue(personResolution.candidates));
+
+  if (!person && !personResolution?.ambiguous && parsed.cardLast4) {
     const cards = await findCardsByLast4(tx, parsed.cardLast4);
     if (cards.length === 1) {
       card = cards[0];
@@ -904,7 +1080,13 @@ async function buildDeliveryPreview(tx: Prisma.TransactionClient, parsed: Parsed
   if (!parsed.amount || parsed.amount.value <= 0) blockingIssues.push('لم يتم تحديد المبلغ المستلم.');
   if (duplicate) blockingIssues.push('هذه الرسالة تم تنفيذها سابقًا.');
 
-  summary.push(person ? `تم العثور على ${personLabel(person)}.` : `الزبون: ${parsed.personName || 'غير محدد'}.`);
+  summary.push(
+    person
+      ? `تم العثور على ${personLabel(person)}.`
+      : personResolution?.ambiguous
+        ? 'اختر الزبون الصحيح من النتائج المطابقة قبل الحفظ.'
+        : `الزبون: ${parsed.personName || 'غير محدد'}.`,
+  );
   if (card) summary.push(`من بطاقة: ${cardDisplay(card)}.`);
   if (parsed.amount) summary.push(`إضافة مبلغ مستلم: ${amountLabel(parsed.amount)}.`);
 
@@ -930,7 +1112,8 @@ async function buildDeliveryPreview(tx: Prisma.TransactionClient, parsed: Parsed
     summary,
     parsed,
     matches: {
-      person: person ? { ...person, existing: true } : null,
+      person: person ? previewPerson(person) : null,
+      personCandidates: previewPersonCandidates(personResolution?.candidates || []),
       card: card
         ? {
             id: card.id,
@@ -945,17 +1128,30 @@ async function buildDeliveryPreview(tx: Prisma.TransactionClient, parsed: Parsed
   } satisfies InstantRegistrationPreview;
 }
 
-async function buildWalletMovementPreview(tx: Prisma.TransactionClient, parsed: ParsedWalletMovement, duplicate: boolean) {
+async function buildWalletMovementPreview(
+  tx: Prisma.TransactionClient,
+  parsed: ParsedWalletMovement,
+  duplicate: boolean,
+  options: InstantRegistrationOptions = {},
+) {
   const blockingIssues: string[] = [];
   const warnings = [...parsed.warnings];
-  const person = await findMatchingPerson(tx, parsed);
+  const personResolution = await resolvePerson(tx, parsed, options);
+  const person = personResolution.person;
   const summary: string[] = [];
 
+  if (personResolution.ambiguous) blockingIssues.push(ambiguousPersonIssue(personResolution.candidates));
   if (!parsed.personName) blockingIssues.push('لم يتم تحديد اسم صاحب الدين.');
   if (!parsed.amount || parsed.amount.value <= 0) blockingIssues.push('لم يتم تحديد مبلغ الدين.');
   if (duplicate) blockingIssues.push('هذه الرسالة تم تنفيذها سابقًا.');
 
-  summary.push(person ? `تم العثور على زبون موجود: ${personLabel(person)}.` : `سيتم إنشاء زبون جديد: ${parsed.personName || 'غير محدد'}.`);
+  summary.push(
+    person
+      ? `تم العثور على الزبون: ${person.fullName}.`
+      : personResolution.ambiguous
+        ? 'اختر الزبون الصحيح من النتائج المطابقة قبل الحفظ.'
+        : `سيتم إنشاء زبون جديد: ${parsed.personName || 'غير محدد'}.`,
+  );
   summary.push(parsed.side === 'US' ? 'القسم: لنا.' : 'القسم: علينا.');
   if (parsed.amount) summary.push(`المبلغ: ${amountLabel(parsed.amount)}.`);
 
@@ -971,18 +1167,26 @@ async function buildWalletMovementPreview(tx: Prisma.TransactionClient, parsed: 
     summary,
     parsed,
     matches: {
-      person: person ? { ...person, existing: true } : null,
+      person: person ? previewPerson(person) : null,
+      personCandidates: previewPersonCandidates(personResolution.candidates),
     },
   } satisfies InstantRegistrationPreview;
 }
 
-async function buildWalletRepaymentPreview(tx: Prisma.TransactionClient, parsed: ParsedWalletRepayment, duplicate: boolean) {
+async function buildWalletRepaymentPreview(
+  tx: Prisma.TransactionClient,
+  parsed: ParsedWalletRepayment,
+  duplicate: boolean,
+  options: InstantRegistrationOptions = {},
+) {
   const blockingIssues: string[] = [];
   const warnings = [...parsed.warnings];
-  const person = await findMatchingPerson(tx, parsed);
+  const personResolution = await resolvePerson(tx, parsed, options);
+  const person = personResolution.person;
   const summary: string[] = [];
   let repaymentTarget: PreviewMatch['repaymentTarget'] = null;
 
+  if (personResolution.ambiguous) blockingIssues.push(ambiguousPersonIssue(personResolution.candidates));
   if (!person) blockingIssues.push('لم يتم العثور على صاحب الدين.');
   if (!parsed.amount || parsed.amount.value <= 0) blockingIssues.push('لم يتم تحديد مبلغ السداد.');
   if (duplicate) blockingIssues.push('هذه الرسالة تم تنفيذها سابقًا.');
@@ -993,7 +1197,13 @@ async function buildWalletRepaymentPreview(tx: Prisma.TransactionClient, parsed:
     if (blockingIssue) blockingIssues.push(blockingIssue);
   }
 
-  summary.push(person ? `تم العثور على ${personLabel(person)}.` : `صاحب الدين: ${parsed.personName || 'غير محدد'}.`);
+  summary.push(
+    person
+      ? `تم العثور على ${personLabel(person)}.`
+      : personResolution.ambiguous
+        ? 'اختر صاحب الدين الصحيح من النتائج المطابقة قبل الحفظ.'
+        : `صاحب الدين: ${parsed.personName || 'غير محدد'}.`,
+  );
   if (repaymentTarget) {
     summary.push(`الدين الحالي: ${repaymentTarget.balance.toLocaleString('en-US')} ${repaymentTarget.currency.symbol || repaymentTarget.currency.code}.`);
     summary.push(`القسم: ${repaymentTarget.accountType === 'DEBT' ? 'لنا' : 'علينا'}.`);
@@ -1012,34 +1222,43 @@ async function buildWalletRepaymentPreview(tx: Prisma.TransactionClient, parsed:
     summary,
     parsed,
     matches: {
-      person: person ? { ...person, existing: true } : null,
+      person: person ? previewPerson(person) : null,
+      personCandidates: previewPersonCandidates(personResolution.candidates),
       repaymentTarget,
     },
   } satisfies InstantRegistrationPreview;
 }
 
-export async function buildInstantRegistrationPreview(text: string): Promise<InstantRegistrationPreview> {
+export async function buildInstantRegistrationPreview(
+  text: string,
+  options: InstantRegistrationOptions = {},
+): Promise<InstantRegistrationPreview> {
   const parsed = parseInstantMessage(text);
   if (parsed.kind === 'UNKNOWN') return createBlockingPreview(parsed, ['لم أستطع فهم نوع العملية من الرسالة.']);
 
   return db.$transaction(async (tx) => {
     const duplicate = Boolean(await duplicateAudit(tx, parsed.fingerprint));
 
-    if (parsed.kind === 'CARD_ENTRY') return buildCardEntryPreview(tx, parsed, duplicate);
-    if (parsed.kind === 'CUSTOMER_DELIVERY') return buildDeliveryPreview(tx, parsed, duplicate);
+    if (parsed.kind === 'CARD_ENTRY') return buildCardEntryPreview(tx, parsed, duplicate, options);
+    if (parsed.kind === 'CUSTOMER_DELIVERY') return buildDeliveryPreview(tx, parsed, duplicate, options);
     if (parsed.kind === 'CARD_WITHDRAWAL' || parsed.kind === 'CARD_FINAL_SETTLEMENT' || parsed.kind === 'CARD_STATUS') {
-      return buildCardLookupPreview(tx, parsed, duplicate);
+      return buildCardLookupPreview(tx, parsed, duplicate, options);
     }
-    if (parsed.kind === 'WALLET_MOVEMENT') return buildWalletMovementPreview(tx, parsed, duplicate);
-    if (parsed.kind === 'WALLET_REPAYMENT') return buildWalletRepaymentPreview(tx, parsed, duplicate);
+    if (parsed.kind === 'WALLET_MOVEMENT') return buildWalletMovementPreview(tx, parsed, duplicate, options);
+    if (parsed.kind === 'WALLET_REPAYMENT') return buildWalletRepaymentPreview(tx, parsed, duplicate, options);
 
     return createBlockingPreview(parsed, ['لم أستطع فهم نوع العملية من الرسالة.']);
   });
 }
 
-async function executeCardEntry(tx: Prisma.TransactionClient, session: InstantSession, parsed: ParsedCardEntry) {
+async function executeCardEntry(
+  tx: Prisma.TransactionClient,
+  session: InstantSession,
+  parsed: ParsedCardEntry,
+  options: InstantRegistrationOptions = {},
+) {
   const currencies = await currenciesByCode(tx);
-  const { person, created } = await findOrCreatePerson(tx, parsed, true);
+  const { person, created } = await findOrCreatePerson(tx, parsed, true, options);
   const last4s = parsed.cards.map((card) => card.cardLast4).filter((value): value is string => Boolean(value));
   if (!last4s.length) throw new Error('PREVIEW_NOT_READY');
 
@@ -1187,9 +1406,14 @@ async function executeCardEntry(tx: Prisma.TransactionClient, session: InstantSe
   } satisfies ExecutionResult;
 }
 
-async function executeCustomerDelivery(tx: Prisma.TransactionClient, session: InstantSession, parsed: ParsedCustomerDelivery) {
+async function executeCustomerDelivery(
+  tx: Prisma.TransactionClient,
+  session: InstantSession,
+  parsed: ParsedCustomerDelivery,
+  options: InstantRegistrationOptions = {},
+) {
   const currencies = await currenciesByCode(tx);
-  let person = parsed.personName ? await findMatchingPerson(tx, parsed) : null;
+  let person = parsed.personName ? await findMatchingPerson(tx, parsed, options) : null;
   if (!person && parsed.cardLast4) {
     const card = await findSingleCard(tx, parsed.cardLast4);
     person = card.batch?.person || null;
@@ -1290,9 +1514,16 @@ async function createCardOperation(
   return { operation, updated };
 }
 
-async function executeCardWithdrawal(tx: Prisma.TransactionClient, session: InstantSession, parsed: ParsedCardWithdrawal) {
+async function executeCardWithdrawal(
+  tx: Prisma.TransactionClient,
+  session: InstantSession,
+  parsed: ParsedCardWithdrawal,
+  options: InstantRegistrationOptions = {},
+) {
   if (!parsed.amount) throw new Error('PREVIEW_NOT_READY');
-  const card = await findSingleCard(tx, parsed.cardLast4);
+  const person = parsed.personName ? await findMatchingPerson(tx, parsed, options) : null;
+  if (parsed.personName && !person) throw new Error('PERSON_NOT_FOUND');
+  const card = await findSingleCard(tx, parsed.cardLast4, person?.id);
   const plan = operationPlanForWithdrawal(parsed.amount, parsed.quantity);
   const duplicate = card.operations?.some(
     (operation: any) =>
@@ -1323,9 +1554,16 @@ async function executeCardWithdrawal(tx: Prisma.TransactionClient, session: Inst
   } satisfies ExecutionResult;
 }
 
-async function executeCardFinalSettlement(tx: Prisma.TransactionClient, session: InstantSession, parsed: ParsedInstantMessage) {
+async function executeCardFinalSettlement(
+  tx: Prisma.TransactionClient,
+  session: InstantSession,
+  parsed: ParsedInstantMessage,
+  options: InstantRegistrationOptions = {},
+) {
   if (parsed.kind !== 'CARD_FINAL_SETTLEMENT') throw new Error('PREVIEW_NOT_READY');
-  const card = await findSingleCard(tx, parsed.cardLast4);
+  const person = parsed.personName ? await findMatchingPerson(tx, parsed, options) : null;
+  if (parsed.personName && !person) throw new Error('PERSON_NOT_FOUND');
+  const card = await findSingleCard(tx, parsed.cardLast4, person?.id);
   if (['SETTLED', 'COMPLETED'].includes(card.status)) throw new Error('CARD_ALREADY_SETTLED');
   const { operation } = await createCardOperation(tx, session, {
     card,
@@ -1344,8 +1582,15 @@ async function executeCardFinalSettlement(tx: Prisma.TransactionClient, session:
   } satisfies ExecutionResult;
 }
 
-async function executeCardStatus(tx: Prisma.TransactionClient, session: InstantSession, parsed: ParsedCardStatus) {
-  const card = await findSingleCard(tx, parsed.cardLast4);
+async function executeCardStatus(
+  tx: Prisma.TransactionClient,
+  session: InstantSession,
+  parsed: ParsedCardStatus,
+  options: InstantRegistrationOptions = {},
+) {
+  const person = parsed.personName ? await findMatchingPerson(tx, parsed, options) : null;
+  if (parsed.personName && !person) throw new Error('PERSON_NOT_FOUND');
+  const card = await findSingleCard(tx, parsed.cardLast4, person?.id);
   const reason = parsed.reason || 'إيقاف من التسجيل الفوري';
   const { operation } = await createCardOperation(tx, session, {
     card,
@@ -1365,11 +1610,16 @@ async function executeCardStatus(tx: Prisma.TransactionClient, session: InstantS
   } satisfies ExecutionResult;
 }
 
-async function executeWalletMovement(tx: Prisma.TransactionClient, session: InstantSession, parsed: ParsedWalletMovement) {
+async function executeWalletMovement(
+  tx: Prisma.TransactionClient,
+  session: InstantSession,
+  parsed: ParsedWalletMovement,
+  options: InstantRegistrationOptions = {},
+) {
   if (!parsed.personName || !parsed.amount) throw new Error('PREVIEW_NOT_READY');
   const currencies = await currenciesByCode(tx);
   const currency = currencyOrThrow(currencies, parsed.amount.currencyCode);
-  const { person, created } = await findOrCreatePerson(tx, parsed, true);
+  const { person, created } = await findOrCreatePerson(tx, parsed, true, options);
   const accountType: WalletAccountType = parsed.side === 'US' ? 'DEBT' : 'CREDIT';
   const wallet = await createWalletMovement(tx, session, {
     personId: person.id,
@@ -1405,9 +1655,14 @@ async function executeWalletMovement(tx: Prisma.TransactionClient, session: Inst
   } satisfies ExecutionResult;
 }
 
-async function executeWalletRepayment(tx: Prisma.TransactionClient, session: InstantSession, parsed: ParsedWalletRepayment) {
+async function executeWalletRepayment(
+  tx: Prisma.TransactionClient,
+  session: InstantSession,
+  parsed: ParsedWalletRepayment,
+  options: InstantRegistrationOptions = {},
+) {
   if (!parsed.personName || !parsed.amount) throw new Error('PREVIEW_NOT_READY');
-  const person = await findMatchingPerson(tx, parsed);
+  const person = await findMatchingPerson(tx, parsed, options);
   if (!person) throw new Error('PERSON_NOT_FOUND');
   const { target, blockingIssue } = await previewRepaymentTarget(tx, person.id, parsed.amount.currencyCode, parsed.amount);
   if (!target || blockingIssue) throw new Error('PREVIEW_NOT_READY');
@@ -1436,7 +1691,11 @@ async function executeWalletRepayment(tx: Prisma.TransactionClient, session: Ins
   } satisfies ExecutionResult;
 }
 
-export async function executeInstantRegistration(text: string, session: InstantSession) {
+export async function executeInstantRegistration(
+  text: string,
+  session: InstantSession,
+  options: InstantRegistrationOptions = {},
+) {
   const parsed = parseInstantMessage(text);
   if (parsed.kind === 'UNKNOWN') throw new Error('PREVIEW_NOT_READY');
 
@@ -1445,19 +1704,19 @@ export async function executeInstantRegistration(text: string, session: InstantS
 
     const executed =
       parsed.kind === 'CARD_ENTRY'
-        ? await executeCardEntry(tx, session, parsed)
+        ? await executeCardEntry(tx, session, parsed, options)
         : parsed.kind === 'CUSTOMER_DELIVERY'
-          ? await executeCustomerDelivery(tx, session, parsed)
+          ? await executeCustomerDelivery(tx, session, parsed, options)
           : parsed.kind === 'CARD_WITHDRAWAL'
-            ? await executeCardWithdrawal(tx, session, parsed)
+            ? await executeCardWithdrawal(tx, session, parsed, options)
             : parsed.kind === 'CARD_FINAL_SETTLEMENT'
-              ? await executeCardFinalSettlement(tx, session, parsed)
+              ? await executeCardFinalSettlement(tx, session, parsed, options)
               : parsed.kind === 'CARD_STATUS'
-                ? await executeCardStatus(tx, session, parsed)
+                ? await executeCardStatus(tx, session, parsed, options)
                 : parsed.kind === 'WALLET_MOVEMENT'
-                  ? await executeWalletMovement(tx, session, parsed)
+                  ? await executeWalletMovement(tx, session, parsed, options)
                   : parsed.kind === 'WALLET_REPAYMENT'
-                    ? await executeWalletRepayment(tx, session, parsed)
+                    ? await executeWalletRepayment(tx, session, parsed, options)
                     : null;
 
     if (!executed) throw new Error('PREVIEW_NOT_READY');

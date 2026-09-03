@@ -59,6 +59,7 @@ export type ParsedCustomerDelivery = ParsedBase & {
 
 export type ParsedCardWithdrawal = ParsedBase & {
   kind: 'CARD_WITHDRAWAL';
+  personName?: string;
   cardLast4?: string;
   amount?: InstantAmount;
   quantity: number;
@@ -67,11 +68,13 @@ export type ParsedCardWithdrawal = ParsedBase & {
 
 export type ParsedCardFinalSettlement = ParsedBase & {
   kind: 'CARD_FINAL_SETTLEMENT';
+  personName?: string;
   cardLast4?: string;
 };
 
 export type ParsedCardStatus = ParsedBase & {
   kind: 'CARD_STATUS';
+  personName?: string;
   cardLast4?: string;
   status: 'STOPPED' | 'REJECTED';
   reason?: string;
@@ -251,6 +254,53 @@ function normalizeName(value: string) {
     .trim();
 }
 
+const leadingOperationSource = [
+  String.raw`بطاقة\s+جديدة`,
+  String.raw`أضف\s+بطاقة`,
+  String.raw`اضف\s+بطاقة`,
+  String.raw`بطاقة`,
+  String.raw`كرت`,
+  String.raw`استلم`,
+  String.raw`استلام`,
+  String.raw`سحب`,
+  String.raw`سحبة`,
+  String.raw`سحبات`,
+  String.raw`علينا`,
+  String.raw`لنا`,
+  String.raw`صافي`,
+  String.raw`تصفية`,
+  String.raw`مصفى`,
+  String.raw`مصفاة`,
+  String.raw`متوقفة`,
+  String.raw`متوقف`,
+  String.raw`مرفوضة`,
+  String.raw`مرفوض`,
+].join('|');
+
+function cleanPersonCandidate(value: string) {
+  const candidate = normalizeName(
+    removeAmounts(value)
+      .replace(/(?:بطاقة|كرت)\s*\d{4}/g, ' ')
+      .replace(/(?:آخر|اخر)\s*4\s*(?:أرقام|ارقام)?\s*\d{4}/g, ' ')
+      .replace(/(?:^|\s)\d{4}(?=\s|$)/g, ' '),
+  );
+  if (!/\p{L}/u.test(candidate)) return '';
+  return candidate;
+}
+
+function extractLeadingPersonName(text: string) {
+  const firstLine = cleanLine(text.split(/\n+/).find((line) => cleanLine(line)) || text);
+  const match = firstLine.match(new RegExp(String.raw`^(.+?)\s+(?:${leadingOperationSource})(?:\s|$)`, 'u'));
+  const candidate = cleanPersonCandidate(match?.[1] || '');
+  const wordCount = candidate ? candidate.split(/\s+/).length : 0;
+  return wordCount && wordCount <= 4 ? candidate : undefined;
+}
+
+function hasLeadingWalletMovement(text: string) {
+  const match = text.match(/^(.+?)\s+(?:علينا|لنا)(?:\s|$)/);
+  return Boolean(match?.[1] && !/\d/.test(match[1]) && cleanPersonCandidate(match[1]));
+}
+
 function isPhoneLine(line: string) {
   return /^(?:\+?218|0)?9\d{8}$/.test(line.trim());
 }
@@ -265,6 +315,8 @@ function looksLikeCardTypeLine(line: string) {
 
 function extractPersonName(lines: string[], text: string) {
   const code = extractCustomerCode(text);
+  const leadingName = extractLeadingPersonName(text);
+  if (leadingName) return leadingName;
 
   for (const line of lines) {
     if (isPhoneLine(line)) continue;
@@ -341,7 +393,7 @@ function parseCardRow(line: string, fallbackCurrency?: InstantCurrencyCode): Ins
 }
 
 function hasCardEntrySignal(text: string) {
-  return /بطاقة\s+جديدة|بطاقتان|بطاقات|آخر\s*4|اخر\s*4|قيمة\s*البطاقة|القيمة|المتفق|الصافي|صافي\s*المتفق/.test(text);
+  return /بطاقة\s+جديدة|أضف\s+بطاقة|اضف\s+بطاقة|بطاقتان|بطاقات|آخر\s*4|اخر\s*4|قيمة\s*البطاقة|القيمة|المتفق|الصافي|صافي\s*المتفق/.test(text);
 }
 
 function inferDefaultCurrency(text: string): InstantCurrencyCode {
@@ -421,6 +473,7 @@ function parseCardEntry(originalText: string, normalizedText: string): ParsedCar
 function parseCardWithdrawal(originalText: string, normalizedText: string): ParsedCardWithdrawal {
   const base = buildBase('CARD_WITHDRAWAL', originalText, normalizedText);
   const fallbackCurrency = inferDefaultCurrency(normalizedText);
+  const personName = extractLeadingPersonName(normalizedText);
   const quantityMatch = normalizedText.match(/(?:تنفيذ\s*)?(\d+)\s*(?:سحبات|سحبة|مرات)/);
   const quantity = Math.max(1, Number(quantityMatch?.[1] || 1));
   const amount =
@@ -439,6 +492,7 @@ function parseCardWithdrawal(originalText: string, normalizedText: string): Pars
   return {
     ...base,
     confidence: cardLast4 && amount ? 0.9 : 0.55,
+    personName,
     cardLast4,
     amount,
     quantity,
@@ -454,13 +508,15 @@ function parseCardWithdrawal(originalText: string, normalizedText: string): Pars
 
 function parseCardFinalSettlement(originalText: string, normalizedText: string): ParsedCardFinalSettlement {
   const base = buildBase('CARD_FINAL_SETTLEMENT', originalText, normalizedText);
+  const personName = extractLeadingPersonName(normalizedText);
   const cardLast4 = extractLast4(normalizedText);
   if (!cardLast4) base.warnings.push('لم يتم تحديد البطاقة المراد تصفيتها.');
-  return { ...base, confidence: cardLast4 ? 0.9 : 0.55, cardLast4 };
+  return { ...base, confidence: cardLast4 ? 0.9 : 0.55, personName, cardLast4 };
 }
 
 function parseCardStatus(originalText: string, normalizedText: string): ParsedCardStatus {
   const base = buildBase('CARD_STATUS', originalText, normalizedText);
+  const personName = extractLeadingPersonName(normalizedText);
   const cardLast4 = extractLast4(normalizedText);
   const status = /مرفوض|رفض|ملغ/.test(normalizedText) ? 'REJECTED' : 'STOPPED';
   const reason =
@@ -470,18 +526,19 @@ function parseCardStatus(originalText: string, normalizedText: string): ParsedCa
   if (!cardLast4) base.warnings.push('لم يتم تحديد البطاقة.');
   if (!reason) base.warnings.push('لم يتم تحديد سبب الإيقاف أو الرفض.');
 
-  return { ...base, confidence: cardLast4 ? 0.86 : 0.55, cardLast4, status, reason };
+  return { ...base, confidence: cardLast4 ? 0.86 : 0.55, personName, cardLast4, status, reason };
 }
 
 function parseWalletMovement(originalText: string, normalizedText: string): ParsedWalletMovement {
-  const side = normalizedText.startsWith('علينا') ? 'THEM' : 'US';
+  const side = /(?:^|\s)علينا(?:\s|$)/.test(normalizedText) ? 'THEM' : 'US';
   const base = buildBase('WALLET_MOVEMENT', originalText, normalizedText);
   const amount = lastAmount(normalizedText, inferDefaultCurrency(normalizedText));
+  const leadingName = extractLeadingPersonName(normalizedText);
   const namePattern =
     side === 'THEM'
       ? normalizedText.match(/^علينا\s+(?:ل|على)?\s*(.+?)\s+\d/)
       : normalizedText.match(/^لنا\s+(?:على|عليه|ل)?\s*(.+?)\s+\d/);
-  const personName = normalizeName(removeAmounts(namePattern?.[1] || ''));
+  const personName = leadingName || normalizeName(removeAmounts(namePattern?.[1] || ''));
 
   if (!personName) base.warnings.push('لم يتم تحديد اسم صاحب الدين.');
   if (!amount || amount.value <= 0) base.warnings.push('لم يتم تحديد مبلغ الدين.');
@@ -545,7 +602,9 @@ export function parseInstantMessage(rawText: string): ParsedInstantMessage {
     return { ...base, warnings: ['اكتب رسالة التسجيل أولًا.'], confidence: 0.1 };
   }
 
-  if (/^(?:علينا|لنا)(?:\s|$)/.test(normalizedText)) return parseWalletMovement(rawText, normalizedText);
+  if (/^(?:علينا|لنا)(?:\s|$)/.test(normalizedText) || hasLeadingWalletMovement(normalizedText)) {
+    return parseWalletMovement(rawText, normalizedText);
+  }
   if (/(?:تسديد|سداد|سداده|سدد|سدّد)|(?:دفع).*(?:دين|الدين)|(?:دين).*(?:تسديد|سداد|دفع)/.test(normalizedText)) {
     return parseWalletRepayment(rawText, normalizedText);
   }

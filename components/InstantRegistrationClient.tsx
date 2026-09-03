@@ -16,6 +16,17 @@ type Preview = {
   warnings: string[];
   blockingIssues: string[];
   summary: string[];
+  matches?: {
+    person?: PersonCandidate | null;
+    personCandidates?: PersonCandidate[];
+  };
+};
+
+type PersonCandidate = {
+  id: string;
+  customerNo?: string | null;
+  fullName: string;
+  phone?: string | null;
 };
 
 type ExecuteResult = {
@@ -152,14 +163,39 @@ export default function InstantRegistrationClient({ initialHistory }: { initialH
     }
   }
 
-  async function confirm(messageId: string, sourceText: string) {
+  async function selectPerson(messageId: string, sourceText: string, personId: string) {
     if (confirmingId) return;
     setConfirmingId(messageId);
     try {
       const response = await fetch('/api/instant-registration', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: sourceText, confirm: true }),
+        body: JSON.stringify({ text: sourceText, personId }),
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        toast.error(result.error || 'تعذر اختيار الزبون');
+        return;
+      }
+
+      setMessages((current) =>
+        current.map((message) => (message.id === messageId ? { ...message, preview: result } : message)),
+      );
+    } catch {
+      toast.error('تعذر الاتصال بالخادم أثناء اختيار الزبون');
+    } finally {
+      setConfirmingId('');
+    }
+  }
+
+  async function confirm(messageId: string, sourceText: string, personId?: string) {
+    if (confirmingId) return;
+    setConfirmingId(messageId);
+    try {
+      const response = await fetch('/api/instant-registration', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: sourceText, confirm: true, personId }),
       });
       const result = await response.json().catch(() => ({}));
       if (!response.ok) {
@@ -263,7 +299,8 @@ export default function InstantRegistrationClient({ initialHistory }: { initialH
                       result={message.result}
                       confirming={confirmingId === message.id}
                       undoing={undoingFingerprint === message.preview.fingerprint}
-                      onConfirm={() => confirm(message.id, sourceText)}
+                      onConfirm={() => confirm(message.id, sourceText, message.preview?.matches?.person?.id)}
+                      onSelectPerson={(personId) => selectPerson(message.id, sourceText, personId)}
                       onEdit={() => setText(sourceText)}
                       onUndo={() => undo(message.preview?.fingerprint || '')}
                     />
@@ -333,6 +370,7 @@ function PreviewBubble({
   confirming,
   undoing,
   onConfirm,
+  onSelectPerson,
   onEdit,
   onUndo,
 }: {
@@ -341,9 +379,12 @@ function PreviewBubble({
   confirming: boolean;
   undoing: boolean;
   onConfirm: () => void;
+  onSelectPerson: (personId: string) => void;
   onEdit: () => void;
   onUndo: () => void;
 }) {
+  const personCandidates = preview.matches?.personCandidates || [];
+
   return (
     <div>
       <div className="mb-2 flex flex-wrap items-center gap-2">
@@ -379,6 +420,26 @@ function PreviewBubble({
         <div className="mt-3 rounded-lg bg-red-50 p-2 text-xs font-bold text-red-700 dark:bg-red-950 dark:text-red-200">
           {preview.blockingIssues.map((issue, index) => (
             <div key={`${issue}-${index}`}>{issue}</div>
+          ))}
+        </div>
+      ) : null}
+
+      {!result && personCandidates.length ? (
+        <div className="mt-3 grid gap-2 rounded-lg border border-amber-200 bg-amber-50 p-2 text-xs dark:border-amber-900 dark:bg-amber-950/40">
+          <div className="font-black text-amber-800 dark:text-amber-100">اختر الزبون الصحيح</div>
+          {personCandidates.map((person) => (
+            <button
+              key={person.id}
+              type="button"
+              onClick={() => onSelectPerson(person.id)}
+              disabled={confirming}
+              className="flex min-h-10 items-center justify-between gap-3 rounded-md border border-amber-200 bg-white px-3 py-2 text-right font-bold text-slate-800 hover:border-amber-400 disabled:cursor-not-allowed disabled:opacity-60 dark:border-amber-900 dark:bg-slate-950 dark:text-slate-100"
+            >
+              <span className="min-w-0 truncate">{person.fullName}</span>
+              <span className="shrink-0 text-slate-500">
+                {[person.customerNo, person.phone].filter(Boolean).join(' · ')}
+              </span>
+            </button>
           ))}
         </div>
       ) : null}

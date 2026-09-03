@@ -10,12 +10,14 @@ import { z } from 'zod';
 const requestSchema = z.object({
   text: z.string().trim().min(1),
   confirm: z.boolean().optional().default(false),
+  personId: z.string().trim().min(1).optional(),
 });
 
 function instantError(error: Error) {
   if (error.message === 'INSTANT_DUPLICATE') return fail('هذه الرسالة/العملية تبدو مسجلة مسبقًا.', 409);
   if (error.message === 'PREVIEW_NOT_READY') return fail('المعاينة غير جاهزة للحفظ. عدّل الرسالة ثم أعد المحاولة.');
   if (error.message === 'PERSON_NOT_FOUND') return fail('لم يتم العثور على الزبون.', 404);
+  if (error.message === 'PERSON_AMBIGUOUS') return fail('يوجد أكثر من زبون محتمل. اختر الزبون الصحيح قبل الحفظ.');
   if (error.message === 'CARD_NOT_FOUND') return fail('البطاقة غير موجودة.', 404);
   if (error.message === 'CARD_AMBIGUOUS') return fail('يوجد أكثر من بطاقة بنفس آخر 4 أرقام. حدد البطاقة من صفحة الزبون.');
   if (error.message === 'CARD_ALREADY_EXISTS') return fail('هذه البطاقة/العملية تبدو مسجلة مسبقًا.', 409);
@@ -47,8 +49,9 @@ export async function POST(request: Request) {
     const parsed = requestSchema.safeParse(await request.json());
     if (!parsed.success) return fail('اكتب رسالة التسجيل الفوري أولًا.');
 
-    if (parsed.data.confirm) return ok(await executeInstantRegistration(parsed.data.text, session), 201);
-    return ok(await buildInstantRegistrationPreview(parsed.data.text));
+    const options = { selectedPersonId: parsed.data.personId };
+    if (parsed.data.confirm) return ok(await executeInstantRegistration(parsed.data.text, session, options), 201);
+    return ok(await buildInstantRegistrationPreview(parsed.data.text, options));
   } catch (error) {
     const handled = instantError(error as Error);
     if (handled) return handled;
