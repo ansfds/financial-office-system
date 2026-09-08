@@ -252,6 +252,10 @@ function createBlockingPreview(parsed: ParsedInstantMessage, blockingIssues: str
   };
 }
 
+function isBlockingParserWarning(warning: string) {
+  return /^(?:تعارض حسابي|تحليل غير آمن|تم ذكر \d+ بطاقات|رقم مبهم|الثقة منخفضة)/.test(warning);
+}
+
 async function currenciesByCode(tx: Prisma.TransactionClient) {
   const currencies = await tx.currency.findMany({
     where: { isActive: true, code: { in: ['USD', 'LYD'] } },
@@ -355,10 +359,13 @@ async function findPeopleByPhoneOrCode(
   customerCode?: string | null,
 ) {
   const OR: Prisma.PersonWhereInput[] = [];
+  const customerCodeVariants = customerCode
+    ? Array.from(new Set([customerCode, customerCode.startsWith('#') ? customerCode.slice(1) : `#${customerCode}`]))
+    : [];
   if (phone) OR.push({ phone: { contains: phone } });
-  if (customerCode) {
-    OR.push({ customerNo: { equals: customerCode, mode: 'insensitive' } });
-    OR.push({ externalId: { equals: customerCode, mode: 'insensitive' } });
+  for (const code of customerCodeVariants) {
+    OR.push({ customerNo: { equals: code, mode: 'insensitive' } });
+    OR.push({ externalId: { equals: code, mode: 'insensitive' } });
   }
   if (!OR.length) return [];
 
@@ -370,11 +377,13 @@ async function findPeopleByPhoneOrCode(
   });
   const normalizedPhone = normalizeComparable(phone);
   const normalizedCode = normalizeComparable(customerCode);
+  const normalizedCodeVariants = customerCodeVariants.map(normalizeComparable).filter(Boolean);
   return uniquePeople(
     people.filter(
       (person) =>
         (normalizedPhone && normalizeComparable(person.phone) === normalizedPhone) ||
-        (normalizedCode && [person.customerNo, person.externalId].some((value) => normalizeComparable(value) === normalizedCode)),
+        (normalizedCode &&
+          [person.customerNo, person.externalId].some((value) => normalizedCodeVariants.includes(normalizeComparable(value)))),
     ),
   );
 }
@@ -895,6 +904,9 @@ async function buildCardEntryPreview(
   const summary: string[] = [];
   const duplicateCards: string[] = [];
 
+  for (const warning of warnings) {
+    if (isBlockingParserWarning(warning)) blockingIssues.push(warning);
+  }
   if (personResolution.ambiguous) blockingIssues.push(ambiguousPersonIssue(personResolution.candidates));
   if (!parsed.personName && !person) blockingIssues.push('لم يتم تحديد اسم الزبون.');
   if (!parsed.cards.length) blockingIssues.push('لم يتم العثور على بيانات بطاقة.');
@@ -927,15 +939,33 @@ async function buildCardEntryPreview(
   if (parsed.phone) summary.push(`الهاتف: ${parsed.phone}.`);
   if (parsed.customerCode) summary.push(`الكود: ${parsed.customerCode}.`);
   if (parsed.bankName) summary.push(`النوع: ${parsed.bankName}.`);
-  summary.push(`${parsed.cards.length} بطاقة.`);
+  summary.push(
+    parsed.expectedCardCount && parsed.expectedCardCount !== parsed.cards.length
+      ? `${parsed.cards.length} بطاقة مكتشفة من ${parsed.expectedCardCount} مذكورة.`
+      : `${parsed.cards.length} بطاقة.`,
+  );
+  if (parsed.totalAgreedAmount) summary.push(`إجمالي المتفق: ${amountLabel(parsed.totalAgreedAmount)}.`);
+  if (parsed.totalReceivedAmount) summary.push(`إجمالي المستلم: ${amountLabel(parsed.totalReceivedAmount)}.`);
+  if (parsed.totalRemainingAmount) summary.push(`المتبقي الإجمالي: ${amountLabel(parsed.totalRemainingAmount)}.`);
+  if (parsed.totalsVerified) summary.push('تم تأكيد الحسابات من تفاصيل البطاقات والإجماليات.');
   for (const card of parsed.cards) {
-    const received = card.receivedAmount ? amountLabel(card.receivedAmount) : '0 $';
+    const received = card.receivedAmount ? amountLabel(card.receivedAmount) : 'غير محدد';
     const remaining =
-      card.agreedAmount && card.receivedAmount
-        ? amountLabel({ ...card.agreedAmount, value: Math.max(card.agreedAmount.value - card.receivedAmount.value, 0) })
-        : '';
+      card.remainingAmount
+        ? amountLabel(card.remainingAmount)
+        : card.agreedAmount && card.receivedAmount
+          ? amountLabel({ ...card.agreedAmount, value: Math.max(card.agreedAmount.value - card.receivedAmount.value, 0) })
+          : '';
+    const status =
+      card.status === 'SETTLED'
+        ? 'صافي بالكامل'
+        : card.status === 'REJECTED'
+          ? 'مرفوضة'
+          : card.status === 'STOPPED'
+            ? 'متوقفة'
+            : 'نشطة';
     summary.push(
-      `${card.cardLast4 || 'آخر 4 غير محددة'} | القيمة ${amountLabel(card.valueAmount) || 'غير محددة'} | المتفق ${amountLabel(card.agreedAmount) || 'غير محدد'} | المستلم ${received}${remaining ? ` | المتبقي ${remaining}` : ''}`,
+      `${card.cardLast4 || 'آخر 4 غير محددة'} | القيمة ${amountLabel(card.valueAmount) || 'غير محددة'} | المتفق ${amountLabel(card.agreedAmount) || 'غير محدد'} | المستلم ${received}${remaining ? ` | المتبقي ${remaining}` : ''} | الحالة ${status}${card.reason ? ` | ${card.reason}` : ''}`,
     );
   }
 
@@ -1257,6 +1287,8 @@ async function executeCardEntry(
   parsed: ParsedCardEntry,
   options: InstantRegistrationOptions = {},
 ) {
+  if (parsed.warnings.some(isBlockingParserWarning)) throw new Error('PREVIEW_NOT_READY');
+
   const currencies = await currenciesByCode(tx);
   const { person, created } = await findOrCreatePerson(tx, parsed, true, options);
   const last4s = parsed.cards.map((card) => card.cardLast4).filter((value): value is string => Boolean(value));

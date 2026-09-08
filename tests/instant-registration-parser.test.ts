@@ -2,6 +2,13 @@ import { describe, expect, it } from 'vitest';
 import { exactCustomerNameMatches } from '@/lib/customer-name-resolution';
 import { parseInstantMessage } from '@/lib/instant-registration-parser';
 
+function expectCardEntry(text: string) {
+  const parsed = parseInstantMessage(text);
+  expect(parsed.kind).toBe('CARD_ENTRY');
+  if (parsed.kind !== 'CARD_ENTRY') throw new Error(`Expected CARD_ENTRY, received ${parsed.kind}`);
+  return parsed;
+}
+
 describe('instant registration parser', () => {
   it('parses a new customer card message with Arabic labels', () => {
     const parsed = parseInstantMessage(`محمد عمرو
@@ -41,6 +48,106 @@ describe('instant registration parser', () => {
     ]);
   });
 
+  it('parses the required inline four-card message with customer code, phone, and failed card context', () => {
+    const parsed = expectCardEntry(
+      'كمال محمد #A039 رقم الهاتف 0914550555 لديه 4 بطاقات، 9888 قيمة 2000$ المتفق 1800$ المستلم 0$، 0145 قيمة 2000$ المتفق 1800$ فشل حمراء، 3221 قيمة 2000$ المتفق 1800$ المستلم 0$، 7193 قيمة 2000$ المتفق 1800$ المستلم 0$.',
+    );
+
+    expect(parsed.personName).toBe('كمال محمد');
+    expect(parsed.customerCode).toBe('A039');
+    expect(parsed.phone).toBe('0914550555');
+    expect(parsed.expectedCardCount).toBe(4);
+    expect(parsed.cards).toHaveLength(4);
+    expect(parsed.cards.map((card) => [card.cardLast4, card.valueAmount?.value, card.agreedAmount?.value, card.receivedAmount?.value])).toEqual([
+      ['9888', 2000, 1800, 0],
+      ['0145', 2000, 1800, undefined],
+      ['3221', 2000, 1800, 0],
+      ['7193', 2000, 1800, 0],
+    ]);
+    expect(parsed.cards[1]).toEqual(expect.objectContaining({ status: 'REJECTED', reason: 'فشل حمراء' }));
+    expect(parsed.warnings.some((warning) => warning.includes('تم ذكر 4 بطاقات'))).toBe(false);
+  });
+
+  it('parses the required markdown and emoji message as a settled card entry', () => {
+    const parsed = expectCardEntry(`📌 **حسين عمار**
+📞 0911154117
+💳 البطاقة: **4197**
+💰 قيمة البطاقة: **2,000$**
+🤝 المتفق عليه: **1,810$**
+✅ تم استلام كامل المبلغ
+💵 المتبقي: **0$**
+🟢 **الحالة: صافي بالكامل ✅**`);
+
+    expect(parsed.personName).toBe('حسين عمار');
+    expect(parsed.phone).toBe('0911154117');
+    expect(parsed.cards).toHaveLength(1);
+    expect(parsed.cards[0]).toEqual(
+      expect.objectContaining({
+        cardLast4: '4197',
+        status: 'SETTLED',
+      }),
+    );
+    expect(parsed.cards[0].valueAmount?.value).toBe(2000);
+    expect(parsed.cards[0].agreedAmount?.value).toBe(1810);
+    expect(parsed.cards[0].receivedAmount?.value).toBe(1810);
+    expect(parsed.cards[0].remainingAmount?.value).toBe(0);
+  });
+
+  it('parses multiline card sections without treating aggregate amounts as cards', () => {
+    const parsed = parseInstantMessage(`محمد كساب زبون جديد
+
+إجمالي المتفق للبطاقات الجديدة 4583$
+
+المستلم 1000$
+
+المتبقي 3583$
+
+البطاقات المستلمة منه:
+
+9664 فيها 2000$ متفق عليه 1795$
+
+2691 فيها 1703$ متفق عليه 1524$
+
+8287 فيها 1413$ متفق عليه 1264$`);
+
+    expect(parsed.kind).toBe('CARD_ENTRY');
+    if (parsed.kind !== 'CARD_ENTRY') return;
+    expect(parsed.personName).toBe('محمد كساب');
+    expect(parsed.cards).toHaveLength(3);
+    expect(parsed.cards.map((card) => card.cardLast4)).toEqual(['9664', '2691', '8287']);
+    expect(parsed.cards.map((card) => [card.cardLast4, card.valueAmount?.value, card.agreedAmount?.value])).toEqual([
+      ['9664', 2000, 1795],
+      ['2691', 1703, 1524],
+      ['8287', 1413, 1264],
+    ]);
+    expect(parsed.cards.map((card) => card.cardLast4)).not.toEqual(expect.arrayContaining(['4583', '1000', '3583']));
+    expect(parsed.cards.some((card) => card.receivedAmount?.value === 1000)).toBe(false);
+    expect(parsed.totalAgreedAmount?.value).toBe(4583);
+    expect(parsed.totalReceivedAmount?.value).toBe(1000);
+    expect(parsed.totalRemainingAmount?.value).toBe(3583);
+    expect(parsed.deliveryAmount?.value).toBe(1000);
+    expect(parsed.totalsVerified).toBe(true);
+    expect(parsed.warnings.some((warning) => warning.startsWith('تعارض حسابي'))).toBe(false);
+  });
+
+  it('warns when multiline card detail totals disagree with aggregate labels', () => {
+    const parsed = parseInstantMessage(`محمد كساب زبون جديد
+إجمالي المتفق للبطاقات الجديدة 4584$
+المستلم 1000$
+المتبقي 3583$
+البطاقات المستلمة منه:
+9664 فيها 2000$ متفق عليه 1795$
+2691 فيها 1703$ متفق عليه 1524$
+8287 فيها 1413$ متفق عليه 1264$`);
+
+    expect(parsed.kind).toBe('CARD_ENTRY');
+    if (parsed.kind !== 'CARD_ENTRY') return;
+    expect(parsed.cards.map((card) => card.cardLast4)).toEqual(['9664', '2691', '8287']);
+    expect(parsed.cards.map((card) => card.cardLast4)).not.toEqual(expect.arrayContaining(['4584', '1000', '3583']));
+    expect(parsed.totalsVerified).toBe(false);
+    expect(parsed.warnings.some((warning) => warning.startsWith('تعارض حسابي'))).toBe(true);
+  });
+
   it('extracts a leading customer name from inline card entry messages', () => {
     const parsed = parseInstantMessage('عبد الحكيم محمد بطاقة جديدة 0123 قيمة 2000$ المتفق 1810$ المستلم 0$');
 
@@ -52,6 +159,111 @@ describe('instant registration parser', () => {
     expect(parsed.cards[0].agreedAmount?.value).toBe(1810);
     expect(parsed.cards[0].receivedAmount?.value).toBe(0);
     expect((parsed.cards[0].agreedAmount?.value || 0) - (parsed.cards[0].receivedAmount?.value || 0)).toBe(1810);
+  });
+
+  it.each([
+    ['فيها + صافي', 'سالم علي بطاقة 9888 فيها 2000 صافي 1800', 'سالم علي', '9888', 2000, 1800],
+    ['قيمة الكرت + $ before number', 'ليلى خالد بطاقة 1234 قيمة الكرت $2000 متفق عليه $1810', 'ليلى خالد', '1234', 2000, 1810],
+    ['thousands separators', 'مروان فتحي بطاقة 4321 قيمة البطاقة 2,000$ الحساب عليه 1,795$', 'مروان فتحي', '4321', 2000, 1795],
+    ['Arabic digits', 'هدى صالح بطاقة 9876 القيمة ٢٠٠٠$ المتفق ١٨٠٠$ المستلم ٠$', 'هدى صالح', '9876', 2000, 1800],
+    ['آخر 4 label', 'يوسف مراد آخر 4: 2468 القيمة 2000 المتفق 1800', 'يوسف مراد', '2468', 2000, 1800],
+    ['الكرت فيه', 'جمال سعيد الكرت 1357 فيه 2000 الصافي 1790', 'جمال سعيد', '1357', 2000, 1790],
+    ['USD words', 'منى سالم بطاقة 3141 قيمة 2000 USD المتفق 1810 USD', 'منى سالم', '3141', 2000, 1810],
+    ['دولار words', 'علي منصور بطاقة 2718 قيمة 2000 دولار المتفق 1800 دولار', 'علي منصور', '2718', 2000, 1800],
+    ['dash positional format', '9888 - 2000$ - 1800$', undefined, '9888', 2000, 1800],
+    ['single-line unordered settled entry', 'نورا أمين صافي بالكامل بطاقة 4197 المتفق 1810 القيمة 2000 الهاتف 0911111111', 'نورا أمين', '4197', 2000, 1810],
+  ])('parses flexible card entry variation: %s', (_label, text, personName, last4, value, agreed) => {
+    const parsed = expectCardEntry(text);
+    expect(parsed.personName).toBe(personName);
+    expect(parsed.cards[0].cardLast4).toBe(last4);
+    expect(parsed.cards[0].valueAmount?.value).toBe(value);
+    expect(parsed.cards[0].agreedAmount?.value).toBe(agreed);
+  });
+
+  it.each([
+    ['plain multiline', `حسين عمار
+0911154117
+البطاقة 4197
+القيمة 2000$
+المتفق 1810$
+تم استلام كامل المبلغ
+المتبقي 0$
+الحالة صافي بالكامل`],
+    ['plain one line', 'حسين عمار 0911154117 بطاقة 4197 قيمة 2000 المتفق 1810 تم استلام كامل المبلغ المتبقي 0 صافي بالكامل'],
+    ['reordered fields', 'حسين عمار صافي بالكامل بطاقة 4197 المتفق 1810 القيمة 2000 الهاتف 0911154117'],
+    ['markdown only', '**حسين عمار**\nالبطاقة: **4197**\nقيمة البطاقة: **2,000$**\nالمتفق عليه: **1,810$**\nتم استلام كامل المبلغ'],
+    ['emoji one line', '📌 حسين عمار 📞 0911154117 💳 بطاقة 4197 💰 قيمة 2000 🤝 المتفق 1810 ✅ تم استلام كامل المبلغ 🟢 صافي بالكامل'],
+    ['مصفى synonym', 'حسين عمار بطاقة 4197 قيمة 2000 المتفق 1810 مصفى المتبقي 0'],
+  ])('keeps settled-card parsing stable across format variation: %s', (_label, text) => {
+    const parsed = expectCardEntry(text);
+    expect(parsed.cards).toHaveLength(1);
+    expect(parsed.personName).toBe('حسين عمار');
+    expect(parsed.cards[0].cardLast4).toBe('4197');
+    expect(parsed.cards[0].valueAmount?.value).toBe(2000);
+    expect(parsed.cards[0].agreedAmount?.value).toBe(1810);
+    expect(parsed.cards[0].status).toBe('SETTLED');
+    expect(parsed.cards[0].receivedAmount?.value).toBe(1810);
+    expect(parsed.cards[0].remainingAmount?.value).toBe(0);
+  });
+
+  it('derives missing received and remaining values from clear arithmetic only', () => {
+    const remainingKnown = expectCardEntry('رامي حسن بطاقة 1111 قيمة 2000 المتفق 1800 المتبقي 800');
+    const receivedKnown = expectCardEntry('سعد عمر بطاقة 2222 قيمة 2000 المتفق 1800 المستلم 1000');
+
+    expect(remainingKnown.cards[0].receivedAmount?.value).toBe(1000);
+    expect(receivedKnown.cards[0].remainingAmount?.value).toBe(800);
+  });
+
+  it('warns when a declared card count is larger than detected card segments', () => {
+    const parsed = expectCardEntry(
+      'فاطمة سالم لديها 4 بطاقات، 1111 قيمة 2000 المتفق 1800، 2222 قيمة 2000 المتفق 1800، 3333 قيمة 2000 المتفق 1800',
+    );
+
+    expect(parsed.cards).toHaveLength(3);
+    expect(parsed.warnings).toContain('تم ذكر 4 بطاقات لكن تم التعرف على 3 فقط.');
+  });
+
+  it('keeps ambiguous unlabeled amounts under review instead of guessing', () => {
+    const parsed = expectCardEntry('أحمد علي بطاقة جديدة 5555 1800');
+
+    expect(parsed.cards[0].cardLast4).toBe('5555');
+    expect(parsed.cards[0].valueAmount).toBeUndefined();
+    expect(parsed.cards[0].agreedAmount).toBeUndefined();
+    expect(parsed.warnings.some((warning) => warning.startsWith('رقم مبهم'))).toBe(true);
+  });
+
+  it('separates inline aggregate totals from the final card segment', () => {
+    const parsed = expectCardEntry(
+      'خالد توفيق لديه 3 بطاقات 1111 قيمة 2000 المتفق 1795، 2222 قيمة 1703 المتفق 1524، 3333 قيمة 1413 المتفق 1264، إجمالي المتفق 4583$ المستلم 1000$ المتبقي 3583$',
+    );
+
+    expect(parsed.cards.map((card) => [card.cardLast4, card.valueAmount?.value, card.agreedAmount?.value])).toEqual([
+      ['1111', 2000, 1795],
+      ['2222', 1703, 1524],
+      ['3333', 1413, 1264],
+    ]);
+    expect(parsed.cards[2].receivedAmount).toBeUndefined();
+    expect(parsed.totalAgreedAmount?.value).toBe(4583);
+    expect(parsed.totalReceivedAmount?.value).toBe(1000);
+    expect(parsed.totalRemainingAmount?.value).toBe(3583);
+    expect(parsed.totalsVerified).toBe(true);
+  });
+
+  it('does not classify aggregate-only four-digit amounts as card entries', () => {
+    const parsed = parseInstantMessage('إجمالي المتفق 4583$ المستلم 1000$ المتبقي 3583$');
+
+    expect(parsed.kind).toBe('UNKNOWN');
+  });
+
+  it('captures stopped and rejected card reasons inside card-entry rows', () => {
+    const rejected = expectCardEntry('بطاقة 3333 قيمة 2000 المتفق 1800 فشل حمراء');
+    const stopped = expectCardEntry('بطاقة 4444 قيمة 2000 المتفق 1800 متوقفة السبب رصيد غير كاف');
+
+    expect(rejected.cards[0].status).toBe('REJECTED');
+    expect(rejected.cards[0].reason).toBe('فشل حمراء');
+    expect(rejected.cards[0].receivedAmount).toBeUndefined();
+    expect(stopped.cards[0].status).toBe('STOPPED');
+    expect(stopped.cards[0].reason).toBe('رصيد غير كاف');
   });
 
   it('extracts a leading customer name from delivery, withdrawal, and settlement messages', () => {
