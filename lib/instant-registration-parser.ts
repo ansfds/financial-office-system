@@ -236,7 +236,9 @@ const allAmountLabels = [
 const leadingOperationSource = [
   String.raw`زبون\s+جديد`,
   String.raw`عميل\s+جديد`,
+  String.raw`البطاقة\s+الجديدة`,
   String.raw`بطاقة\s+جديدة`,
+  String.raw`الكرت\s+الجديد`,
   String.raw`كرت\s+جديد`,
   String.raw`أضف\s+بطاقة`,
   String.raw`اضف\s+بطاقة`,
@@ -248,7 +250,9 @@ const leadingOperationSource = [
   String.raw`كروت`,
   String.raw`آخر\s*4`,
   String.raw`اخر\s*4`,
+  String.raw`البطاقة`,
   String.raw`بطاقة`,
+  String.raw`الكرت`,
   String.raw`كرت`,
   String.raw`استلم`,
   String.raw`استلام`,
@@ -751,11 +755,19 @@ function stripCardAndAmountLanguage(value: string) {
     'هاتف',
     'لديه',
     'عنده',
+    'البطاقة الجديدة',
     'بطاقة جديدة',
+    'الكرت الجديد',
     'كرت جديد',
+    'رقم البطاقة',
+    'رقم الكرت',
+    'البطاقة',
     'بطاقة',
+    'الكرت',
     'كرت',
+    'البطاقات',
     'بطاقات',
+    'الكروت',
     'كروت',
     'النوع',
   ]);
@@ -766,7 +778,9 @@ function stripCardAndAmountLanguage(value: string) {
 }
 
 function cleanPersonCandidate(value: string) {
-  const candidate = normalizeName(stripCardAndAmountLanguage(removeAmounts(value)));
+  const candidate = normalizeName(stripCardAndAmountLanguage(removeAmounts(value)))
+    .replace(/\s+ال$/u, '')
+    .trim();
   if (!/\p{L}/u.test(candidate)) return '';
   return candidate;
 }
