@@ -15,7 +15,6 @@ import {
   Gauge,
   Globe2,
   Landmark,
-  LockKeyhole,
   MapPin,
   Menu,
   MessageCircle,
@@ -190,10 +189,6 @@ export default function PublicHomeClient({ settings }: { settings: PublicSiteSet
           </nav>
 
           <div className="hidden items-center gap-2 md:flex">
-            <a href="/dashboard" className="public-secondary-button">
-              <LockKeyhole size={18} />
-              الإدارة
-            </a>
             <a
               href={getWhatsAppUrl(settings.contact.whatsappNumber, 'مرحبًا، أريد الاستفسار عن خدمات الوسيط العالمي')}
               target="_blank"
@@ -231,9 +226,6 @@ export default function PublicHomeClient({ settings }: { settings: PublicSiteSet
               onClick={() => setMenuOpen(false)}
             >
               واتساب مباشر
-            </a>
-            <a href="/dashboard" className="public-mobile-link" onClick={() => setMenuOpen(false)}>
-              لوحة الإدارة
             </a>
           </nav>
         </div>
@@ -308,7 +300,7 @@ export default function PublicHomeClient({ settings }: { settings: PublicSiteSet
           <SectionHeading
             eyebrow="Market Board"
             title="تحديثات السوق"
-            description="لوحة أسعار مباشرة قابلة للتعديل من الإدارة، تعرض الأسعار النشطة ووقت آخر تحديث بدون افتراضات وهمية."
+            description="لوحة أسعار مباشرة تعرض الأسعار النشطة ووقت آخر تحديث."
           />
           <div className="public-market-board">
             <div className="public-market-board__top">
@@ -377,7 +369,7 @@ export default function PublicHomeClient({ settings }: { settings: PublicSiteSet
           <SectionHeading
             eyebrow="Bank Cards"
             title="سحب البطاقات المصرفية"
-            description="تعاملات منظمة مع بطاقات المصارف الليبية المتاحة، مع إمكانية إضافة بنوك أخرى من لوحة الإدارة."
+            description="تعاملات منظمة مع بطاقات المصارف الليبية المتاحة."
           />
           <div className="public-bank-stage">
             {banks.map((bank, index) => (

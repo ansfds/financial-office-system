@@ -4,7 +4,7 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 
 const BASE_URL = process.env.SMOKE_BASE_URL || 'http://127.0.0.1:3000';
-const OUTPUT_DIR = path.resolve('.tmp', 'public-site-visual-smoke');
+const OUTPUT_DIR = path.resolve('.tmp', 'public-site-visual-smoke', `${new URL(BASE_URL).hostname}-${Date.now()}`);
 
 const chromeCandidates = [
   process.env.CHROME_PATH,
@@ -113,7 +113,6 @@ async function main() {
 
   const userDataDir = path.resolve('.tmp', `chrome-public-${Date.now()}`);
   const remotePort = 9555 + Math.floor(Math.random() * 200);
-  await rm(userDataDir, { recursive: true, force: true });
   await mkdir(OUTPUT_DIR, { recursive: true });
 
   const chrome = spawn(chromePath, [
@@ -127,7 +126,7 @@ async function main() {
     `--remote-debugging-port=${remotePort}`,
     `--user-data-dir=${userDataDir}`,
     'about:blank',
-  ]);
+  ], { windowsHide: true });
 
   try {
     await waitForOk(`${BASE_URL}/`, 30_000);
@@ -139,6 +138,9 @@ async function main() {
     const cdp = openCdpSocket(target.webSocketDebuggerUrl);
     await cdp.send('Page.enable');
     await cdp.send('Runtime.enable');
+    await cdp.send('Network.enable');
+    await cdp.send('Network.setBypassServiceWorker', { bypass: true });
+    await cdp.send('Network.setCacheDisabled', { cacheDisabled: true });
 
     async function evaluate(expression) {
       const result = await cdp.send('Runtime.evaluate', {
@@ -199,10 +201,22 @@ async function main() {
             hasMaps: Boolean(document.querySelector('a[href="https://maps.app.goo.gl/K1AXMq7voiRBfzTb6"]')),
             horizontalOverflow: document.documentElement.scrollWidth - window.innerWidth,
             heroHeight: document.querySelector('.public-hero')?.getBoundingClientRect().height || 0,
+            publicHome: location.pathname === '/' && Boolean(document.querySelector('.public-site')),
+            hasManagementText: /إدار|\\b(?:admin|management|dashboard)\\b/i.test(text),
+            internalLinks: [...document.querySelectorAll('.public-site a[href]')]
+              .filter((link) => link.origin === location.origin && link.pathname !== '/')
+              .map((link) => ({ href: link.getAttribute('href'), text: link.textContent.trim() })),
+            giftCards: [...document.querySelectorAll('#services a[href]')]
+              .some((link) => link.getAttribute('href') === '#contact' && document.querySelector('#contact'))
+              && document.querySelector('#services')?.textContent.includes('Gift Cards'),
           };
         })()
       `);
       assert(audit.hasText, `${scenario.name} is missing required public copy`);
+      assert(audit.publicHome, `${scenario.name} redirected away from the public homepage`);
+      assert(!audit.hasManagementText, `${scenario.name} exposes management copy`);
+      assert(audit.internalLinks.length === 0, `${scenario.name} exposes internal links: ${JSON.stringify(audit.internalLinks)}`);
+      assert(audit.giftCards, `${scenario.name} Gift Cards service or contact link is missing`);
       assert(audit.imageCount >= 6 && audit.loadedImages >= 3, `${scenario.name} image audit failed: ${JSON.stringify(audit)}`);
       assert(audit.hasQr, `${scenario.name} QR image is missing`);
       assert(audit.hasWhatsApp, `${scenario.name} WhatsApp link is missing`);
@@ -213,6 +227,21 @@ async function main() {
 
       screenshots.push({ ...scenario, ...(await capture(scenario.name)), audit });
 
+      if (scenario.width < 1024) {
+        await evaluate(`document.querySelector('button[aria-label="فتح القائمة"]').click()`);
+        await new Promise((resolve) => setTimeout(resolve, 300));
+        const menuAudit = await evaluate(`({
+          open: document.querySelector('button[aria-expanded="true"]') !== null,
+          hasManagementText: /إدار|\\b(?:admin|management|dashboard)\\b/i.test(document.querySelector('.public-mobile-menu').innerText),
+          internalLinks: [...document.querySelectorAll('.public-mobile-menu a[href]')]
+            .filter((link) => link.origin === location.origin && link.pathname !== '/').map((link) => link.pathname)
+        })`);
+        assert(menuAudit.open && !menuAudit.hasManagementText && menuAudit.internalLinks.length === 0,
+          `${scenario.name} mobile menu exposes management navigation: ${JSON.stringify(menuAudit)}`);
+        screenshots.push({ name: `${scenario.name}-menu`, ...(await capture(`${scenario.name}-menu`)), audit: menuAudit });
+        await evaluate(`document.querySelector('button[aria-label="إغلاق القائمة"]').click()`);
+      }
+
       await evaluate('window.scrollTo(0, document.querySelector("#market").offsetTop - 80)');
       await new Promise((resolve) => setTimeout(resolve, 500));
       screenshots.push({ name: `${scenario.name}-market`, ...(await capture(`${scenario.name}-market`)) });
@@ -222,11 +251,34 @@ async function main() {
       screenshots.push({ name: `${scenario.name}-services`, ...(await capture(`${scenario.name}-services`)) });
     }
 
+    const protectedRoutes = [];
+    for (const pathname of ['/dashboard', '/people', '/cards', '/accounts', '/audit', '/settings']) {
+      const response = await fetch(`${BASE_URL}${pathname}`, { redirect: 'manual' });
+      assert([302, 303, 307, 308].includes(response.status) &&
+        new URL(response.headers.get('location'), BASE_URL).pathname === '/login',
+        `${pathname} must require login; got ${response.status}`);
+      protectedRoutes.push({ pathname, status: response.status, location: response.headers.get('location') });
+    }
+    for (const pathname of ['/api/people', '/api/cards', '/api/settings', '/api/settings/public-site']) {
+      for (const forgedCookie of [false, true]) {
+        const response = await fetch(`${BASE_URL}${pathname}`, {
+          headers: forgedCookie ? { Cookie: 'fos_session=forged.invalid.signature' } : {},
+        });
+        assert(response.status === 401, `${pathname} must reject ${forgedCookie ? 'forged' : 'missing'} sessions; got ${response.status}`);
+        protectedRoutes.push({ pathname, forgedCookie, status: response.status });
+      }
+    }
+    const loginResponse = await fetch(`${BASE_URL}/login`, { redirect: 'manual' });
+    assert(loginResponse.status === 200, 'The internal login page is unavailable');
+    const report = { ok: true, baseUrl: BASE_URL, screenshots, protectedRoutes, loginStatus: loginResponse.status };
+    await writeFile(path.join(OUTPUT_DIR, 'results.json'), JSON.stringify(report, null, 2));
     cdp.close();
-    console.log(JSON.stringify({ ok: true, screenshots }, null, 2));
+    console.log(JSON.stringify(report, null, 2));
   } finally {
     chrome.kill();
-    await rm(userDataDir, { recursive: true, force: true }).catch(() => null);
+    if (path.dirname(userDataDir) === path.resolve('.tmp') && path.basename(userDataDir).startsWith('chrome-public-')) {
+      await rm(userDataDir, { recursive: true, force: true }).catch(() => null);
+    }
   }
 }
 
