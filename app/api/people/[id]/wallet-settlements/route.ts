@@ -321,7 +321,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       };
     });
 
-    revalidateFinancePaths([`/people/${id}`, '/accounts']);
+    revalidateFinancePaths([`/customers/${id}`, '/finance']);
     return ok(settlement, 201);
   } catch (error) {
     if ((error as Error).message === 'PERSON_NOT_FOUND') return fail('الزبون غير موجود', 404);

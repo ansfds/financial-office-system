@@ -100,7 +100,7 @@ try {
       deviceScaleFactor: 1,
       mobile: view.width < 800,
     });
-    await navigate('/people/' + results.reviewPersonId);
+    await navigate('/customers/' + results.reviewPersonId);
     await until(`!![...document.querySelectorAll('button')].find(b => b.textContent.includes('4 بطاقات'))`);
     await until(
       `[...document.querySelectorAll('button')].some(b => b.textContent.includes('4 بطاقات') && Object.keys(b).some(k => k.startsWith('__reactProps')))`,
@@ -163,7 +163,7 @@ try {
     deviceScaleFactor: 1,
     mobile: false,
   });
-  await navigate('/people');
+  await navigate('/customers');
   await evaluate(
     `[...document.querySelectorAll('button')].find(b => b.textContent.includes('إضافة بطاقات')).click()`,
   );
@@ -174,7 +174,7 @@ try {
   await until(`document.querySelectorAll('[role="dialog"] fieldset').length === 4`);
   assert.equal(await evaluate(`document.querySelectorAll('[role="dialog"] input[type="file"]').length`), 0);
   await shot('batch-entry-four-cards');
-  await navigate('/accounts');
+  await navigate('/finance');
   await evaluate(
     `[...document.querySelectorAll('button')].find(b => b.textContent.includes('إضافة حركة')).click()`,
   );
@@ -213,7 +213,7 @@ try {
   await until(`document.body.innerText.includes('تصفير المنظومة')`);
   await shot('settings-reset');
   assert(!(await evaluate(`!!document.querySelector('a[href="/instant-registration"]')`)));
-  await navigate('/dashboard');
+  await navigate('/');
   await until(`document.body.innerText.includes('إجمالي البطاقات') && document.body.innerText.includes('رصيد غير كافي')`);
   assert(!(await evaluate(`document.body.innerText.includes('حدث خطأ غير متوقع')`)));
   await shot('dashboard');

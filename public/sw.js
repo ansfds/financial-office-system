@@ -1,4 +1,4 @@
-const CACHE_VERSION = 'financial-office-v4';
+const CACHE_VERSION = 'financial-office-v5';
 const PAGE_CACHE = `${CACHE_VERSION}-pages`;
 const ASSET_CACHE = `${CACHE_VERSION}-assets`;
 const APP_SHELL = ['/offline', '/manifest.webmanifest', '/icons/app-icon.svg'];

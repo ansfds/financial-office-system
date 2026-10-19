@@ -2,9 +2,9 @@ import type { MetadataRoute } from 'next';
 
 export default function manifest(): MetadataRoute.Manifest {
   return {
-    name: 'الوسيط العالمي للدفع الإلكتروني والحوالات',
-    short_name: 'الوسيط العالمي',
-    description: 'حلول مالية متكاملة للدفع والتحويل والخدمات الإلكترونية.',
+    name: 'منظومة الوسيط',
+    short_name: 'الوسيط',
+    description: 'منظومة إدارة الزبائن والبطاقات والحسابات',
     lang: 'ar',
     dir: 'rtl',
     start_url: '/',

@@ -105,12 +105,12 @@ export default function PeopleClient({ initialPeople }: { initialPeople: any[] }
                 key={person.id}
                 data-person-row={person.id}
                 onClick={(e) => {
-                  if (!(e.target as HTMLElement).closest('a,button')) router.push(`/people/${person.id}`);
+                  if (!(e.target as HTMLElement).closest('a,button')) router.push(`/customers/${person.id}`);
                 }}
                 className="cursor-pointer"
               >
                 <td>
-                  <Link className="font-bold text-blue-700" href={`/people/${person.id}`}>
+                  <Link className="font-bold text-blue-700" href={`/customers/${person.id}`}>
                     {person.customerNo} · {person.fullName}
                   </Link>
                 </td>

@@ -413,7 +413,7 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
                 {customerWalletReports.map((item) => (
                   <tr key={item.person.id}>
                     <td>
-                      <Link href={`/people/${item.person.id}`} className="font-bold text-indigo-600 hover:text-indigo-500">
+                      <Link href={`/customers/${item.person.id}`} className="font-bold text-indigo-600 hover:text-indigo-500">
                         {item.person.customerNo ? `${item.person.customerNo} - ` : ''}
                         {item.person.fullName}
                       </Link>

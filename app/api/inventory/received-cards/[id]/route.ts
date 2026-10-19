@@ -301,7 +301,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
       });
     }
 
-    revalidateFinancePaths(updated.batch?.personId ? ['/people', `/people/${updated.batch.personId}`] : ['/people']);
+    revalidateFinancePaths(updated.batch?.personId ? ['/customers', `/customers/${updated.batch.personId}`] : ['/customers']);
 
     return ok({
       ...updated,
@@ -370,7 +370,7 @@ export async function DELETE(_: Request, { params }: { params: Promise<{ id: str
       newValue: updated as any,
       description: 'حذف منطقي لبطاقة زبون',
     });
-    revalidateFinancePaths(['/people', `/people/${updated.batch.personId}`]);
+    revalidateFinancePaths(['/customers', `/customers/${updated.batch.personId}`]);
 
     return ok({ success: true });
   } catch (error) {

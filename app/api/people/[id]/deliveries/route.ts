@@ -90,7 +90,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       newValue: created as any,
       description: 'تسجيل تسليم مبلغ للزبون مستقل عن رصيد البطاقة',
     });
-    revalidatePaths(['/people', `/people/${id}`]);
+    revalidatePaths(['/customers', `/customers/${id}`]);
 
     return ok(created, 201);
   } catch (error) {

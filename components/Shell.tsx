@@ -24,10 +24,10 @@ import { reduceMobileDrawerState, shouldCloseMobileDrawerFromDrag } from '@/lib/
 const logoUrl = '/brand/elwaseet-logo-reference.jpg';
 
 const items = [
-  ['/dashboard', 'الصفحة الرئيسية', LayoutDashboard],
-  ['/people', 'الزبائن', Users],
+  ['/', 'الصفحة الرئيسية', LayoutDashboard],
+  ['/customers', 'الزبائن', Users],
   ['/cards', 'البطاقات', WalletCards],
-  ['/accounts', 'لنا وعلينا', Wallet],
+  ['/finance', 'لنا وعلينا', Wallet],
   ['/daily-notes', 'الملاحظات اليومية', MessageSquareText],
   ['/audit', 'سجل العمليات', ShieldCheck],
   ['/settings', 'الإعدادات', Settings],
@@ -157,7 +157,7 @@ export default function Shell({ children }: { children: React.ReactNode }) {
 
         <nav className="stagger-list mt-5 flex-1 space-y-1 overflow-y-auto pb-4">
           {items.map(([href, label, Icon], index) => {
-            const active = href === '/dashboard' ? pathname === href : pathname.startsWith(href);
+            const active = href === '/' ? pathname === href : pathname.startsWith(href);
             return (
               <Link
                 key={href}
@@ -190,7 +190,7 @@ export default function Shell({ children }: { children: React.ReactNode }) {
       <nav className="mobile-bottom-nav fixed inset-x-0 bottom-0 z-30 border-t border-slate-200 bg-white/95 px-2 pt-2 shadow-[0_-12px_34px_rgba(15,23,42,0.12)] backdrop-blur dark:border-blue-900/60 dark:bg-[#08172a]/95 lg:hidden">
         <div className="grid grid-cols-4 gap-1">
           {primaryItems.map(([href, label, Icon]) => {
-            const active = href === '/dashboard' ? pathname === href : pathname.startsWith(href);
+            const active = href === '/' ? pathname === href : pathname.startsWith(href);
             return (
               <Link
                 key={href}
@@ -216,7 +216,7 @@ export default function Shell({ children }: { children: React.ReactNode }) {
               openMobileMenu();
             }}
             className={`flex min-h-[48px] flex-col items-center justify-center gap-1 rounded-lg px-1 text-[11px] font-black ${
-              ['/accounts', '/audit', '/settings'].some((href) => pathname.startsWith(href))
+              ['/finance', '/audit', '/settings'].some((href) => pathname.startsWith(href))
                 ? 'bg-indigo-50 text-indigo-700 dark:bg-blue-950 dark:text-blue-200'
                 : 'text-slate-500 dark:text-slate-300'
             }`}

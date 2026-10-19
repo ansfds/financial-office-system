@@ -94,7 +94,7 @@ try {
     sameSite: 'Lax',
   });
   await main.viewport(1440, 900);
-  await main.navigate('/dashboard');
+  await main.navigate('/');
   await main.until(`!!document.querySelector('[data-card-statistics]')`);
   results.dashboard = await main.evaluate(
     `(() => { const main = document.querySelector('main'); const text = main.innerText; return { states: [...main.querySelectorAll('[data-card-state]')].map(r => r.dataset.cardState), statisticsPanels: main.querySelectorAll('[data-card-statistics]').length, financial: !!main.querySelector('[data-recent-financial]'), removedAbsent: !['آخر تحديث','الحسابات','مجاميع البطاقات حسب العملة','آخر البطاقات المعدلة','آخر عمليات البطاقات'].some(label => text.includes(label)) }; })()`,
@@ -114,7 +114,7 @@ try {
     'total',
   ]);
   await main.screenshot('dashboard-desktop');
-  await main.navigate('/people');
+  await main.navigate('/customers');
   await main.until(`!!document.querySelector('input[aria-label="بحث الزبائن"]')`);
   await main.evaluate(
     `(() => { const input = document.querySelector('input[aria-label="بحث الزبائن"]'); Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, ${JSON.stringify(fixture.phone)}); input.dispatchEvent(new Event('input', { bubbles: true })); })()`,
@@ -173,8 +173,8 @@ try {
     await extraPage.navigate(route);
     return extraPage;
   }
-  const dashboard = await extra('/dashboard'),
-    profile = await extra('/people/' + fixture.personId);
+  const dashboard = await extra('/'),
+    profile = await extra('/customers/' + fixture.personId);
   const cleared = `Number(document.querySelector('[data-card-state="CLEARED"] dd').dataset.count)`;
   await dashboard.until(`!!document.querySelector('[data-card-state="CLEARED"] dd')`);
   await profile.until(`!!document.querySelector('[data-card-state="CLEARED"] dd')`);

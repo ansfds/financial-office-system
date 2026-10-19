@@ -321,9 +321,9 @@ async function main() {
     }
 
     const scenarios = [
-      { name: 'desktop-dashboard-light', route: '/dashboard', width: 1440, height: 900, mobile: false, theme: 'light' },
-      { name: 'desktop-people-dark', route: '/people', width: 1440, height: 900, mobile: false, theme: 'dark' },
-      { name: 'mobile-accounts-light', route: '/accounts', width: 390, height: 844, mobile: true, theme: 'light' },
+      { name: 'desktop-dashboard-light', route: '/', width: 1440, height: 900, mobile: false, theme: 'light' },
+      { name: 'desktop-people-dark', route: '/customers', width: 1440, height: 900, mobile: false, theme: 'dark' },
+      { name: 'mobile-accounts-light', route: '/finance', width: 390, height: 844, mobile: true, theme: 'light' },
       { name: 'mobile-settings-dark', route: '/settings', width: 390, height: 844, mobile: true, theme: 'dark' },
     ];
 
@@ -346,7 +346,7 @@ async function main() {
     const dialogScenarios = [
       {
         name: 'mobile-accounts-add-dialog',
-        route: '/accounts',
+        route: '/finance',
         modalName: 'wallet-movement',
         width: 390,
         height: 844,
@@ -362,7 +362,7 @@ async function main() {
       },
       {
         name: 'mobile-people-fast-card-dialog',
-        route: '/people',
+        route: '/customers',
         modalName: 'fast-card-entry',
         width: 390,
         height: 844,

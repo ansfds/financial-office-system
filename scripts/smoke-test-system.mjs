@@ -121,7 +121,7 @@ async function main() {
   const steps = [];
   const okStep = (name) => steps.push({ name, ok: true });
 
-  for (const page of ['/dashboard', '/people', '/accounts', '/audit', '/settings']) {
+  for (const page of ['/', '/customers', '/finance', '/audit', '/settings']) {
     const { response } = await request(page, { cookie });
     assert(response.ok, `Page ${page} failed with ${response.status}`);
   }

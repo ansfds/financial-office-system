@@ -77,7 +77,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       return updated;
     });
     if (!card) return fail('البطاقة غير موجودة', 404);
-    revalidateFinancePaths([`/people/${card.batch.personId}`]);
+    revalidateFinancePaths([`/customers/${card.batch.personId}`]);
     return ok(card);
   } catch (e) {
     return apiError(e);

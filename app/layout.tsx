@@ -7,24 +7,16 @@ import ServiceWorkerRegistration from '@/components/ServiceWorkerRegistration';
 
 const logoUrl = '/brand/elwaseet-logo-reference.jpg';
 
-function metadataBaseUrl() {
-  try {
-    return new URL(process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3000');
-  } catch {
-    return new URL('http://localhost:3000');
-  }
-}
-
 export const metadata: Metadata = {
-  metadataBase: metadataBaseUrl(),
-  title: 'الوسيط العالمي | للدفع الإلكتروني والحوالات',
-  description: 'حلول مالية متكاملة للدفع والتحويل وشراء العملات والخدمات الإلكترونية محليًا ودوليًا.',
-  applicationName: 'الوسيط العالمي',
+  title: 'منظومة الوسيط',
+  description: 'منظومة إدارة الزبائن والبطاقات والحسابات',
+  applicationName: 'منظومة الوسيط',
+  robots: { index: false, follow: false },
   manifest: '/manifest.webmanifest',
   appleWebApp: {
     capable: true,
     statusBarStyle: 'default',
-    title: 'الوسيط العالمي',
+    title: 'منظومة الوسيط',
   },
   formatDetection: {
     telephone: false,
@@ -33,13 +25,6 @@ export const metadata: Metadata = {
     icon: [{ url: logoUrl }, { url: '/icons/app-icon.svg' }],
     shortcut: [{ url: '/icons/app-icon.svg' }],
     apple: [{ url: logoUrl }],
-  },
-  openGraph: {
-    title: 'الوسيط العالمي للدفع الإلكتروني والحوالات',
-    description: 'خدمات دفع وتحويل وشراء عملات رقمية وفواتير عالمية بهوية مالية موثوقة.',
-    locale: 'ar_LY',
-    type: 'website',
-    images: [{ url: logoUrl }],
   },
 };
 

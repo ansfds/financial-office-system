@@ -84,7 +84,7 @@ export async function POST(request: Request) {
       },
       { timeout: 120000 },
     );
-    revalidateFinancePaths(['/trash', '/daily-notes', '/accounts']);
+    revalidateFinancePaths(['/trash', '/daily-notes', '/finance']);
     return ok(result);
   } catch (error) {
     if ((error as Error).message === 'RESET_ALREADY_USED') return fail('تم استخدام هذا التأكيد مسبقًا', 409);

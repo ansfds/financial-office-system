@@ -2,6 +2,19 @@ import type { NextConfig } from 'next';
 
 const nextConfig: NextConfig = {
   experimental: { serverActions: { bodySizeLimit: '10mb' } },
+  async redirects() {
+    return [
+      { source: '/dashboard', destination: '/', permanent: true },
+      { source: '/admin/:path*', destination: '/', permanent: true },
+      { source: '/people/:path*', destination: '/customers/:path*', permanent: true },
+      { source: '/accounts', destination: '/finance', permanent: true },
+      {
+        source: '/:legacy(gift-cards|minecraft|subscriptions|products|about|contact|services|transfers|pc-parts|store|cart)/:path*',
+        destination: '/',
+        permanent: true,
+      },
+    ];
+  },
   async headers() {
     return [
       {

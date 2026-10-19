@@ -23,7 +23,7 @@ const periodLabels = {
 const periods = ['today', 'week', 'month', 'all'] as const;
 
 function periodHref(period: string) {
-  return period === 'all' ? '/dashboard' : `/dashboard?accountingPeriod=${period}`;
+  return period === 'all' ? '/' : `/?accountingPeriod=${period}`;
 }
 
 function fallbackDollar(): DashboardCurrency {

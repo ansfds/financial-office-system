@@ -1429,7 +1429,7 @@ async function executeCardEntry(
       : `تم إضافة البيانات إلى الزبون الموجود: ${person.fullName}`,
     fingerprint: parsed.fingerprint,
     undoAvailable: true,
-    affectedPaths: ['/people', `/people/${person.id}`, '/inventory/received-cards', '/dashboard'],
+    affectedPaths: ['/customers', `/customers/${person.id}`, '/inventory/received-cards', '/'],
     createdPersonId: created ? person.id : undefined,
     createdBatchId: batch.id,
     createdCardIds: createdCards.map((card) => card.id),
@@ -1464,7 +1464,7 @@ async function executeCustomerDelivery(
     message: 'تم تسجيل المبلغ المستلم بنجاح',
     fingerprint: parsed.fingerprint,
     undoAvailable: true,
-    affectedPaths: ['/people', `/people/${person.id}`, '/dashboard'],
+    affectedPaths: ['/customers', `/customers/${person.id}`, '/'],
     createdDeliveryIds: [delivery.id],
     affectedPersonIds: [person.id],
   } satisfies ExecutionResult;
@@ -1579,7 +1579,7 @@ async function executeCardWithdrawal(
     message: `تم تسجيل سحبة ${plan.amount.toString()}$ للبطاقة ${cardDisplay(card)}`,
     fingerprint: parsed.fingerprint,
     undoAvailable: true,
-    affectedPaths: ['/people', `/people/${card.batch.personId}`, '/inventory/received-cards', '/dashboard'],
+    affectedPaths: ['/customers', `/customers/${card.batch.personId}`, '/inventory/received-cards', '/'],
     createdCardOperationIds: [operation.id],
     affectedCardIds: [card.id],
     affectedPersonIds: [card.batch.personId],
@@ -1607,7 +1607,7 @@ async function executeCardFinalSettlement(
     message: `تمت تصفية البطاقة ${cardDisplay(card)} بنجاح`,
     fingerprint: parsed.fingerprint,
     undoAvailable: true,
-    affectedPaths: ['/people', `/people/${card.batch.personId}`, '/inventory/received-cards', '/dashboard'],
+    affectedPaths: ['/customers', `/customers/${card.batch.personId}`, '/inventory/received-cards', '/'],
     createdCardOperationIds: [operation.id],
     affectedCardIds: [card.id],
     affectedPersonIds: [card.batch.personId],
@@ -1635,7 +1635,7 @@ async function executeCardStatus(
     message: `تم تحديث حالة البطاقة ${cardDisplay(card)} بنجاح`,
     fingerprint: parsed.fingerprint,
     undoAvailable: true,
-    affectedPaths: ['/people', `/people/${card.batch.personId}`, '/inventory/received-cards', '/dashboard'],
+    affectedPaths: ['/customers', `/customers/${card.batch.personId}`, '/inventory/received-cards', '/'],
     createdCardOperationIds: [operation.id],
     affectedCardIds: [card.id],
     affectedPersonIds: [card.batch.personId],
@@ -1680,7 +1680,7 @@ async function executeWalletMovement(
     message: 'تم تسجيل الدين بنجاح',
     fingerprint: parsed.fingerprint,
     undoAvailable: true,
-    affectedPaths: ['/accounts', '/people', `/people/${person.id}`, '/dashboard'],
+    affectedPaths: ['/finance', '/customers', `/customers/${person.id}`, '/'],
     createdPersonId: created ? person.id : undefined,
     createdWalletSettlementIds: settlementIds,
     affectedPersonIds: [person.id],
@@ -1717,7 +1717,7 @@ async function executeWalletRepayment(
     message: 'تم تسجيل سداد الدين بنجاح',
     fingerprint: parsed.fingerprint,
     undoAvailable: true,
-    affectedPaths: ['/accounts', '/people', `/people/${person.id}`, '/dashboard'],
+    affectedPaths: ['/finance', '/customers', `/customers/${person.id}`, '/'],
     createdWalletSettlementIds: settlementIds,
     affectedPersonIds: [person.id],
   } satisfies ExecutionResult;
@@ -1837,7 +1837,7 @@ export async function undoInstantRegistration(fingerprint: string, session: Inst
     if (!execution) throw new Error('INSTANT_EXECUTION_NOT_FOUND');
 
     const now = new Date();
-    const affectedPaths = new Set(execution.affectedPaths || ['/dashboard', '/people', '/accounts', '/inventory/received-cards']);
+    const affectedPaths = new Set(execution.affectedPaths || ['/', '/customers', '/finance', '/inventory/received-cards']);
 
     if (execution.createdCardOperationIds?.length) {
       const operations = await tx.receivedCardOperation.findMany({
@@ -1854,7 +1854,7 @@ export async function undoInstantRegistration(fingerprint: string, session: Inst
       });
       for (const cardId of new Set(operations.map((operation) => operation.cardId))) {
         const card = await recalculateReceivedCard(tx, cardId);
-        if (card.batch?.personId) affectedPaths.add(`/people/${card.batch.personId}`);
+        if (card.batch?.personId) affectedPaths.add(`/customers/${card.batch.personId}`);
       }
     }
 
@@ -1914,7 +1914,7 @@ export async function undoInstantRegistration(fingerprint: string, session: Inst
           paymentMethod: settlement.paymentMethod,
           accountType: settlement.accountType as WalletAccountType,
         });
-        affectedPaths.add(`/people/${settlement.personId}`);
+        affectedPaths.add(`/customers/${settlement.personId}`);
       }
     }
 

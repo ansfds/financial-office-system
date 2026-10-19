@@ -134,7 +134,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       entityId: result.movement.id,
       description: 'إضافة حركة مالية',
     });
-    revalidateFinancePaths(result.personId ? [`/people/${result.personId}`] : []);
+    revalidateFinancePaths(result.personId ? [`/customers/${result.personId}`] : []);
 
     return ok(result.movement, 201);
   } catch (error) {

@@ -140,7 +140,7 @@ async function main() {
     await success('/api/people?q=' + encodeURIComponent(person.fullName), undefined, 'GET')
   )[0];
   assert(summary.wallet.some((w) => w.debt === 75));
-  const profile = await fetch(base + '/people/' + person.id, { headers: { cookie } });
+  const profile = await fetch(base + '/customers/' + person.id, { headers: { cookie } });
   const profileHtml = await profile.text();
   assert.equal(profile.status, 200);
   assert(profileHtml.includes('إحصائيات البطاقات'));

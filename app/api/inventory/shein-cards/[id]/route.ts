@@ -161,7 +161,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
       newValue: updated as any,
       description: 'تعديل كرت شي إن',
     });
-    revalidateFinancePaths(updated.buyerPersonId ? [`/people/${updated.buyerPersonId}`] : []);
+    revalidateFinancePaths(updated.buyerPersonId ? [`/customers/${updated.buyerPersonId}`] : []);
 
     return ok(updated);
   } catch (error) {

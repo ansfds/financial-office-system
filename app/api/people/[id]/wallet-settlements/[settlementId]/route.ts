@@ -191,7 +191,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
       newValue: newSnapshot,
       description: 'تعديل حركة مالية وإعادة حساب الرصيد',
     });
-    revalidateFinancePaths([`/people/${id}`, '/accounts']);
+    revalidateFinancePaths([`/customers/${id}`, '/finance']);
     return ok(newSnapshot);
   } catch (error) {
     if ((error as Error).message === 'SETTLEMENT_NOT_FOUND') return fail('الحركة المالية غير موجودة', 404);
@@ -257,7 +257,7 @@ export async function DELETE(request: Request, { params }: { params: Promise<{ i
       newValue: deletedSnapshot,
       description: 'حذف منطقي لحركة مالية وإعادة حساب الرصيد',
     });
-    revalidateFinancePaths([`/people/${id}`, '/accounts']);
+    revalidateFinancePaths([`/customers/${id}`, '/finance']);
     return ok({ success: true });
   } catch (error) {
     if ((error as Error).message === 'SETTLEMENT_NOT_FOUND') return fail('الحركة المالية غير موجودة', 404);

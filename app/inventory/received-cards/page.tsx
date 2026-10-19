@@ -1,2 +1,2 @@
 import { redirect } from 'next/navigation';
-export default function ReceivedCardsPage() { redirect('/people'); }
+export default function ReceivedCardsPage() { redirect('/customers'); }

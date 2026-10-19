@@ -1276,7 +1276,7 @@ export async function POST(request: Request) {
       });
     }
 
-    revalidateFinancePaths(data.personId ? [`/people/${data.personId}`] : []);
+    revalidateFinancePaths(data.personId ? [`/customers/${data.personId}`] : []);
 
     return ok(transaction, 201);
   } catch (error) {

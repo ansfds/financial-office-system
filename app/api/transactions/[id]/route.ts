@@ -388,7 +388,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
         description: 'تحويل مبلغ معاملة لم يتم تنفيذها إلى محفظة الزبون',
       });
     }
-    revalidateFinancePaths(result.updated.personId ? [`/people/${result.updated.personId}`] : []);
+    revalidateFinancePaths(result.updated.personId ? [`/customers/${result.updated.personId}`] : []);
 
     return ok(result.updated);
   } catch (error) {

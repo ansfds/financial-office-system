@@ -56,7 +56,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
       newValue: person as any,
       description: 'تعديل بيانات زبون',
     });
-    revalidateFinancePaths([`/people/${id}`]);
+    revalidateFinancePaths([`/customers/${id}`]);
 
     return ok(person);
   } catch (error) {
@@ -72,7 +72,7 @@ export async function DELETE(_: Request, { params }: { params: Promise<{ id: str
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(782341)`;
       return archiveCustomer(tx, id, session.username || 'system');
     });
-    revalidateFinancePaths(['/trash', `/people/${id}`]);
+    revalidateFinancePaths(['/trash', `/customers/${id}`]);
     return ok(result);
   } catch (error) {
     if ((error as Error).message === 'PERSON_NOT_FOUND') return fail('الزبون غير موجود', 404);

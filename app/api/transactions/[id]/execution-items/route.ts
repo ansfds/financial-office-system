@@ -175,7 +175,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
       newValue: result.updated as any,
       description: 'تنفيذ طلب كروت شي إن بالكامل',
     });
-    revalidateFinancePaths(result.updated.personId ? [`/people/${result.updated.personId}`] : []);
+    revalidateFinancePaths(result.updated.personId ? [`/customers/${result.updated.personId}`] : []);
 
     return ok(result.updated);
   } catch (error) {

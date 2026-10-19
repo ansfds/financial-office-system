@@ -1,9 +1,10 @@
 import { revalidatePath } from 'next/cache';
+import { canonicalAppPath } from './app-paths';
 
 const financePaths = [
-  '/dashboard',
+  '/',
   '/transactions',
-  '/people',
+  '/customers',
   '/cards',
   '/new-transaction',
   '/inventory',
@@ -12,21 +13,21 @@ const financePaths = [
   '/reports',
   '/cashbox',
   '/settings',
-  '/accounts',
+  '/finance',
   '/daily-notes',
   '/reports/daily',
 ];
 
 export function revalidatePaths(paths: string[] = []) {
-  for (const path of new Set(paths.filter(Boolean))) {
+  for (const path of new Set(paths.filter(Boolean).map(canonicalAppPath))) {
     revalidatePath(path);
   }
 }
 
 export function revalidateFinancePaths(extraPaths: string[] = []) {
-  for (const path of new Set([...financePaths, ...extraPaths])) {
+  for (const path of new Set([...financePaths, ...extraPaths].map(canonicalAppPath))) {
     revalidatePath(path);
   }
-  revalidatePath('/people/[id]', 'page');
+  revalidatePath('/customers/[id]', 'page');
   revalidatePath('/cards/[id]', 'page');
 }

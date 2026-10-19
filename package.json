@@ -15,7 +15,7 @@
     "reset:admin-password": "tsx scripts/reset-admin-password.ts",
     "db:backfill:customers": "node tools/backfill-customer-numbers.cjs",
     "check": "npm run typecheck && npm run lint",
-    "visual:public": "node scripts/public-site-visual-smoke.mjs",
+    "visual:system": "node scripts/system-root-smoke.mjs",
     "typecheck": "tsc --noEmit",
     "test": "vitest run"
   },
@@ -23,7 +23,6 @@
     "@prisma/client": "^6.10.0",
     "argon2": "^0.41.1",
     "date-fns": "^4.1.0",
-    "framer-motion": "^12.18.1",
     "jose": "^6.0.11",
     "lucide-react": "^0.516.0",
     "next": "^15.3.3",

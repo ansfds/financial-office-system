@@ -3,10 +3,8 @@ import BackupActions from '@/components/BackupActions';
 import DangerSettings from '@/components/DangerSettings';
 import { requireSession } from '@/lib/auth';
 import { canReset } from '@/lib/reset-security';
-import PublicSiteSettingsClient from '@/components/PublicSiteSettingsClient';
 import { db } from '@/lib/db';
 import { formatDateTime } from '@/lib/format';
-import { getPublicSiteSettings } from '@/lib/public-site-settings';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -14,21 +12,18 @@ export const fetchCache = 'force-no-store';
 
 export default async function SettingsPage() {
   const session = await requireSession();
-  const [users, currencies, backups, publicSiteSettings] = await Promise.all([
+  const [users, currencies, backups] = await Promise.all([
     db.user.findMany({
       select: { id: true, username: true, isActive: true, createdAt: true, updatedAt: true },
       orderBy: { username: 'asc' },
     }),
     db.currency.findMany({ where: { isActive: true }, orderBy: { code: 'asc' } }),
     db.backupRecord.findMany({ orderBy: { createdAt: 'desc' }, take: 12 }),
-    getPublicSiteSettings({ persistDefaults: true }),
   ]);
 
   return (
     <Page title="الإعدادات">
       <div className="grid gap-5">
-        <PublicSiteSettingsClient initialSettings={publicSiteSettings} />
-
         <section className="card p-5">
           <h2 className="mb-4 font-black">المستخدمون</h2>
           <div className="table-wrap hidden md:block">

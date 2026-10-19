@@ -290,7 +290,7 @@ export async function POST(request: Request) {
       newValue: batch as any,
       description: 'إضافة دفعة بطاقات مستلمة بدون أثر على الصندوق',
     });
-    revalidateFinancePaths([`/people/${batch.personId}`]);
+    revalidateFinancePaths([`/customers/${batch.personId}`]);
 
     return ok(batch, 201);
   } catch (error) {

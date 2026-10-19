@@ -203,7 +203,7 @@ export async function PATCH(
       newValue: result.updatedItem as any,
       description: 'تعديل عنصر تنفيذ كرت شي إن',
     });
-    revalidateFinancePaths(result.updatedTransaction.personId ? [`/people/${result.updatedTransaction.personId}`] : []);
+    revalidateFinancePaths(result.updatedTransaction.personId ? [`/customers/${result.updatedTransaction.personId}`] : []);
 
     return ok(result.updatedTransaction);
   } catch (error) {

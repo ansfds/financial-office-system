@@ -37,7 +37,7 @@ export default function Login() {
       try {
         const response = await fetch('/api/auth/session', { cache: 'no-store' });
         if (!cancelled && response.ok) {
-          router.replace('/dashboard');
+          router.replace('/');
           router.refresh();
           return;
         }
@@ -92,7 +92,7 @@ export default function Login() {
         return;
       }
 
-      router.replace('/dashboard');
+      router.replace('/');
       router.refresh();
     } catch {
       setError('تعذر الاتصال بالخادم. تأكد من تشغيل المشروع ثم حاول مرة أخرى.');
