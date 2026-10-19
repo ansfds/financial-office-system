@@ -382,6 +382,10 @@ export async function POST(request: Request) {
     const operationKind = data.operationKind || legacyOperationKind(data.transactionKind);
 
     const transaction = await db.$transaction(async (tx) => {
+      if (data.personId) {
+        await tx.$executeRaw`SELECT id FROM "Person" WHERE id = ${data.personId} FOR UPDATE`;
+        if (!await tx.person.findFirst({ where: { id: data.personId, deletedAt: null, status: 'ACTIVE' } })) throw new Error('PERSON_NOT_FOUND');
+      }
       if (operationKind === OPERATION_KIND.MANUAL) {
         if (!data.manual) throw new Error('MISSING_MANUAL_DATA');
         const currency = await activeCurrency(tx, data.manual.currencyId);

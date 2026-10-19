@@ -11,9 +11,22 @@ type CacheReadOptions = {
 };
 
 const dbName = 'financial-office-client-cache';
-const dbVersion = 1;
+const dbVersion = 2;
 const storeName = 'responses';
 const memoryCache = new Map<string, CacheRecord<unknown>>();
+export async function invalidateFinanceClient(broadcast = true) {
+  memoryCache.clear();
+  await withStore('readwrite', (store) => {
+    store.clear();
+  });
+  if (typeof window === 'undefined') return;
+  window.dispatchEvent(new Event('financial-office-changed'));
+  if (broadcast && 'BroadcastChannel' in window) {
+    const channel = new BroadcastChannel('financial-office-changes');
+    channel.postMessage('changed');
+    channel.close();
+  }
+}
 let activeSyncCount = 0;
 
 function canUseIndexedDb() {
@@ -26,8 +39,11 @@ function openCacheDb() {
   return new Promise<IDBDatabase | null>((resolve) => {
     const request = window.indexedDB.open(dbName, dbVersion);
 
-    request.onupgradeneeded = () => {
+    request.onupgradeneeded = (event) => {
       const db = request.result;
+      if (event.oldVersion > 0 && db.objectStoreNames.contains(storeName)) {
+        db.deleteObjectStore(storeName);
+      }
       if (!db.objectStoreNames.contains(storeName)) {
         db.createObjectStore(storeName, { keyPath: 'key' });
       }
@@ -130,5 +146,7 @@ export function announceSyncStart() {
 export function announceSyncEnd() {
   if (typeof window === 'undefined') return;
   activeSyncCount = Math.max(0, activeSyncCount - 1);
-  window.dispatchEvent(new CustomEvent('financial-office-sync', { detail: { syncing: activeSyncCount > 0 } }));
+  window.dispatchEvent(
+    new CustomEvent('financial-office-sync', { detail: { syncing: activeSyncCount > 0 } }),
+  );
 }

@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import { Eye, EyeOff, Loader2, ShieldCheck } from 'lucide-react';
 import { ALLOWED_USERNAMES, type AllowedUsername } from '@/lib/users';
 
-const logoUrl = 'https://i.postimg.cc/k4nQr4gx/680242520-122094061526346951-872670812110961262-n.jpg';
+const logoUrl = '/brand/elwaseet-logo-reference.jpg';
 
 function loginFallbackMessage(status: number) {
   if (status === 401) return 'اسم المستخدم أو كلمة المرور غير صحيحة.';

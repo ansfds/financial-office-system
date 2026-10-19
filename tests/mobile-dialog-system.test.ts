@@ -47,12 +47,15 @@ describe('mobile dialog system contract', () => {
       ['components/TransactionsClient.tsx', 'name="transaction-editor"'],
       ['components/TransactionsClient.tsx', 'name="transaction-note"'],
       ['components/SheinCardsClient.tsx', 'name="shein-card-send"'],
-      ['components/PeopleClient.tsx', 'name="customer-cards"'],
-      ['components/PeopleClient.tsx', 'name="edit-person"'],
+      ['components/CustomerHistoryClient.tsx', 'name="customer-cards"'],
+      ['components/PersonEditor.tsx', 'name="edit-person"'],
     ] as const;
 
     for (const [file, modalName] of modalFiles) {
-      const source = readProjectFile(file);
+      const componentSource = readProjectFile(file);
+      const source = componentSource.includes('<CenteredDialog')
+        ? componentSource + readProjectFile('components/CenteredDialog.tsx')
+        : componentSource;
       expect(source).toContain('<ModalLayer');
       expect(source).toContain('<ModalBackdrop');
       expect(source).toContain(modalName);

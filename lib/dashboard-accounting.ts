@@ -1,6 +1,7 @@
 import { Prisma, ReceivedCardStatus } from '@prisma/client';
 import { db } from '@/lib/db';
 import { numberValue } from '@/lib/format';
+import { cardStatusLabels } from '@/lib/card-display';
 
 export const dashboardAccountingPeriods = ['all', 'today', 'week', 'month'] as const;
 export type DashboardAccountingPeriod = (typeof dashboardAccountingPeriods)[number];
@@ -203,23 +204,21 @@ function currencyFromRaw(row: {
   };
 }
 
-function addCurrencyAmount(totals: Map<string, DashboardCurrencyAmount>, currency: DashboardCurrency, amount: number) {
+function addCurrencyAmount(
+  totals: Map<string, DashboardCurrencyAmount>,
+  currency: DashboardCurrency,
+  amount: number,
+) {
   const key = currency.id || currency.code;
   const current = totals.get(key) || { currency, amount: 0 };
   current.amount += amount;
   totals.set(key, current);
 }
 
-function currencyForCard(card: {
-  settlementCurrency?: DashboardCurrency | null;
-  batch?: { currency?: DashboardCurrency | null } | null;
-}) {
-  return card.settlementCurrency || card.batch?.currency || {
-    id: 'USD',
-    code: 'USD',
-    name: 'USD',
-    symbol: '$',
-  };
+function currencyForCard(_card: unknown): DashboardCurrency {
+  void _card;
+  // Deduction amounts and original card values are always in USD.
+  return { id: 'USD', code: 'USD', name: 'دولار', symbol: '$' };
 }
 
 function publicCardCode(card: { publicCode?: string | null; sequence?: number | null }) {
@@ -227,76 +226,36 @@ function publicCardCode(card: { publicCode?: string | null; sequence?: number | 
 }
 
 function cardStatusLabel(status: string) {
-  if (status === 'SETTLED' || status === 'COMPLETED') return 'مصفاة';
-  if (status === 'CANCELLED') return 'متوقفة';
-  if (status === 'IN_SETTLEMENT' || status === 'PARTIAL') return 'قيد السحب';
-  return 'نشطة';
+  return cardStatusLabels[status] || status;
 }
 
 async function getGiftAggregates(period: DashboardAccountingPeriod) {
   return db.$queryRaw<GiftAggregateRow[]>(Prisma.sql`
-    WITH gift_rows AS (
-      SELECT
-        CASE
-          WHEN o."categoryCode" IN ('100', '300', '500') THEN o."categoryCode"
-          WHEN ROUND(o."categoryFaceValue") = 100 THEN '100'
-          WHEN ROUND(o."categoryFaceValue") = 300 THEN '300'
-          WHEN ROUND(o."categoryFaceValue") = 500 THEN '500'
-          ELSE NULL
-        END AS "categoryCode",
-        o."quantity",
-        COALESCE(settlement_currency."id", batch_currency."id") AS "currencyId",
-        COALESCE(settlement_currency."code", batch_currency."code", 'USD') AS "currencyCode",
-        COALESCE(settlement_currency."name", batch_currency."name", 'USD') AS "currencyName",
-        COALESCE(settlement_currency."symbol", batch_currency."symbol", '$') AS "currencySymbol"
-      FROM "ReceivedCardOperation" o
-      JOIN "ReceivedCustomerCard" card_row ON card_row."id" = o."cardId"
-      JOIN "ReceivedCardBatch" batch ON batch."id" = card_row."batchId"
-      LEFT JOIN "Currency" batch_currency ON batch_currency."id" = batch."currencyId"
-      LEFT JOIN "Currency" settlement_currency ON settlement_currency."id" = card_row."settlementCurrencyId"
-      WHERE o."deletedAt" IS NULL
-        AND card_row."deletedAt" IS NULL
-        AND o."operationType" = 'GIFT_CARD'
-        ${operationPeriodSql(period)}
-    )
-    SELECT
-      "categoryCode",
-      SUM("quantity") AS "quantity",
-      "currencyId",
-      "currencyCode",
-      "currencyName",
-      "currencySymbol"
-    FROM gift_rows
-    WHERE "categoryCode" IS NOT NULL
-    GROUP BY "categoryCode", "currencyId", "currencyCode", "currencyName", "currencySymbol"
-    ORDER BY "categoryCode" ASC
-  `);
-}
-
-async function getInvoiceAggregates(period: DashboardAccountingPeriod) {
-  return db.$queryRaw<InvoiceAggregateRow[]>(Prisma.sql`
-    SELECT
-      COUNT(*) AS "count",
-      COALESCE(SUM(o."amount"), 0) AS "amount",
-      COALESCE(settlement_currency."id", batch_currency."id") AS "currencyId",
-      COALESCE(settlement_currency."code", batch_currency."code", 'USD') AS "currencyCode",
-      COALESCE(settlement_currency."name", batch_currency."name", 'USD') AS "currencyName",
-      COALESCE(settlement_currency."symbol", batch_currency."symbol", '$') AS "currencySymbol"
+    SELECT CASE
+      WHEN o."categoryCode" IN ('100', '300', '500') THEN o."categoryCode"
+      WHEN ROUND(o."categoryFaceValue") = 100 THEN '100'
+      WHEN ROUND(o."categoryFaceValue") = 300 THEN '300'
+      WHEN ROUND(o."categoryFaceValue") = 500 THEN '500'
+      ELSE NULL END AS "categoryCode",
+      SUM(o."quantity") AS "quantity", 'USD' AS "currencyId", 'USD' AS "currencyCode", 'دولار' AS "currencyName", '$' AS "currencySymbol"
     FROM "ReceivedCardOperation" o
     JOIN "ReceivedCustomerCard" card_row ON card_row."id" = o."cardId"
     JOIN "ReceivedCardBatch" batch ON batch."id" = card_row."batchId"
-    LEFT JOIN "Currency" batch_currency ON batch_currency."id" = batch."currencyId"
-    LEFT JOIN "Currency" settlement_currency ON settlement_currency."id" = card_row."settlementCurrencyId"
-    WHERE o."deletedAt" IS NULL
-      AND card_row."deletedAt" IS NULL
-      AND o."operationType" = 'INVOICE'
+    JOIN "Person" person_row ON person_row."id" = batch."personId" AND person_row."deletedAt" IS NULL AND person_row."status" = 'ACTIVE'
+    WHERE o."deletedAt" IS NULL AND card_row."deletedAt" IS NULL AND o."operationType" = 'GIFT_CARD'
       ${operationPeriodSql(period)}
-    GROUP BY
-      COALESCE(settlement_currency."id", batch_currency."id"),
-      COALESCE(settlement_currency."code", batch_currency."code", 'USD'),
-      COALESCE(settlement_currency."name", batch_currency."name", 'USD'),
-      COALESCE(settlement_currency."symbol", batch_currency."symbol", '$')
-    ORDER BY "currencyCode" ASC
+    GROUP BY 1
+  `);
+}
+async function getInvoiceAggregates(period: DashboardAccountingPeriod) {
+  return db.$queryRaw<InvoiceAggregateRow[]>(Prisma.sql`
+    SELECT COUNT(*) AS "count", COALESCE(SUM(o."amount"), 0) AS "amount", 'USD' AS "currencyId", 'USD' AS "currencyCode", 'دولار' AS "currencyName", '$' AS "currencySymbol"
+    FROM "ReceivedCardOperation" o
+    JOIN "ReceivedCustomerCard" card_row ON card_row."id" = o."cardId"
+    JOIN "ReceivedCardBatch" batch ON batch."id" = card_row."batchId"
+    JOIN "Person" person_row ON person_row."id" = batch."personId" AND person_row."deletedAt" IS NULL AND person_row."status" = 'ACTIVE'
+    WHERE o."deletedAt" IS NULL AND card_row."deletedAt" IS NULL AND o."operationType" = 'INVOICE'
+      ${operationPeriodSql(period)}
   `);
 }
 
@@ -306,16 +265,13 @@ async function getCardStatusAggregates(period: DashboardAccountingPeriod) {
       COUNT(*) AS "total",
       COUNT(*) FILTER (
         WHERE card_row."status" IN ('RECEIVED', 'IN_SETTLEMENT', 'PARTIAL')
-          AND card_row."currentStage" < 5
       ) AS "active",
       COUNT(*) FILTER (
         WHERE card_row."status" IN ('SETTLED', 'COMPLETED')
-          OR card_row."currentStage" >= 5
       ) AS "settled",
       COUNT(*) FILTER (
         WHERE card_row."status" <> 'CANCELLED'
           AND card_row."status" NOT IN ('SETTLED', 'COMPLETED')
-          AND card_row."currentStage" < 5
       ) AS "unsettled",
       COUNT(*) FILTER (WHERE card_row."status" = 'CANCELLED') AS "stopped",
       COUNT(*) FILTER (
@@ -323,6 +279,8 @@ async function getCardStatusAggregates(period: DashboardAccountingPeriod) {
           AND card_row."rejectReason" IS NOT NULL
       ) AS "rejected"
     FROM "ReceivedCustomerCard" card_row
+    JOIN "ReceivedCardBatch" batch ON batch."id" = card_row."batchId"
+    JOIN "Person" person_row ON person_row."id" = batch."personId" AND person_row."deletedAt" IS NULL AND person_row."status" = 'ACTIVE'
     WHERE card_row."deletedAt" IS NULL
       ${cardPeriodSql(period)}
   `);
@@ -338,7 +296,9 @@ async function getCardStatusAggregates(period: DashboardAccountingPeriod) {
   };
 }
 
-export async function getDashboardAccountingSummary(period: DashboardAccountingPeriod): Promise<DashboardAccountingSummary> {
+export async function getDashboardAccountingSummary(
+  period: DashboardAccountingPeriod,
+): Promise<DashboardAccountingSummary> {
   const [giftRows, invoiceRows, cards] = await Promise.all([
     getGiftAggregates(period),
     getInvoiceAggregates(period),
@@ -403,19 +363,19 @@ function giftRuleForKind(kind: DashboardAccountingDetailKind): GiftRule | null {
 function cardWhereForKind(kind: DashboardAccountingDetailKind): Prisma.ReceivedCustomerCardWhereInput {
   if (kind === 'cards-active') {
     return {
-      status: { in: [ReceivedCardStatus.RECEIVED, ReceivedCardStatus.IN_SETTLEMENT, ReceivedCardStatus.PARTIAL] },
-      currentStage: { lt: 5 },
+      status: {
+        in: [ReceivedCardStatus.RECEIVED, ReceivedCardStatus.IN_SETTLEMENT, ReceivedCardStatus.PARTIAL],
+      },
     };
   }
   if (kind === 'cards-settled') {
     return {
-      OR: [{ status: { in: [ReceivedCardStatus.SETTLED, ReceivedCardStatus.COMPLETED] } }, { currentStage: { gte: 5 } }],
+      status: { in: [ReceivedCardStatus.SETTLED, ReceivedCardStatus.COMPLETED] },
     };
   }
   if (kind === 'cards-unsettled') {
     return {
       status: { not: ReceivedCardStatus.CANCELLED },
-      currentStage: { lt: 5 },
       NOT: { status: { in: [ReceivedCardStatus.SETTLED, ReceivedCardStatus.COMPLETED] } },
     };
   }
@@ -442,12 +402,12 @@ export async function getDashboardAccountingDetails(
 ): Promise<DashboardAccountingDetails> {
   const giftRule = giftRuleForKind(kind);
   if (giftRule) {
-    const where = {
+    const where: Prisma.ReceivedCardOperationWhereInput = {
       deletedAt: null,
       operationType: 'GIFT_CARD' as const,
       ...(operationDateWhere(period) ? { occurredAt: operationDateWhere(period) } : {}),
       OR: [{ categoryCode: giftRule.code }, { categoryFaceValue: giftRule.faceValue }],
-      card: { deletedAt: null },
+      card: { deletedAt: null, batch: { person: { deletedAt: null, status: 'ACTIVE' } } },
     };
     const [total, operations] = await Promise.all([
       db.receivedCardOperation.aggregate({ where, _sum: { quantity: true } }),
@@ -492,11 +452,11 @@ export async function getDashboardAccountingDetails(
   }
 
   if (kind === 'invoices') {
-    const where = {
+    const where: Prisma.ReceivedCardOperationWhereInput = {
       deletedAt: null,
       operationType: 'INVOICE' as const,
       ...(operationDateWhere(period) ? { occurredAt: operationDateWhere(period) } : {}),
-      card: { deletedAt: null },
+      card: { deletedAt: null, batch: { person: { deletedAt: null, status: 'ACTIVE' } } },
     };
     const [count, operations] = await Promise.all([
       db.receivedCardOperation.count({ where }),
@@ -541,6 +501,7 @@ export async function getDashboardAccountingDetails(
 
   const where: Prisma.ReceivedCustomerCardWhereInput = {
     deletedAt: null,
+    batch: { person: { deletedAt: null, status: 'ACTIVE' } },
     ...(cardDateWhere(period) ? { updatedAt: cardDateWhere(period) } : {}),
     ...cardWhereForKind(kind),
   };

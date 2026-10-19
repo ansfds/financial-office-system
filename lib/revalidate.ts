@@ -4,6 +4,7 @@ const financePaths = [
   '/dashboard',
   '/transactions',
   '/people',
+  '/cards',
   '/new-transaction',
   '/inventory',
   '/inventory/shein-cards',
@@ -11,6 +12,9 @@ const financePaths = [
   '/reports',
   '/cashbox',
   '/settings',
+  '/accounts',
+  '/daily-notes',
+  '/reports/daily',
 ];
 
 export function revalidatePaths(paths: string[] = []) {
@@ -23,4 +27,6 @@ export function revalidateFinancePaths(extraPaths: string[] = []) {
   for (const path of new Set([...financePaths, ...extraPaths])) {
     revalidatePath(path);
   }
+  revalidatePath('/people/[id]', 'page');
+  revalidatePath('/cards/[id]', 'page');
 }

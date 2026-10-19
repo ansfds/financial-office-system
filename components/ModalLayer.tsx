@@ -134,7 +134,7 @@ export default function ModalLayer({
   const id = useMemo(() => createModalId(name), [name]);
   const onCloseRef = useRef(onClose);
   const pushedHistoryRef = useRef(false);
-  const routeReadyRef = useRef(false);
+  const previousPathnameRef = useRef(pathname);
   const previousScrollRestorationRef = useRef<ScrollRestoration | null>(null);
   const [mounted, setMounted] = useState(false);
   const [stackIndex, setStackIndex] = useState(0);
@@ -231,10 +231,8 @@ export default function ModalLayer({
   }, [closeOnEscape, id, mounted]);
 
   useEffect(() => {
-    if (!routeReadyRef.current) {
-      routeReadyRef.current = true;
-      return;
-    }
+    if (previousPathnameRef.current === pathname) return;
+    previousPathnameRef.current = pathname;
     if (closeOnRouteChange) onCloseRef.current();
   }, [closeOnRouteChange, pathname]);
 

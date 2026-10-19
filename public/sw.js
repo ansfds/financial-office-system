@@ -1,4 +1,4 @@
-const CACHE_VERSION = 'financial-office-v1';
+const CACHE_VERSION = 'financial-office-v4';
 const PAGE_CACHE = `${CACHE_VERSION}-pages`;
 const ASSET_CACHE = `${CACHE_VERSION}-assets`;
 const APP_SHELL = ['/offline', '/manifest.webmanifest', '/icons/app-icon.svg'];
@@ -28,22 +28,6 @@ self.addEventListener('activate', (event) => {
   );
 });
 
-async function networkFirst(request, cacheName, fallbackUrl) {
-  const cache = await caches.open(cacheName);
-
-  try {
-    const response = await fetch(request);
-    if (response && response.ok) {
-      cache.put(request, response.clone()).catch(() => null);
-    }
-    return response;
-  } catch {
-    const cached = await cache.match(request);
-    if (cached) return cached;
-    return fallbackUrl ? caches.match(fallbackUrl) : Response.error();
-  }
-}
-
 async function staleWhileRevalidate(request) {
   const cache = await caches.open(ASSET_CACHE);
   const cached = await cache.match(request);
@@ -66,11 +50,15 @@ self.addEventListener('fetch', (event) => {
   if (url.pathname.startsWith('/api/')) return;
 
   if (request.mode === 'navigate') {
-    event.respondWith(networkFirst(request, PAGE_CACHE, '/offline'));
+    event.respondWith(fetch(request).catch(() => caches.match('/offline')));
     return;
   }
 
-  if (url.pathname.startsWith('/_next/') || url.pathname.startsWith('/icons/')) {
+  if (url.pathname.startsWith('/_next/')) {
+    event.respondWith(fetch(request));
+    return;
+  }
+  if (url.pathname.startsWith('/icons/')) {
     event.respondWith(staleWhileRevalidate(request));
   }
 });

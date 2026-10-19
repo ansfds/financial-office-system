@@ -7,6 +7,7 @@ import {
 } from './customer-cards';
 import { D } from './money';
 import { receivedCardResponseSelect } from './received-card-selects';
+import { hasWithdrawalBoxes, withdrawalSlots, withdrawalBoxStatus } from './card-withdrawals';
 
 type OperationRow = {
   id: string;
@@ -35,6 +36,7 @@ export async function recalculateReceivedCard(tx: Prisma.TransactionClient, card
     where: { id: cardId },
     include: {
       operations: { orderBy: [{ occurredAt: 'asc' }, { createdAt: 'asc' }] },
+      stageLogs: true,
     },
   });
 
@@ -44,8 +46,9 @@ export async function recalculateReceivedCard(tx: Prisma.TransactionClient, card
   const operations = [...card.operations].sort(compareOperations);
   let remaining = baseAmount;
 
-  let rejectedAt: Date | null = card.rejectedAt || null;
-  let rejectReason: string | null = card.rejectReason || null;
+  const hasStatusHistory = operations.some((o) => ['REJECT', 'REACTIVATE'].includes(o.operationType));
+  let rejectedAt: Date | null = hasStatusHistory ? null : card.rejectedAt || null;
+  let rejectReason: string | null = hasStatusHistory ? null : card.rejectReason || null;
 
   for (const operation of operations) {
     if (operation.deletedAt) continue;
@@ -91,8 +94,19 @@ export async function recalculateReceivedCard(tx: Prisma.TransactionClient, card
 
   const totalDeducted = baseAmount.sub(remaining);
   const progressPercent = cardProgressPercent(baseAmount, totalDeducted);
-  const status = rejectedAt ? 'CANCELLED' : cardStatusForBalance(baseAmount, totalDeducted, null);
-  const currentStage = status === 'SETTLED' && (card.currentStage || 0) < 5 ? 5 : card.currentStage;
+  const fallback = ['PAYMENT_FAILED', 'INSUFFICIENT_BALANCE'].includes(card.status) ? card.status : null;
+  const managed = hasWithdrawalBoxes(card);
+  const slots = withdrawalSlots(card);
+  const status = rejectedAt
+    ? 'CANCELLED'
+    : managed
+      ? withdrawalBoxStatus(slots, card.status === 'CANCELLED' ? 'RECEIVED' : card.status)
+      : cardStatusForBalance(baseAmount, totalDeducted, fallback);
+  const currentStage = managed
+    ? slots.filter(Boolean).length
+    : status === 'SETTLED'
+      ? 5
+      : Math.min(card.currentStage, 4);
 
   await tx.receivedCustomerCard.update({
     where: { id: cardId },

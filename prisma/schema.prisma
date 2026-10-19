@@ -82,6 +82,8 @@ enum ReceivedCardStatus {
   PARTIAL
   COMPLETED
   CANCELLED
+  PAYMENT_FAILED
+  INSUFFICIENT_BALANCE
 }
 
 enum SheinPaymentMethod {
@@ -148,6 +150,7 @@ model Person {
   customerNo   String?
   fullName     String
   phone        String?
+  phoneSecondary String?
   address      String?
   externalId   String?
   notes        String?
@@ -169,12 +172,24 @@ model Person {
 
   @@index([fullName])
   @@index([phone])
+  @@index([phoneSecondary])
   @@index([customerNo])
   @@index([category])
   @@index([createdAt])
   @@index([status, deletedAt])
   @@index([status, deletedAt, customerNo], map: "Person_status_deleted_customerNo_idx")
   @@index([status, deletedAt, createdAt], map: "Person_status_deleted_created_idx")
+}
+
+model DailyNote {
+  id        String   @id @default(cuid())
+  title     String
+  content   String   @db.Text
+  createdBy String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([createdAt])
 }
 
 model Currency {

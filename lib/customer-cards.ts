@@ -1,4 +1,5 @@
 import { D } from './money';
+import { specialCardStatuses } from './card-states';
 
 export const CUSTOMER_CARD_MAX_STAGE = 5;
 export const STANDARD_CUSTOMER_CARD_VALUE_USD = 2000;
@@ -32,7 +33,7 @@ export function nextCardStage(currentStage: unknown, action?: 'NEXT' | 'PREVIOUS
 }
 
 export function cardStatusForStage(stage: unknown, fallback = 'RECEIVED') {
-  if (fallback === 'CANCELLED') return fallback;
+  if (specialCardStatuses.has(fallback)) return fallback;
 
   const current = clampCardStage(stage);
   if (current >= 5) return 'SETTLED';
@@ -59,7 +60,9 @@ export function cardProgressPercent(baseAmount: unknown, deductedAmount: unknown
   const base = D(baseAmount || 0);
   if (base.lte(0)) return D(0);
 
-  const percent = D(deductedAmount || 0).div(base).mul(100);
+  const percent = D(deductedAmount || 0)
+    .div(base)
+    .mul(100);
   if (percent.lt(0)) return D(0);
   if (percent.gt(100)) return D(100);
   return percent;
@@ -77,6 +80,7 @@ export function cardStatusForBalance(
   const remaining = decimalMinZero(base.sub(deducted));
 
   if (base.gt(0) && remaining.lte(0)) return 'SETTLED';
+  if (fallback === 'PAYMENT_FAILED' || fallback === 'INSUFFICIENT_BALANCE') return fallback;
   if (deducted.gt(0)) return 'IN_SETTLEMENT';
   return 'RECEIVED';
 }
@@ -95,7 +99,8 @@ export function cardOperationAmount(input: {
   }
 
   if (input.operationType === 'FINAL_SETTLEMENT') {
-    const requested = input.amount === undefined || input.amount === null || input.amount === '' ? null : D(input.amount);
+    const requested =
+      input.amount === undefined || input.amount === null || input.amount === '' ? null : D(input.amount);
     return requested && requested.gt(0) ? requested : D(input.currentRemaining || 0);
   }
 

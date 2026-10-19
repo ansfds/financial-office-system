@@ -16,6 +16,7 @@ export const personBasicSelect = {
   customerNo: true,
   fullName: true,
   phone: true,
+  phoneSecondary: true,
   address: true,
   externalId: true,
   notes: true,
@@ -83,10 +84,6 @@ export const receivedCardEmbeddedSelect = {
   currentStage: true,
   rejectedAt: true,
   rejectReason: true,
-  cardThumbnailDataUrl: true,
-  cardImageMimeType: true,
-  cardImageSize: true,
-  cardImageUpdatedAt: true,
   archivedAt: true,
   deletedAt: true,
   createdAt: true,
@@ -95,12 +92,10 @@ export const receivedCardEmbeddedSelect = {
   operations: {
     where: { deletedAt: null },
     orderBy: [{ occurredAt: 'desc' }, { createdAt: 'desc' }],
-    take: 12,
     select: receivedCardOperationSelect,
   },
   stageLogs: {
     orderBy: { createdAt: 'desc' },
-    take: 8,
     select: receivedCardStageLogSelect,
   },
 } satisfies Prisma.ReceivedCustomerCardSelect;
@@ -113,6 +108,7 @@ export const receivedCardResponseSelect = {
       personId: true,
       currencyId: true,
       entryTransactionId: true,
+      entryTransaction: { select: { notes: true } },
       receivedAt: true,
       cardCount: true,
       agreedAmountPerCard: true,
@@ -132,11 +128,13 @@ export const receivedCardResponseSelect = {
 export const personDetailSelect = {
   ...personBasicSelect,
   cardBatches: {
+    where: { cards: { some: { deletedAt: null } } },
     select: {
       id: true,
       personId: true,
       currencyId: true,
       entryTransactionId: true,
+      entryTransaction: { select: { notes: true } },
       receivedAt: true,
       cardCount: true,
       agreedAmountPerCard: true,
@@ -154,7 +152,7 @@ export const personDetailSelect = {
         select: receivedCardEmbeddedSelect,
       },
     },
-    orderBy: { receivedAt: 'desc' },
+    orderBy: [{ receivedAt: 'desc' }, { createdAt: 'desc' }, { id: 'desc' }],
   },
   cardDeliveries: {
     where: { deletedAt: null },

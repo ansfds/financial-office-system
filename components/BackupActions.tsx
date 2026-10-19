@@ -53,6 +53,7 @@ export default function BackupActions({
         {backups.map((backup) => (
           <div key={backup.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-slate-200 p-3 text-sm dark:border-slate-800">
             <span className="font-bold">{backup.filename}</span>
+            <a className="text-blue-700 underline" href={`/api/admin/backup/${backup.id}`}>تنزيل للمسؤول</a>
             <span className="text-slate-500">{formatDateTime(backup.createdAt)}</span>
           </div>
         ))}

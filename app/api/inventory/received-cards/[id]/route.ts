@@ -4,18 +4,13 @@ import { balanceWarning, createCashboxMovement } from '@/lib/cashbox';
 import { apiError, fail, ok } from '@/lib/http';
 import { D } from '@/lib/money';
 import { detailedPaymentCurrencyCode, detailedPaymentLabels } from '@/lib/payment-methods';
-import { revalidatePaths } from '@/lib/revalidate';
+import { revalidateFinancePaths } from '@/lib/revalidate';
 import { cardBaseAmount, cardProgressPercent, cardStatusForStage, nextCardStage } from '@/lib/customer-cards';
 import { receivedCardResponseSelect } from '@/lib/received-card-selects';
 import { z } from 'zod';
 
 const settlementMethods = ['USD_CASH', 'USD_TRANSFER', 'USD_CARD', 'LYD_CASH', 'LYD_TRANSFER', 'LYD_OFFICE_TRANSFER', 'LYD_CARD'] as const;
 const settlementStatuses = new Set(['PARTIAL', 'SETTLED', 'COMPLETED']);
-const cardImageDataUrlSchema = z
-  .string()
-  .max(2800000)
-  .regex(/^data:image\/(?:png|jpe?g|webp);base64,[A-Za-z0-9+/=]+$/);
-
 const updateReceivedCardSchema = z.object({
   bankName: z.string().trim().optional().nullable(),
   cardLast4: z
@@ -34,11 +29,7 @@ const updateReceivedCardSchema = z.object({
   secureInternalNote: z.string().trim().optional().nullable(),
   notes: z.string().trim().optional().nullable(),
   rejectReason: z.string().trim().optional().nullable(),
-  cardImageDataUrl: cardImageDataUrlSchema.optional().nullable(),
-  cardThumbnailDataUrl: cardImageDataUrlSchema.optional().nullable(),
-  cardImageMimeType: z.enum(['image/jpeg', 'image/png', 'image/webp']).optional().nullable(),
-  cardImageSize: z.coerce.number().int().min(0).max(2000000).optional().nullable(),
-  status: z.enum(['RECEIVED', 'IN_SETTLEMENT', 'SETTLED', 'PARTIAL', 'COMPLETED', 'CANCELLED']).optional(),
+  status: z.enum(['RECEIVED', 'IN_SETTLEMENT', 'SETTLED', 'PARTIAL', 'COMPLETED', 'CANCELLED', 'PAYMENT_FAILED', 'INSUFFICIENT_BALANCE']).optional(),
   currentStage: z.coerce.number().int().min(0).max(5).optional(),
   stageAction: z.enum(['NEXT', 'PREVIOUS']).optional(),
   stageAmount: z.coerce.number().min(0).optional(),
@@ -60,6 +51,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
     let receiptMovementReversed = false;
 
     const updated = await db.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT id FROM "ReceivedCustomerCard" WHERE id = ${id} FOR UPDATE`;
       const oldValue = await tx.receivedCustomerCard.findUnique({
         where: { id },
         include: {
@@ -68,7 +60,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
           stageLogs: { orderBy: { createdAt: 'desc' }, take: 8 },
         },
       });
-      if (!oldValue) throw new Error('CARD_NOT_FOUND');
+      if (!oldValue || oldValue.deletedAt || oldValue.batch.person.deletedAt) throw new Error('CARD_NOT_FOUND');
       oldSnapshot = oldValue;
 
       const valueUsd = input.valueUsd === undefined ? oldValue.valueUsd : D(input.valueUsd);
@@ -250,12 +242,6 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
         });
       }
 
-      const imageChanged =
-        input.cardImageDataUrl !== undefined ||
-        input.cardThumbnailDataUrl !== undefined ||
-        input.cardImageMimeType !== undefined ||
-        input.cardImageSize !== undefined;
-
       return tx.receivedCustomerCard.update({
         where: { id },
         data: {
@@ -282,12 +268,6 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
           secureInternalNote:
             input.secureInternalNote === undefined ? oldValue.secureInternalNote : input.secureInternalNote,
           notes: input.notes === undefined ? oldValue.notes : input.notes,
-          cardImageDataUrl: input.cardImageDataUrl === undefined ? oldValue.cardImageDataUrl : input.cardImageDataUrl,
-          cardThumbnailDataUrl:
-            input.cardThumbnailDataUrl === undefined ? oldValue.cardThumbnailDataUrl : input.cardThumbnailDataUrl,
-          cardImageMimeType: input.cardImageMimeType === undefined ? oldValue.cardImageMimeType : input.cardImageMimeType,
-          cardImageSize: input.cardImageSize === undefined ? oldValue.cardImageSize : input.cardImageSize,
-          cardImageUpdatedAt: imageChanged ? new Date() : oldValue.cardImageUpdatedAt,
         },
         select: receivedCardResponseSelect,
       });
@@ -321,7 +301,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
       });
     }
 
-    revalidatePaths(updated.batch?.personId ? ['/people', `/people/${updated.batch.personId}`] : ['/people']);
+    revalidateFinancePaths(updated.batch?.personId ? ['/people', `/people/${updated.batch.personId}`] : ['/people']);
 
     return ok({
       ...updated,
@@ -390,7 +370,7 @@ export async function DELETE(_: Request, { params }: { params: Promise<{ id: str
       newValue: updated as any,
       description: 'حذف منطقي لبطاقة زبون',
     });
-    revalidatePaths(['/people', `/people/${updated.batch.personId}`]);
+    revalidateFinancePaths(['/people', `/people/${updated.batch.personId}`]);
 
     return ok({ success: true });
   } catch (error) {

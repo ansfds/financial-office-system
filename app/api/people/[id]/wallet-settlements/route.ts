@@ -90,6 +90,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     const input = parsed.data;
 
     const settlement = await db.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT id FROM "Person" WHERE id = ${id} FOR UPDATE`;
       const [person, currency] = await Promise.all([
         tx.person.findFirst({ where: { id, deletedAt: null, status: 'ACTIVE' } }),
         tx.currency.findFirst({ where: { id: input.currencyId, isActive: true } }),

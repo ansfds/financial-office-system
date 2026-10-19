@@ -14,6 +14,7 @@ const eslintConfig = [
     ignores: [
       '.next/**',
       '.vercel/**',
+      '.tmp/**',
       'node_modules/**',
       'coverage/**',
       'backups/**',

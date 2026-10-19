@@ -453,19 +453,21 @@ function PreviewBubble({
       <div className="mt-3 grid gap-2 sm:grid-cols-2">
         {!result ? (
           <>
-            <button
-              type="button"
-              onClick={onConfirm}
-              disabled={!preview.ready || confirming}
-              className="inline-flex items-center justify-center gap-2 rounded-lg bg-emerald-600 px-4 py-2.5 font-black text-white disabled:cursor-not-allowed disabled:bg-emerald-300"
-            >
-              {confirming ? <Loader2 className="animate-spin" size={17} /> : <Check size={17} />}
-              {preview.actionLabel}
-            </button>
+            {preview.ready ? (
+              <button
+                type="button"
+                onClick={onConfirm}
+                disabled={confirming}
+                className="inline-flex items-center justify-center gap-2 rounded-lg bg-emerald-600 px-4 py-2.5 font-black text-white disabled:cursor-not-allowed disabled:bg-emerald-300"
+              >
+                {confirming ? <Loader2 className="animate-spin" size={17} /> : <Check size={17} />}
+                {preview.actionLabel}
+              </button>
+            ) : null}
             <button
               type="button"
               onClick={onEdit}
-              className="inline-flex items-center justify-center gap-2 rounded-lg border border-slate-200 px-4 py-2.5 font-black text-slate-700 dark:border-slate-700 dark:text-slate-200"
+              className={`${preview.ready ? '' : 'sm:col-span-2'} inline-flex items-center justify-center gap-2 rounded-lg border border-slate-200 px-4 py-2.5 font-black text-slate-700 dark:border-slate-700 dark:text-slate-200`}
             >
               <Edit3 size={17} />
               تعديل

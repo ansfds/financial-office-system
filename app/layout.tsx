@@ -5,25 +5,41 @@ import ThemeProvider from '@/components/ThemeProvider';
 import NetworkStatusIndicator from '@/components/NetworkStatusIndicator';
 import ServiceWorkerRegistration from '@/components/ServiceWorkerRegistration';
 
-const logoUrl = 'https://i.postimg.cc/k4nQr4gx/680242520-122094061526346951-872670812110961262-n.jpg';
+const logoUrl = '/brand/elwaseet-logo-reference.jpg';
+
+function metadataBaseUrl() {
+  try {
+    return new URL(process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3000');
+  } catch {
+    return new URL('http://localhost:3000');
+  }
+}
 
 export const metadata: Metadata = {
-  title: 'منظومة الوسيط | إدارة الزبائن والبطاقات',
-  description: 'منظومة عربية لإدارة الزبائن والبطاقات وحسابات لنا وعلينا',
-  applicationName: 'منظومة الوسيط',
+  metadataBase: metadataBaseUrl(),
+  title: 'الوسيط العالمي | للدفع الإلكتروني والحوالات',
+  description: 'حلول مالية متكاملة للدفع والتحويل وشراء العملات والخدمات الإلكترونية محليًا ودوليًا.',
+  applicationName: 'الوسيط العالمي',
   manifest: '/manifest.webmanifest',
   appleWebApp: {
     capable: true,
     statusBarStyle: 'default',
-    title: 'منظومة الوسيط',
+    title: 'الوسيط العالمي',
   },
   formatDetection: {
     telephone: false,
   },
   icons: {
-    icon: [{ url: '/icons/app-icon.svg' }, { url: logoUrl }],
+    icon: [{ url: logoUrl }, { url: '/icons/app-icon.svg' }],
     shortcut: [{ url: '/icons/app-icon.svg' }],
-    apple: [{ url: '/icons/app-icon.svg' }],
+    apple: [{ url: logoUrl }],
+  },
+  openGraph: {
+    title: 'الوسيط العالمي للدفع الإلكتروني والحوالات',
+    description: 'خدمات دفع وتحويل وشراء عملات رقمية وفواتير عالمية بهوية مالية موثوقة.',
+    locale: 'ar_LY',
+    type: 'website',
+    images: [{ url: logoUrl }],
   },
 };
 

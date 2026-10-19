@@ -14,6 +14,8 @@
     "backup": "tsx scripts/backup-system-data.ts",
     "reset:admin-password": "tsx scripts/reset-admin-password.ts",
     "db:backfill:customers": "node tools/backfill-customer-numbers.cjs",
+    "check": "npm run typecheck && npm run lint",
+    "visual:public": "node scripts/public-site-visual-smoke.mjs",
     "typecheck": "tsc --noEmit",
     "test": "vitest run"
   },

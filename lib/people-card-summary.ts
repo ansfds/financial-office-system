@@ -1,7 +1,8 @@
 import { Prisma } from '@prisma/client';
-import { sortByCustomerCode } from './customer-code-sort';
 import { db } from './db';
 import { currencySelect } from './received-card-selects';
+import { buildWalletSnapshot } from './customer-wallet';
+import { customerInteractionDates } from './customer-timeline';
 
 type FindPeopleOptions = {
   q?: string;
@@ -20,6 +21,7 @@ function basePersonSelect() {
     customerNo: true,
     fullName: true,
     phone: true,
+    phoneSecondary: true,
     address: true,
     externalId: true,
     notes: true,
@@ -39,6 +41,7 @@ function searchWhere(q: string): Prisma.PersonWhereInput {
       ? [
           { fullName: { contains: q, mode: 'insensitive' } },
           { phone: { contains: q } },
+          { phoneSecondary: { contains: q } },
           { customerNo: { contains: q, mode: 'insensitive' } },
           { externalId: { contains: q, mode: 'insensitive' } },
           { notes: { contains: q, mode: 'insensitive' } },
@@ -55,14 +58,29 @@ export async function findPeopleWithCardSummaries(options: FindPeopleOptions = {
 
   const people = await db.person.findMany({
     where: searchWhere(q),
-    select: basePersonSelect(),
-    orderBy: [{ customerNo: 'asc' }, { createdAt: 'asc' }, { id: 'asc' }],
+    select: {
+      ...basePersonSelect(),
+      transactions: { where: { deletedAt: null }, include: { currency: true } },
+      walletSettlements: {
+        where: { deletedAt: null },
+        include: { currency: true },
+        orderBy: { occurredAt: 'desc' },
+      },
+      _count: {
+        select: {
+          cardBatches: { where: { cards: { some: { deletedAt: null } } } },
+          transactions: { where: { deletedAt: null } },
+        },
+      },
+    },
+    orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
     skip: (page - 1) * pageSize,
     take: pageSize,
   });
 
   const personIds = people.map((person) => person.id);
   if (!personIds.length) return [];
+  const currencies = await db.currency.findMany({ where: { isActive: true } });
 
   const [cards, deliveries] = await Promise.all([
     db.receivedCustomerCard.findMany({
@@ -76,7 +94,7 @@ export async function findPeopleWithCardSummaries(options: FindPeopleOptions = {
         receivedAmount: true,
         remainingAmount: true,
         updatedAt: true,
-        batch: { select: { personId: true, currency: { select: currencySelect } } },
+        batch: { select: { personId: true, receivedAt: true, currency: { select: currencySelect } } },
         settlementCurrency: { select: currencySelect },
       },
     }),
@@ -86,6 +104,7 @@ export async function findPeopleWithCardSummaries(options: FindPeopleOptions = {
         personId: true,
         currencyId: true,
         amount: true,
+        occurredAt: true,
         currency: { select: currencySelect },
       },
       orderBy: { occurredAt: 'desc' },
@@ -104,7 +123,10 @@ export async function findPeopleWithCardSummaries(options: FindPeopleOptions = {
       lastUpdate: Date | null;
     }
   >();
-  const deliveryRows = new Map<string, Map<string, { currency: any; agreed: number; delivered: number; remaining: number }>>();
+  const deliveryRows = new Map<
+    string,
+    Map<string, { currency: any; agreed: number; delivered: number; remaining: number }>
+  >();
 
   for (const person of people) {
     summaries.set(person.id, {
@@ -114,7 +136,7 @@ export async function findPeopleWithCardSummaries(options: FindPeopleOptions = {
       active: 0,
       completed: 0,
       rejected: 0,
-      lastUpdate: person.updatedAt || person.createdAt,
+      lastUpdate: person.createdAt,
     });
     deliveryRows.set(person.id, new Map());
   }
@@ -137,8 +159,7 @@ export async function findPeopleWithCardSummaries(options: FindPeopleOptions = {
       const currency = card.settlementCurrency || card.batch.currency;
       if (currency?.id) {
         const rows = deliveryRows.get(personId);
-        const current =
-          rows?.get(currency.id) || { currency, agreed: 0, delivered: 0, remaining: 0 };
+        const current = rows?.get(currency.id) || { currency, agreed: 0, delivered: 0, remaining: 0 };
         current.agreed += amount(card.agreedAmount);
         rows?.set(currency.id, current);
       }
@@ -148,26 +169,43 @@ export async function findPeopleWithCardSummaries(options: FindPeopleOptions = {
   for (const delivery of deliveries) {
     const rows = deliveryRows.get(delivery.personId);
     if (!rows || !delivery.currency?.id) continue;
-    const current =
-      rows.get(delivery.currency.id) || { currency: delivery.currency, agreed: 0, delivered: 0, remaining: 0 };
+    const current = rows.get(delivery.currency.id) || {
+      currency: delivery.currency,
+      agreed: 0,
+      delivered: 0,
+      remaining: 0,
+    };
     current.delivered += amount(delivery.amount);
     rows.set(delivery.currency.id, current);
   }
 
-  return sortByCustomerCode(
-    people.map((person) => {
-      const rows = Array.from((deliveryRows.get(person.id) || new Map()).values()).map((row) => ({
-        ...row,
-        remaining: Math.max(row.agreed - row.delivered, 0),
-      }));
+  return people.map((person) => {
+    const timeline = customerInteractionDates({
+      ...person,
+      cardBatches: cards
+        .filter((card) => card.batch.personId === person.id)
+        .map((card) => ({ receivedAt: card.batch.receivedAt, cards: [card] })),
+      cardDeliveries: deliveries.filter((delivery) => delivery.personId === person.id),
+    });
+    const rows = Array.from((deliveryRows.get(person.id) || new Map()).values()).map((row) => ({
+      ...row,
+      remaining: Math.max(row.agreed - row.delivered, 0),
+    }));
 
-      return {
-        ...person,
-        cardSummary: summaries.get(person.id),
-        deliverySummary: rows,
-        cardBatches: [],
-        cardDeliveries: [],
-      };
-    }),
-  );
+    return {
+      ...person,
+      transactionCount: person._count.cardBatches + person._count.transactions,
+      wallet: buildWalletSnapshot(person.transactions, person.walletSettlements, currencies).rows,
+      transactions: undefined,
+      walletSettlements: undefined,
+      cardSummary: {
+        ...summaries.get(person.id),
+        firstInteractionAt: timeline.first,
+        lastUpdate: timeline.last,
+      },
+      deliverySummary: rows,
+      cardBatches: [],
+      cardDeliveries: [],
+    };
+  });
 }

@@ -1,6 +1,7 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import PersonEditor from './PersonEditor';
 import type { CSSProperties, FormEvent } from 'react';
 import { useRouter } from 'next/navigation';
 import { Edit3, Loader2, Plus, Search, Trash2, X } from 'lucide-react';
@@ -221,7 +222,7 @@ function settlementStatus(settlement: Settlement) {
 
 export default function AccountsClient({
   rows,
-  people,
+  people: initialPeople,
   currencies,
   settlements,
 }: {
@@ -231,6 +232,9 @@ export default function AccountsClient({
   settlements: Settlement[];
 }) {
   const router = useRouter();
+  const [people, setPeople] = useState(initialPeople);
+  useEffect(() => setPeople(initialPeople), [initialPeople]);
+  const [newPersonOpen, setNewPersonOpen] = useState(false);
   const [q, setQ] = useState('');
   const [openForm, setOpenForm] = useState(false);
   const [selectedAccount, setSelectedAccount] = useState<AccountSummary | null>(null);
@@ -244,6 +248,9 @@ export default function AccountsClient({
   });
 
   const accountSummaries = useMemo(() => buildAccountSummaries(rows), [rows]);
+  useEffect(() => {
+    setSelectedAccount(current => current ? accountSummaries.find(account => account.personId === current.personId) || null : null);
+  }, [accountSummaries]);
 
   const filteredAccounts = useMemo(() => {
     const needle = q.trim().toLowerCase();
@@ -468,6 +475,7 @@ export default function AccountsClient({
           title={editing ? 'تعديل حركة مالية' : 'إضافة حركة مالية'}
           form={form}
           people={people}
+          onNewPerson={() => setNewPersonOpen(true)}
           currencies={currencies}
           preview={editing ? null : previewMovement(rows, form)}
           saving={saving}
@@ -481,6 +489,11 @@ export default function AccountsClient({
         />
       ) : null}
 
+      {newPersonOpen && <PersonEditor onClose={() => setNewPersonOpen(false)} onSaved={person => {
+        setPeople(current => current.some(p => p.id === person.id) ? current : [...current, person]);
+        setForm(current => ({ ...current, personId: person.id }));
+        setNewPersonOpen(false);
+      }} />}
       {selectedAccount ? (
         <ModalLayer name="account-details" onClose={() => setSelectedAccount(null)} className="md:items-stretch md:justify-start">
           <ModalBackdrop className="bg-slate-950/45" aria-label="إغلاق التفاصيل" onClick={() => setSelectedAccount(null)} />
@@ -660,6 +673,7 @@ function MovementModal({
   onSubmit,
   onChange,
   onCurrencyChange,
+  onNewPerson,
 }: {
   title: string;
   form: MovementForm;
@@ -671,6 +685,7 @@ function MovementModal({
   onSubmit: (event: FormEvent) => void;
   onChange: (form: MovementForm) => void;
   onCurrencyChange: (currencyId: string) => void;
+  onNewPerson: () => void;
 }) {
   const options = paymentOptions(currencies, form.currencyId);
 
@@ -686,14 +701,14 @@ function MovementModal({
         </div>
 
         <div className="modal-body grid gap-4 p-4 md:grid-cols-2" data-modal-scroll-body>
-          <select value={form.personId} onChange={(event) => onChange({ ...form, personId: event.target.value })}>
+          <div className="flex items-center gap-2"><select aria-label="اختيار الزبون" value={form.personId} onChange={(event) => onChange({ ...form, personId: event.target.value })}>
             {people.map((person) => (
               <option key={person.id} value={person.id}>
                 {person.customerNo ? `${person.customerNo} - ` : ''}
                 {person.fullName}
               </option>
             ))}
-          </select>
+          </select><button type="button" onClick={onNewPerson} className="shrink-0 text-sm font-bold text-blue-700">+ زبون جديد</button></div>
           <select value={form.accountType} onChange={(event) => onChange({ ...form, accountType: event.target.value })}>
             <option value="DEBT">لنا</option>
             <option value="CREDIT">علينا</option>

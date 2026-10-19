@@ -1,40 +1,51 @@
 import { db } from '@/lib/db';
 import { requireSession } from '@/lib/auth';
 import { apiError, ok } from '@/lib/http';
+import { getCardCounts } from '@/lib/card-queries';
 
 export async function GET() {
   try {
     await requireSession();
 
-    const [people, transactions, recent, currencies, latestBalances, sheinAvailable, sheinPending, receivedCards] =
-      await Promise.all([
-        db.person.count({ where: { deletedAt: null, status: 'ACTIVE' } }),
-        db.financialTransaction.groupBy({
-          by: ['status'],
-          where: { deletedAt: null },
-          _count: true,
-        }),
-        db.financialTransaction.findMany({
-          where: { deletedAt: null },
-          include: { person: true, currency: true, type: true },
-          orderBy: { transactionAt: 'desc' },
-          take: 8,
-        }),
-        db.currency.findMany({ where: { isActive: true } }),
-        db.$queryRaw<Array<{ currencyId: string; balanceAfter: any }>>`
+    const [
+      people,
+      transactions,
+      recent,
+      currencies,
+      latestBalances,
+      sheinAvailable,
+      sheinPending,
+      receivedCards,
+    ] = await Promise.all([
+      db.person.count({ where: { deletedAt: null, status: 'ACTIVE' } }),
+      db.financialTransaction.groupBy({
+        by: ['status'],
+        where: { deletedAt: null },
+        _count: true,
+      }),
+      db.financialTransaction.findMany({
+        where: { deletedAt: null },
+        include: { person: true, currency: true, type: true },
+        orderBy: { transactionAt: 'desc' },
+        take: 8,
+      }),
+      db.currency.findMany({ where: { isActive: true } }),
+      db.$queryRaw<Array<{ currencyId: string; balanceAfter: any }>>`
           SELECT DISTINCT ON ("currencyId") "currencyId", "balanceAfter"
           FROM "CashboxMovement"
           ORDER BY "currencyId", "occurredAt" DESC, "createdAt" DESC
         `,
-        db.sheinCard.count({ where: { status: 'AVAILABLE' } }),
-        db.transactionExecutionItem.count({
-          where: {
-            status: { not: 'COMPLETED' },
-            transaction: { operationKind: 'SHEIN_CARD_SALE', deletedAt: null, executionStatus: 'PENDING' },
-          },
-        }),
-        db.receivedCustomerCard.count({ where: { status: { not: 'CANCELLED' } } }),
-      ]);
+      db.sheinCard.count({ where: { status: 'AVAILABLE' } }),
+      db.transactionExecutionItem.count({
+        where: {
+          status: { not: 'COMPLETED' },
+          transaction: { operationKind: 'SHEIN_CARD_SALE', deletedAt: null, executionStatus: 'PENDING' },
+        },
+      }),
+      db.receivedCustomerCard.count({
+        where: { deletedAt: null, batch: { person: { deletedAt: null, status: 'ACTIVE' } } },
+      }),
+    ]);
 
     const balances = currencies.map((currency) => ({
       currency,
@@ -46,6 +57,12 @@ export async function GET() {
       transactions,
       recent,
       balances,
+      cards: await getCardCounts(),
+      cardStatuses: await db.receivedCustomerCard.groupBy({
+        by: ['status'],
+        where: { deletedAt: null, batch: { person: { deletedAt: null, status: 'ACTIVE' } } },
+        _count: true,
+      }),
       inventory: {
         sheinAvailable,
         sheinPending,

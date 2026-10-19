@@ -13,19 +13,22 @@ import {
   ShieldCheck,
   Users,
   Wallet,
+  WalletCards,
   X,
 } from 'lucide-react';
 import ThemeSwitcher from './ThemeSwitcher';
 import SessionActivity from './SessionActivity';
+import FinanceSyncObserver from './FinanceSyncObserver';
 import { reduceMobileDrawerState, shouldCloseMobileDrawerFromDrag } from '@/lib/mobile-nav-drawer';
 
-const logoUrl = 'https://i.postimg.cc/k4nQr4gx/680242520-122094061526346951-872670812110961262-n.jpg';
+const logoUrl = '/brand/elwaseet-logo-reference.jpg';
 
 const items = [
   ['/dashboard', 'الصفحة الرئيسية', LayoutDashboard],
-  ['/instant-registration', 'التسجيل الفوري', MessageSquareText],
-  ['/people', 'الزبائن والبطاقات', Users],
+  ['/people', 'الزبائن', Users],
+  ['/cards', 'البطاقات', WalletCards],
   ['/accounts', 'لنا وعلينا', Wallet],
+  ['/daily-notes', 'الملاحظات اليومية', MessageSquareText],
   ['/audit', 'سجل العمليات', ShieldCheck],
   ['/settings', 'الإعدادات', Settings],
 ] as const;
@@ -121,7 +124,9 @@ export default function Shell({ children }: { children: React.ReactNode }) {
           dragStart.current = null;
         }}
         className={`drawer-panel fixed inset-y-0 right-0 z-50 flex w-[min(20rem,calc(100vw-1rem))] touch-pan-y flex-col border-l border-slate-200 bg-white/95 p-4 pb-[calc(1rem+env(safe-area-inset-bottom))] shadow-xl backdrop-blur transition-[transform,opacity] duration-200 ease-out dark:border-slate-800 dark:bg-slate-950/95 ${
-          mobileMenuOpen ? 'pointer-events-auto translate-x-0 opacity-100' : 'pointer-events-none translate-x-full opacity-0'
+          mobileMenuOpen
+            ? 'pointer-events-auto translate-x-0 opacity-100'
+            : 'pointer-events-none translate-x-full opacity-0'
         } lg:pointer-events-auto lg:w-72 lg:translate-x-0 lg:opacity-100 lg:transition-none`}
       >
         <button
@@ -226,6 +231,7 @@ export default function Shell({ children }: { children: React.ReactNode }) {
         {children}
       </main>
       <SessionActivity />
+      <FinanceSyncObserver />
     </div>
   );
 }
