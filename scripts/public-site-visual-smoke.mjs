@@ -83,7 +83,7 @@ function openCdpSocket(wsUrl) {
           pending.delete(id);
           reject(new Error(`CDP timeout: ${method}`));
         }
-      }, 10_000);
+      }, method === 'Page.navigate' ? 45_000 : 10_000);
     });
   }
 
@@ -179,9 +179,18 @@ async function main() {
     const screenshots = [];
     for (const scenario of scenarios) {
       await setViewport(scenario);
-      const loaded = cdp.once('Page.loadEventFired');
       await cdp.send('Page.navigate', { url: `${BASE_URL}/` });
-      await loaded;
+      // Maps and QR providers may keep their frames loading after the site is usable.
+      const readyDeadline = Date.now() + 30_000;
+      let pageReady = false;
+      while (Date.now() < readyDeadline) {
+        pageReady = await evaluate(`document.readyState !== 'loading' &&
+          Boolean(document.querySelector('.public-site')) &&
+          [...document.querySelectorAll('.public-site img')].filter(image => image.complete && image.naturalWidth > 0).length >= 3`);
+        if (pageReady) break;
+        await new Promise((resolve) => setTimeout(resolve, 200));
+      }
+      assert(pageReady, `${scenario.name} public page did not become ready`);
       await new Promise((resolve) => setTimeout(resolve, 1200));
 
       const audit = await evaluate(`
