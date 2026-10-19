@@ -15,7 +15,7 @@ const output = path.resolve('.tmp/data-loading-smoke', `${new URL(base).hostname
 await mkdir(output, { recursive: true });
 const sections = [
   ['/customers', 'الزبائن'], ['/cards', 'البطاقات'], ['/finance', 'لنا وعلينا'],
-  ['/daily-notes', 'الملاحظات اليومية'], ['/settings', 'الإعدادات'], ['/', 'الرئيسية'],
+  ['/daily-notes', 'الملاحظات اليومية'], ['/settings', 'الإعدادات'], ['/audit', 'سجل العمليات'], ['/', 'الرئيسية'],
 ];
 const apiPaths = ['/api/people', '/api/cards', '/api/daily-notes', '/api/settings', '/api/dashboard'];
 const report = { base, sections: [], apis: [], networkFailures: [], exceptions: [], reloads: 0 };
@@ -37,6 +37,8 @@ try {
   await cdp.send('Runtime.enable');
   await cdp.send('Network.enable');
   await cdp.send('Network.setBypassServiceWorker', { bypass: true });
+  // React streaming completion needs an active tab when verifying a user-owned browser.
+  await cdp.send('Emulation.setFocusEmulationEnabled', { enabled: true });
   const requests = new Map();
   let recordFailures = false;
   cdp.on('Network.requestWillBeSent', event => requests.set(event.requestId, event.request.url));
@@ -49,7 +51,9 @@ try {
       report.networkFailures.push({ url: new URL(requests.get(event.requestId)).pathname, error: event.errorText });
   });
   cdp.on('Runtime.exceptionThrown', event => {
-    if (recordFailures) report.exceptions.push({ text: event.exceptionDetails.text });
+    if (recordFailures) report.exceptions.push({ text: event.exceptionDetails.text,
+      name: event.exceptionDetails.exception?.className,
+      reactCode: event.exceptionDetails.exception?.description?.match(/Minified React error #(\d+)/)?.[1] });
   });
   cdp.on('Runtime.consoleAPICalled', event => {
     if (recordFailures && event.type === 'error') report.exceptions.push({ text: 'Browser console.error' });
@@ -84,6 +88,7 @@ try {
   await visibleHeading('الزبائن');
   const sessionStatus = await evaluate(`fetch('/api/auth/session',{cache:'no-store'}).then(r=>r.status)`);
   assert.equal(sessionStatus, 200, 'The verification browser must have a valid user session');
+  report.sessionStatus = sessionStatus;
   recordFailures = true;
   for (const [route, heading] of sections) {
     await cdp.send('Page.navigate', { url: base + route });
@@ -108,12 +113,14 @@ try {
   for (const route of apiPaths) {
     const response = await evaluate(`(async()=>{
       const r=await fetch(${JSON.stringify(route)},{cache:'no-store'});const type=r.headers.get('content-type')||'';
-      let data;try{data=await r.json();}catch{}
+      let data,jsonParsed=false;try{data=await r.json();jsonParsed=true;}catch{}
       return {url:r.url,method:'GET',status:r.status,contentType:type.split(';')[0],error:data?.error,errorId:data?.errorId,
+        jsonParsed,
         bodySummary:Array.isArray(data)?{type:'array',rows:data.length}:{type:typeof data,keys:data&&typeof data==='object'?Object.keys(data):[]}};
     })()`);
     assert.equal(response.status, 200, route + ' failed');
     assert.equal(response.contentType, 'application/json');
+    assert(response.jsonParsed, route + ' returned invalid JSON');
     assert(!response.error);
     report.apis.push(response);
   }
@@ -128,6 +135,7 @@ try {
   }
   await visibleHeading('الزبائن');
   assert.equal(await evaluate(`location.pathname`), '/customers');
+  report.rapidNavigation = true;
   if (process.env.VERIFY_MIGRATION_BACKUP_ID) {
     await cdp.send('Page.navigate', { url: base + '/settings' });
     await visibleHeading('الإعدادات');
@@ -143,6 +151,10 @@ try {
     reloads: report.reloads, health: report.health, networkFailures: report.networkFailures.length,
     exceptions: report.exceptions.length, output }, null, 2));
 } finally {
+  if (cdp) {
+    await cdp.send('Emulation.setFocusEmulationEnabled', { enabled: false }).catch(() => {});
+    await cdp.send('Network.setBypassServiceWorker', { bypass: false }).catch(() => {});
+  }
   cdp?.close();
   chrome?.kill();
   if (cookie) await fetch(base + '/api/auth/logout', { method: 'POST', headers: { Cookie: cookie } });

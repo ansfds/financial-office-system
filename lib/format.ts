@@ -44,9 +44,9 @@ export function formatRate(value: unknown) {
 }
 
 export function formatDateTime(value: string | Date) {
-  return new Date(value).toLocaleString('en-GB');
+  return new Date(value).toLocaleString('en-GB', { timeZone: 'Africa/Tripoli' });
 }
 
 export function formatDate(value: string | Date) {
-  return new Date(value).toLocaleDateString('en-GB');
+  return new Date(value).toLocaleDateString('en-GB', { timeZone: 'Africa/Tripoli' });
 }
