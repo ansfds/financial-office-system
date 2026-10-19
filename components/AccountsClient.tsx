@@ -7,6 +7,7 @@ import { useRouter } from 'next/navigation';
 import { Edit3, Loader2, Plus, Search, Trash2, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { formatDateTime, formatMoney } from '@/lib/format';
+import { apiFetch, readApiJson } from '@/lib/api-client';
 import { walletBuckets, walletSettlementDirectionLabels } from '@/lib/customer-wallet';
 import ModalLayer, { ModalBackdrop } from '@/components/ModalLayer';
 
@@ -327,19 +328,19 @@ export default function AccountsClient({
 
     setSaving(true);
     try {
-      const response = await fetch(`/api/people/${form.personId}/wallet-settlements`, {
+      const response = await apiFetch(`/api/people/${form.personId}/wallet-settlements`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(form),
       });
-      const result = await response.json().catch(() => ({}));
+      const result = await readApiJson(response);
       if (!response.ok) return toast.error(result.error || 'تعذر حفظ الحركة');
 
       toast.success('تم حفظ الحركة المالية');
       setOpenForm(false);
       router.refresh();
-    } catch {
-      toast.error('تعذر الاتصال بالخادم أثناء حفظ الحركة');
+    } catch (error) {
+      toast.error((error as Error).message || 'تعذر حفظ الحركة');
     } finally {
       setSaving(false);
     }
@@ -368,19 +369,19 @@ export default function AccountsClient({
 
     setSaving(true);
     try {
-      const response = await fetch(`/api/people/${editing.personId}/wallet-settlements/${editing.id}`, {
+      const response = await apiFetch(`/api/people/${editing.personId}/wallet-settlements/${editing.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(form),
       });
-      const result = await response.json().catch(() => ({}));
+      const result = await readApiJson(response);
       if (!response.ok) return toast.error(result.error || 'تعذر تعديل الحركة');
 
       toast.success('تم تعديل الحركة وإعادة حساب الرصيد');
       setEditing(null);
       router.refresh();
-    } catch {
-      toast.error('تعذر الاتصال بالخادم أثناء تعديل الحركة');
+    } catch (error) {
+      toast.error((error as Error).message || 'تعذر تعديل الحركة');
     } finally {
       setSaving(false);
     }
@@ -388,15 +389,17 @@ export default function AccountsClient({
 
   async function deleteSettlement(settlement: Settlement) {
     if (!window.confirm('هل تريد حذف هذه الحركة منطقيًا وإعادة حساب الرصيد؟')) return;
-    const response = await fetch(`/api/people/${settlement.personId}/wallet-settlements/${settlement.id}`, {
-      method: 'DELETE',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ reason: 'حذف من صفحة لنا وعلينا' }),
-    });
-    const result = await response.json().catch(() => ({}));
-    if (!response.ok) return toast.error(result.error || 'تعذر حذف الحركة');
-    toast.success('تم حذف الحركة منطقيًا');
-    router.refresh();
+    try {
+      const response = await apiFetch(`/api/people/${settlement.personId}/wallet-settlements/${settlement.id}`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reason: 'حذف من صفحة لنا وعلينا' }),
+      });
+      const result = await readApiJson(response);
+      if (!response.ok) return toast.error(result.error || 'تعذر حذف الحركة');
+      toast.success('تم حذف الحركة منطقيًا');
+      router.refresh();
+    } catch (error) { toast.error((error as Error).message); }
   }
 
   return (

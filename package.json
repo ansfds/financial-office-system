@@ -4,11 +4,12 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "build": "prisma generate && next build",
+    "build": "prisma generate && tsx scripts/check-database-schema.ts && next build",
     "start": "next start",
     "lint": "eslint .",
     "db:push": "prisma db push",
     "db:migrate": "prisma migrate dev",
+    "db:deploy": "prisma migrate deploy",
     "db:seed": "tsx prisma/seed.ts",
     "seed:users": "tsx scripts/seed-users.ts",
     "backup": "tsx scripts/backup-system-data.ts",

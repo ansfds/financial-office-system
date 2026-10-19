@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { DatabaseBackup, Download, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { formatDateTime } from '@/lib/format';
+import { apiFetch, readApiJson } from '@/lib/api-client';
 
 export default function BackupActions({
   backups,
@@ -16,13 +17,15 @@ export default function BackupActions({
 
   async function createBackup() {
     setLoading(true);
-    const response = await fetch('/api/admin/backup', { method: 'POST', cache: 'no-store' });
-    const result = await response.json().catch(() => ({}));
-    setLoading(false);
-
-    if (!response.ok) return toast.error(result.error || 'تعذر إنشاء النسخة الاحتياطية');
-    toast.success('تم إنشاء النسخة الاحتياطية');
-    router.refresh();
+    try {
+      const response = await apiFetch('/api/admin/backup', { method: 'POST', cache: 'no-store' });
+      const result = await readApiJson(response);
+      if (!response.ok) return toast.error(result.error || 'تعذر إنشاء النسخة الاحتياطية');
+      toast.success('تم إنشاء النسخة الاحتياطية');
+      router.refresh();
+    } catch (error) {
+      toast.error((error as Error).message);
+    } finally { setLoading(false); }
   }
 
   return (

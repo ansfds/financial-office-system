@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import { formatDateTime } from '@/lib/format';
+import { apiFetch, readApiJson } from '@/lib/api-client';
 export default function DailyNotesClient({ initialNotes }: { initialNotes: any[] }) {
   const router = useRouter();
   const [notes, setNotes] = useState(initialNotes);
@@ -30,12 +31,12 @@ export default function DailyNotesClient({ initialNotes }: { initialNotes: any[]
     if (busy) return;
     setBusy(true);
     try {
-      const r = await fetch(selected ? `/api/daily-notes/${selected.id}` : '/api/daily-notes', {
+      const r = await apiFetch(selected ? `/api/daily-notes/${selected.id}` : '/api/daily-notes', {
         method: selected ? 'PATCH' : 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ title, content, updatedAt: selected?.updatedAt }),
       });
-      const result = await r.json();
+      const result = await readApiJson(r);
       if (!r.ok) throw new Error(result.error);
       setSelected(result);
       setTitle(result.title);
@@ -57,8 +58,9 @@ export default function DailyNotesClient({ initialNotes }: { initialNotes: any[]
     if (!selected || busy || !confirm('حذف هذه المذكرة نهائيًا؟')) return;
     setBusy(true);
     try {
-      const r = await fetch(`/api/daily-notes/${selected.id}`, { method: 'DELETE' });
-      if (!r.ok) throw new Error('تعذر الحذف');
+      const r = await apiFetch(`/api/daily-notes/${selected.id}`, { method: 'DELETE' });
+      const result = await readApiJson(r);
+      if (!r.ok) throw new Error(result.error || 'تعذر الحذف');
       setNotes((current) => current.filter((n) => n.id !== selected.id));
       setSelected(null);
       setTitle('');

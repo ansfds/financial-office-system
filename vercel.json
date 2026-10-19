@@ -1,1 +1,1 @@
-{"buildCommand":"prisma generate && next build","framework":"nextjs"}
+{"buildCommand":"npm run build","framework":"nextjs"}

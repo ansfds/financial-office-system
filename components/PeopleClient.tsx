@@ -6,6 +6,7 @@ import { toast } from 'sonner';
 import PersonEditor from './PersonEditor';
 import CenteredDialog from './CenteredDialog';
 import { formatDateTime, formatMoney } from '@/lib/format';
+import { apiFetch, readApiJson } from '@/lib/api-client';
 export default function PeopleClient({ initialPeople }: { initialPeople: any[] }) {
   const router = useRouter();
   const [people, setPeople] = useState(initialPeople),
@@ -23,12 +24,12 @@ export default function PeopleClient({ initialPeople }: { initialPeople: any[] }
     const timer = setTimeout(async () => {
       setLoading(true);
       try {
-        const r = await fetch(`/api/people?q=${encodeURIComponent(q)}&page=${page}`, {
+        const r = await apiFetch(`/api/people?q=${encodeURIComponent(q)}&page=${page}`, {
           signal: controller.signal,
           cache: 'no-store',
         });
-        if (!r.ok) throw new Error('تعذر تحميل الزبائن');
-        const result = await r.json();
+        const result = await readApiJson(r);
+        if (!r.ok) throw new Error(result.error || 'تعذر تحميل الزبائن');
         setPeople(result);
       } catch (e) {
         if (!controller.signal.aborted) toast.error((e as Error).message);
@@ -45,8 +46,8 @@ export default function PeopleClient({ initialPeople }: { initialPeople: any[] }
     if (busy || !deleting) return;
     setBusy(true);
     try {
-      const r = await fetch(`/api/people/${deleting.id}`, { method: 'DELETE' });
-      const result = await r.json();
+      const r = await apiFetch(`/api/people/${deleting.id}`, { method: 'DELETE' });
+      const result = await readApiJson(r);
       if (!r.ok) throw new Error(result.error);
       setPeople((current) => current.filter((p) => p.id !== deleting.id));
       setDeleting(null);

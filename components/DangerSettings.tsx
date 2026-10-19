@@ -4,6 +4,7 @@ import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import CenteredDialog from './CenteredDialog';
 import { invalidateFinanceClient } from '@/lib/client-cache';
+import { apiFetch, readApiJson } from '@/lib/api-client';
 export default function DangerSettings({ resetEnabled }: { resetEnabled: boolean }) {
   const router = useRouter();
   const [open, setOpen] = useState(false),
@@ -23,7 +24,7 @@ export default function DangerSettings({ resetEnabled }: { resetEnabled: boolean
     if (busy) return;
     setBusy(true);
     try {
-      const response = await fetch('/api/admin/reset-system', {
+      const response = await apiFetch('/api/admin/reset-system', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(
@@ -32,7 +33,7 @@ export default function DangerSettings({ resetEnabled }: { resetEnabled: boolean
             : { step: 'verify', resetPassword: password },
         ),
       });
-      const result = await response.json();
+      const result = await readApiJson(response);
       if (!response.ok) {
         if (challenge && response.status === 403) setChallenge('');
         throw new Error(result.error);

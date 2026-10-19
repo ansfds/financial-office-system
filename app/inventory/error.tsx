@@ -2,6 +2,6 @@
 
 import RouteError from '@/components/RouteError';
 
-export default function InventoryError({ reset }: { error: Error & { digest?: string }; reset: () => void }) {
-  return <RouteError reset={reset} />;
+export default function InventoryError({ error, reset }: { error: Error & { digest?: string }; reset: () => void }) {
+  return <RouteError error={error} reset={reset} />;
 }

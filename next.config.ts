@@ -4,6 +4,7 @@ const nextConfig: NextConfig = {
   experimental: { serverActions: { bodySizeLimit: '10mb' } },
   async redirects() {
     return [
+      { source: '/favicon.ico', destination: '/icons/app-icon.svg', permanent: true },
       { source: '/dashboard', destination: '/', permanent: true },
       { source: '/admin/:path*', destination: '/', permanent: true },
       { source: '/people/:path*', destination: '/customers/:path*', permanent: true },

@@ -1,5 +1,5 @@
 import RouteLoading from '@/components/RouteLoading';
 
-export default function DashboardLoading() {
+export default function CustomersLoading() {
   return <RouteLoading />;
 }

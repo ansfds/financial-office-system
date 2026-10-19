@@ -25,7 +25,7 @@ export async function middleware(request: NextRequest) {
     return NextResponse.next();
   }
 
-  if (pathname === '/login' || pathname === '/offline') {
+  if (pathname === '/login' || pathname === '/offline' || pathname === '/api/health') {
     return NextResponse.next();
   }
 

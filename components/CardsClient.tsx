@@ -1,4 +1,5 @@
 'use client';
+import { apiFetch, readApiJson } from '@/lib/api-client';
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
@@ -33,12 +34,13 @@ export default function CardsClient({
     const timer = setTimeout(async () => {
       setLoading(true);
       try {
-        const response = await fetch(
+        const response = await apiFetch(
           `/api/cards?${new URLSearchParams({ q, status: state, page: String(page) })}`,
           { cache: 'no-store', signal: controller.signal },
         );
-        if (!response.ok) throw new Error('تعذر تحميل البطاقات');
-        setData(await response.json());
+        const result = await readApiJson(response);
+        if (!response.ok) throw new Error(result.error || 'تعذر تحميل البطاقات');
+        setData(result);
       } catch (e) {
         if (!controller.signal.aborted) toast.error((e as Error).message);
       } finally {

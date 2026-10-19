@@ -22,7 +22,7 @@ export const operationalModels = [
   'dailyNote',
   'person',
 ] as const;
-export const backupTypes = ['ManualBackup', 'FullSystemResetBackup', 'CustomerDeleteBackup', 'FinancialTransactionBatch'];
+export const backupTypes = ['ManualBackup', 'FullSystemResetBackup', 'CustomerDeleteBackup', 'FinancialTransactionBatch', 'MigrationSafetyBackup'];
 export async function lockOperationalTables(tx: Prisma.TransactionClient) {
   const names = [
     ...operationalModels.map((m) => m[0].toUpperCase() + m.slice(1)),

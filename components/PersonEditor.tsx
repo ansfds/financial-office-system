@@ -1,4 +1,5 @@
 'use client';
+import { apiFetch, readApiJson } from '@/lib/api-client';
 import { useState } from 'react';
 import { toast } from 'sonner';
 import CenteredDialog from './CenteredDialog';
@@ -25,12 +26,12 @@ export default function PersonEditor({
     setBusy(true);
     setDuplicate(null);
     try {
-      const response = await fetch(person ? `/api/people/${person.id}` : '/api/people', {
+      const response = await apiFetch(person ? `/api/people/${person.id}` : '/api/people', {
         method: person ? 'PATCH' : 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(form),
       });
-      const result = await response.json();
+      const result = await readApiJson(response);
       if (response.status === 409 && result.duplicate) {
         setDuplicate(result.duplicate);
         return;
